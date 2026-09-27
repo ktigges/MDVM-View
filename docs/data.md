@@ -4,8 +4,6 @@
 > **Last modified:** 2026-09-27  
 > **Purpose:** Define collected data, run processing, retention, change detection, and SLA calculations.
 
-Features that are described but not used by the current pipeline are marked **available but not implemented**.
-
 ## Collection flow
 
 1. Download current Defender records and retain each original response page as compressed source evidence.
@@ -153,7 +151,7 @@ Each durable run manifest records:
 
 The manifest prevents a partial upload from being mistaken for a valid daily snapshot.
 
-### What must be retained for SLA continuity
+### Data retained for SLA continuity
 
 At minimum, every dated finding snapshot must preserve:
 
@@ -236,37 +234,7 @@ GET https://graph.microsoft.com/v1.0/security/secureScores?$top=1
 
 It requires `SecurityEvents.Read.All`. Secure Score is optional, so authentication, permission, or request failures leave the score dataset unavailable without stopping Defender collection.
 
-### Microsoft Graph advanced hunting relationship
-
-Microsoft Graph also provides:
-
-```text
-POST https://graph.microsoft.com/v1.0/security/runHuntingQuery
-```
-
-With `ThreatHunting.Read.All`, that API can query Defender XDR advanced-hunting tables. Relevant tables include:
-
-- `DeviceTvmSoftwareVulnerabilities`
-- `DeviceTvmSoftwareVulnerabilitiesKB`
-- Device inventory and other Defender XDR hunting tables
-
-This is **available but not implemented** as a collection source in this repository. The current finding pipeline uses the Defender Endpoint REST APIs listed above. Graph advanced hunting should not be assumed to populate the current files.
-
-### Current source choice compared with Graph hunting
-
-| Question | Current Defender REST collection | Graph advanced hunting option |
-|---|---|---|
-| Is it used now? | Yes | No |
-| Main result | Paginated current inventories and relationships | Results of a submitted KQL hunting query |
-| Current finding source | `/api/vulnerabilities/machinesVulnerabilities` | Could query `DeviceTvmSoftwareVulnerabilities` |
-| Vulnerability knowledge | `/api/vulnerabilities` | Could query `DeviceTvmSoftwareVulnerabilitiesKB` |
-| Device context | `/api/machines` | Could join supported device hunting tables |
-| History supplied automatically to this app | No; this app retains snapshots | No; query results would still need to be retained by this app |
-| Raw retention in this repository | Implemented per response page | Not implemented |
-
-Graph hunting would be another live source, not a replacement for application-owned history. If it is added later, its results must still receive a run ID, snapshot time, raw retention policy, normalization rules, and reconciliation behavior before they can safely participate in the same dashboard measures.
-
-## What happens during a live run
+## Live-run processing
 
 Every new collection begins with a UTC snapshot time and a run ID:
 
@@ -322,7 +290,7 @@ HTTP 429 and temporary `500`, `502`, `503`, and `504` responses are retried up t
 
 HTTP 401 and 403 fail immediately with credential or permission guidance.
 
-## What is kept day by day
+## Daily retained data
 
 ### Raw run folders are the actual daily snapshots
 
@@ -393,6 +361,35 @@ vulnerability-view build-sample --mode combined --from-raw latest
 Replay reads all matching gzip pages in the selected run folder and reconstructs the endpoint payloads. Required endpoint pages must exist. Missing optional pages produce optional-unavailable statuses.
 
 The reconstructed payloads pass through the current normalization code. Replaying old raw data after the code changes can therefore produce different curated output from the same source pages. This is intentional: the raw archive preserves evidence while the curated model can improve.
+
+Each archived page retains the complete JSON response from an endpoint call,
+including source fields that the current normalizer does not use. This permits
+later normalization changes without recollecting that run. It does not create
+data for endpoints that were not called; adding a new source endpoint still
+requires a later collection.
+
+## Shared recommendation workflow events
+
+Optional shared recommendation tracking uses the private `dvm-workflow`
+container rather than the retained history or current-pointer containers. Each
+action is a new JSON blob written with `overwrite=False`:
+
+```text
+events/<recommendation-id-sha256>/YYYY/MM/DD/<timestamp>-<uuid>.json
+```
+
+An event retains `RecommendationId`, `UserStatus`, `MarkedAtRunId`,
+`MarkedAtSnapshotUtc`, `UpdatedUtc`, `UpdatedByObjectId`, and
+`UpdatedByDisplayName`. The latest event for a recommendation supplies its
+shared display state. A `Clear` event hides earlier state without deleting
+history.
+
+`ReadyForValidation` is displayed as **Awaiting next collection** until a newer
+run is current. The dashboard derives **Confirmed** when that run contains no
+active live findings for the recommendation, or **Still detected** when active
+findings remain. These events are application workflow metadata, not Defender
+evidence, and they do not alter findings, lifecycle reconciliation, or SLA
+fields.
 
 ## Published datasets
 
@@ -599,7 +596,7 @@ The Secure Score dataset contains the latest returned score, maximum score, perc
 
 Because the request uses `$top=1`, a live run collects only the latest score returned by Graph. The application does not currently build a historical Secure Score series from repeated runs.
 
-## How finding identity is built
+## Finding identity
 
 The application uses the Defender-provided machine-vulnerability `id` as `FindingKey` when available.
 
@@ -613,7 +610,7 @@ This produces a deterministic key for comparison and deduplication.
 
 The product version is part of both the Defender example identity and the fallback identity. A software-version change can therefore make one key disappear and another key appear, even when the device and CVE are the same.
 
-## How previous findings are selected
+## Previous-finding selection
 
 Before reconciliation, the CLI builds a previous-finding list from two places:
 
@@ -624,7 +621,7 @@ The two lists are combined and indexed by `FindingKey`. This allows current-stat
 
 On the first run, no previous findings exist, so every current finding begins as open.
 
-## How new, fixed, and reopened are determined
+## Lifecycle state determination
 
 ```mermaid
 stateDiagram-v2
@@ -668,7 +665,7 @@ If a key previously marked fixed appears again, it becomes `Reopened` and receiv
 
 The current schema stores one `ReopenedUtc` value, not an event list. Multiple fix-and-return cycles for the same key are therefore represented by the current lifecycle row rather than a complete sequence of every transition.
 
-## How SLA is tracked
+## SLA tracking
 
 ### Current policy
 
@@ -830,7 +827,7 @@ storage paths, credentials, editing, or deletion.
 
 The dataset dropdown selects which curated evidence to inspect:
 
-| Dropdown value | What it shows | Use it to answer |
+| Dropdown value | Displayed evidence | Operational use |
 |---|---|---|
 | Findings | One normalized device, CVE, product, and observation relationship, including status, SLA, ownership, subscription, and priority fields | Why a vulnerability appears in workload, priority, or SLA results |
 | Finding events | Timestamped lifecycle changes such as new, fixed, reopened, stale, or out of scope | What changed over time and which events support a trend |

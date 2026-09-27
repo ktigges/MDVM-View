@@ -4,9 +4,46 @@
 > **Last modified:** 2026-09-27  
 > **Purpose:** Set up, run, validate, and operate the Vulnerability View collector and dashboard.
 
-Vulnerability View provides read-only collection and reporting for Microsoft
-Defender Vulnerability Management. It supports live snapshots and synthetic
-demonstration data. Sample SLA settings are not approved production policy.
+Microsoft Defender Vulnerability Management provides strong vulnerability
+discovery, device assessment, and remediation guidance. Day-to-day review can
+still require moving among separate vulnerability, recommendation, device, and
+finding views. Vulnerability View brings those related records together in a
+low-cost, read-only dashboard built from the APIs available for the operator's
+Defender environment.
+
+The viewer does not change Defender data, perform remediation, or send data,
+telemetry, status, or results back to Defender. It collects read-only source
+data, preserves snapshots in application-owned storage, correlates related
+records, and presents them through a unified workflow. Those retained snapshots
+provide the activity-over-time view that is not available by default in the
+point-in-time Defender workflow.
+
+The repository includes example SLA thresholds only to demonstrate aging,
+status, and reporting behavior. Replace them with remediation targets approved
+by the organization before using SLA results for operational or compliance
+decisions.
+
+## Project status and responsibility
+
+Vulnerability View is an independent project created by Kevin Tigges. The
+author is a Microsoft employee, but Microsoft did not commission, authorize,
+endorse, approve, support, or warrant this project. It is not a Microsoft
+product, and its content does not represent Microsoft guidance or policy.
+
+The software and documentation are provided as-is, without warranties. Users
+are responsible for validating the design, securing the deployment, reviewing
+permissions, protecting collected data, testing recovery, and confirming that
+the solution is appropriate for their environment. To the extent permitted by
+law, the author and Microsoft are not responsible for damage, loss, service
+interruption, data exposure, or other consequences resulting from deployment
+or use.
+
+The design favors low-cost Azure services, but every deployed resource can
+incur charges. The operator is responsible for reviewing current Azure pricing,
+setting budgets and alerts, monitoring consumption and retention growth, and
+removing or resizing replaceable resources when they are no longer required.
+Protected DVM history must not be deleted as part of ordinary cost reduction or
+application cleanup.
 
 Architecture, deployment, and operations documents are indexed in [docs/README.md](docs/README.md).
 
@@ -28,7 +65,7 @@ cp .env.example .env
 
 The CLI and Function load `.env` automatically when the file is present; variables already exported in the process environment take precedence. Never commit `.env`.
 
-### What `vulnerability-view` is
+### Command-line application
 
 `vulnerability-view` is the installed command-line entry point for the complete
 data-preparation and operator application, not a synthetic-data-only tool. It
@@ -105,6 +142,22 @@ The optional curated-data evidence browser is also disabled by default:
 DASHBOARD_DATA_BROWSER_ENABLED=false
 DASHBOARD_DATA_BROWSER_ROLE=
 ```
+
+Shared recommendation workflow tracking is independently controlled:
+
+```dotenv
+DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=false
+DASHBOARD_RECOMMENDATION_TRACKING_ROLE=Recommendation.Tracker
+DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER=dvm-workflow
+```
+
+When enabled, authorized users can mark a live recommendation **In progress**,
+**Fixed**, or clear its tracking state. “Fixed” waits for a newer collection:
+the dashboard then displays **Confirmed** when no active live findings remain,
+or **Still detected** when Defender continues to report affected findings.
+These shared display states are stored as append-only events in the separate
+workflow container. They do not change Defender records, finding lifecycle, or
+SLA calculations.
 
 When enabled, a hidden **Data evidence** navigation item becomes available and
 serves read-only, paginated views of the normalized datasets used by dashboard
@@ -267,9 +320,6 @@ while a scheduled run is active. To change the recurring time, update
 [Greenfield Azure deployment](docs/greenfield-deployment.md) for all deployed
 run options and validation steps.
 
-Power BI, KQL, and other reporting integrations are deferred in
-[Future reporting integrations](docs/future-reporting.md).
-
 ## 9. Dashboard development
 
 To simulate the scheduled collection pipeline locally without Defender or Azure access:
@@ -308,7 +358,7 @@ Pass a different port as the first argument, for example `./start-app.sh 8080`. 
 7. Inspect remediation target/fixed progress. Explain implementation, reassessment, and reporting delay; manual completion is not technical proof.
 8. On **Trend**, compare this month-to-date with the same number of days last month, review policy-SLA outcomes, and use the weekly New/Fixed chart. The separate task history shows tasks completed by or after their assigned due date and open tasks before or beyond due. These comparisons are derived in the browser from datasets already loaded, so they add no historical-storage cost.
 9. On **Ownership**, show engineer/team/ticket fields, compare Traditional IT with Azure Cloud, and state that assignments are an added workflow.
-10. Close with the production path: approved SLA, durable orchestration, Defender for Cloud governance, ITSM integration, and refresh monitoring.
+10. Close with the implemented operating path: scheduled collection, immutable history, authenticated dashboard access, and source-data health.
 
 ## 11. Troubleshooting
 
@@ -352,11 +402,16 @@ Stop the local HTTP server. Local generated files can be rebuilt, but local clea
 
 Never delete the ADLS storage account, container, or retained paths under `raw/`, `curated/`, or `runs/` as part of cleanup, reset, redeployment, or "start over" work. Preserve the storage account separately from replaceable application infrastructure. The application contains no Azure Storage delete operation.
 
-Only `current/manifest.json` is replaced during normal operation. It points to immutable completed history. Any future retention deletion requires separate, explicit approval for the exact target and must not be inferred from a general cleanup request.
+Only `current/manifest.json` is replaced during normal operation. It points to
+immutable completed history. Retention deletion requires separate, explicit
+approval for the exact target and must not be inferred from a general cleanup
+request.
 
-## Data boundaries and intentionally deferred production work
+## Data boundaries
 
-- Live pages: current findings, known exploits, current priority, device context, freshness, and any supported live remediation snapshots.
-- Synthetic-history pages: six-month trends, lifecycle transitions, named engineer/team assignments, tickets, and prepared SLA stories.
-- Combined pages: current and historical views only when the visible Data Origin label/slicer distinguishes both series.
-- Production-only: approved SLA policy, supported remediation/change API confirmation, ITSM assignment integration, Defender for Cloud governance ingestion, scheduled Function package deployment, refresh alerting, and retention/network policy review. Reporting integrations remain deferred.
+- Live pages show current findings, known exploits, current priority, device
+  context, freshness, and supported live remediation snapshots.
+- Synthetic-history pages show six-month trends, lifecycle transitions,
+  demonstration assignments, tickets, and SLA examples.
+- Combined pages show current and historical records only when the visible
+  Data Origin label or slicer distinguishes both sources.

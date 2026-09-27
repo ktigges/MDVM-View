@@ -21,7 +21,7 @@ cp infra/terraform/main.tfvars.example.json infra/terraform/main.tfvars.json
 ```
 
 `main.tfvars.json`, `*.tfvars`, and `*.auto.tfvars*` are ignored. Only example
-files belong in the future Git repository.
+files belong in the source repository.
 
 | Value | What to provide |
 |---|---|

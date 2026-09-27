@@ -58,6 +58,7 @@
   </section>
   <section id="filterBar" class="filterbar" aria-label="Dashboard filters">
     <label>Severity / task priority<select id="severityFilter"><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
+    <label id="recommendationTrackingFilterLabel" hidden>Recommendation workflow<select id="recommendationTrackingFilter"><option value="NeedsAttention">Needs attention</option><option value="All">All tracking states</option><option value="Untracked">Untracked</option><option value="InProgress">In progress</option><option value="ReadyForValidation">Awaiting next collection</option><option value="Confirmed">Confirmed</option><option value="StillDetected">Still detected</option></select></label>
     <fieldset class="type-filter"><legend>Recommendation type</legend><label><input type="checkbox" name="recommendationType" value="Vulnerability" checked>Vulnerability</label><label><input type="checkbox" name="recommendationType" value="Misconfiguration">Misconfiguration</label></fieldset>
     <label class="classification-filter">Asset classification<select id="assetClassFilter"><option value="All">All classifications</option><option value="AzureCloud">Azure / Cloud</option><option value="TraditionalIT">Traditional IT</option><option value="Unknown">Unknown</option></select><span>Azure resource metadata → Defender machine tag → inventory fallback</span></label>
     <label class="subscription-filter">Subscription<select id="subscriptionFilter"><option value="All">All subscriptions</option><option value="NoSubscription">No subscription</option></select><span>Derived from Defender machine resource metadata</span></label>
@@ -78,6 +79,12 @@
       <div class="pivot-actions">
         <a id="defenderRemediationLink" class="action-link primary" href="https://security.microsoft.com/exposure-recommendations?tabId=Devices" target="_blank" rel="noopener">Open Exposure Recommendations</a>
         <button id="copyRecommendationReference" class="action-link" type="button">Copy recommendation reference</button>
+        <span id="recommendationTrackingActions" class="recommendation-tracking-actions" hidden>
+          <button type="button" data-tracking-status="InProgress">Mark in progress</button>
+          <button type="button" data-tracking-status="ReadyForValidation">Mark fixed</button>
+          <button type="button" data-tracking-status="Clear">Clear tracking</button>
+        </span>
+        <span id="recommendationTrackingStatus" class="action-status"></span>
         <span id="pivotActionStatus" class="action-status" role="status"></span>
       </div>
       <p class="handoff-note">Opens <strong>Exposure management → Recommendations</strong>. Defender does not expose its selected flyout as a URL, so select <strong>Vulnerabilities</strong> and paste the copied recommendation reference to open the exact item.</p>

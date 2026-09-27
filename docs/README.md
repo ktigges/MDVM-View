@@ -11,4 +11,3 @@
 - [Environment and deployment plan](environment-and-deployment.md) - Local live testing, Azure resource inventory, hosted data path, environment separation, and production readiness gates.
 - [Greenfield Azure deployment](greenfield-deployment.md) - Required values and staged `tf*` commands for storage and the collector Function.
 - [Web App deployment recommendations](web-app-deployment-recommendations.md) - Low-cost hosting, Microsoft Entra/App Service authentication, caching, and scale recommendations.
-- [Future reporting integrations](future-reporting.md) - Deferred Power BI, KQL, and reporting decisions.

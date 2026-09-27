@@ -12,6 +12,7 @@ from vulnerability_view.dashboard_server import (
     authenticate_dashboard_request,
     create_app,
     decode_app_service_principal,
+    recommendation_tracking_view,
 )
 
 
@@ -29,6 +30,8 @@ def asgi_response(
     app,
     path: str,
     headers: list[tuple[bytes, bytes]] | None = None,
+    method: str = "GET",
+    request_body: bytes = b"",
 ) -> tuple[int, dict[bytes, bytes], bytes]:
     messages = []
     request_sent = False
@@ -38,7 +41,7 @@ def asgi_response(
         nonlocal request_sent
         if not request_sent:
             request_sent = True
-            return {"type": "http.request", "body": b"", "more_body": False}
+            return {"type": "http.request", "body": request_body, "more_body": False}
         return {"type": "http.disconnect"}
 
     async def send(message):
@@ -48,7 +51,7 @@ def asgi_response(
         "type": "http",
         "asgi": {"version": "3.0"},
         "http_version": "1.1",
-        "method": "GET",
+        "method": method,
         "scheme": "http",
         "path": url.path,
         "raw_path": url.path.encode(),
@@ -190,7 +193,7 @@ def test_dashboard_rejects_client_secret_mode_on_azure_host(monkeypatch, tmp_pat
         create_app(Settings(auth_mode="client_secret", allow_local_client_secret=True), project_root=tmp_path)
 
 
-def encoded_principal() -> str:
+def encoded_principal(roles: list[str] | None = None) -> str:
     principal = {
         "auth_typ": "aad",
         "name_typ": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
@@ -198,7 +201,7 @@ def encoded_principal() -> str:
         "claims": [
             {"typ": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name", "val": "Test User"},
             {"typ": "http://schemas.microsoft.com/identity/claims/objectidentifier", "val": "object-id"},
-            {"typ": "roles", "val": "Dashboard.Viewer"},
+            *[{"typ": "roles", "val": role} for role in (roles or ["Dashboard.Viewer"])],
         ],
     }
     return base64.b64encode(json.dumps(principal).encode()).decode()
@@ -345,3 +348,168 @@ def test_data_browser_accepts_configured_app_role(monkeypatch, tmp_path: Path):
     status, _ = asgi_get(app, "/api/data-browser/catalog", [header])
 
     assert status == 200
+
+
+def test_recommendation_tracking_view_confirms_after_newer_absent_run():
+    events = {
+        "rec-1": {
+            "UserStatus": "ReadyForValidation",
+            "MarkedAtRunId": "run-1",
+            "MarkedAtSnapshotUtc": "2026-09-27T12:00:00Z",
+            "UpdatedUtc": "2026-09-27T12:05:00Z",
+            "UpdatedByDisplayName": "Test User",
+        },
+    }
+
+    rows = recommendation_tracking_view(events, [], "run-2", "2026-09-28T12:00:00Z")
+
+    assert rows[0]["effectiveStatus"] == "Confirmed"
+    assert rows[0]["remainingFindings"] == 0
+
+
+def test_recommendation_tracking_view_reports_still_detected_without_changing_sla():
+    finding = {
+        "RecommendationId": "rec-1",
+        "DataOrigin": "Live",
+        "FindingStatus": "Open",
+        "LastObservedUtc": "2026-09-28T12:00:00Z",
+        "SlaStatus": "OpenOutsideSla",
+    }
+    events = {
+        "rec-1": {
+            "UserStatus": "ReadyForValidation",
+            "MarkedAtRunId": "run-1",
+            "MarkedAtSnapshotUtc": "2026-09-27T12:00:00Z",
+        },
+    }
+
+    rows = recommendation_tracking_view(events, [finding], "run-2", "2026-09-28T12:00:00Z")
+
+    assert rows[0]["effectiveStatus"] == "StillDetected"
+    assert rows[0]["remainingFindings"] == 1
+    assert finding["SlaStatus"] == "OpenOutsideSla"
+
+
+def test_recommendation_tracking_view_waits_for_a_newer_run_and_hides_clear():
+    events = {
+        "rec-1": {
+            "UserStatus": "ReadyForValidation",
+            "MarkedAtRunId": "run-1",
+            "MarkedAtSnapshotUtc": "2026-09-27T12:00:00Z",
+        },
+        "rec-2": {
+            "UserStatus": "Clear",
+            "MarkedAtRunId": "run-1",
+            "MarkedAtSnapshotUtc": "2026-09-27T12:00:00Z",
+        },
+    }
+
+    rows = recommendation_tracking_view(events, [], "run-1", "2026-09-27T12:00:00Z")
+
+    assert rows == [{
+        "recommendationId": "rec-1",
+        "userStatus": "ReadyForValidation",
+        "effectiveStatus": "ReadyForValidation",
+        "remainingFindings": 0,
+        "markedAtRunId": "run-1",
+        "markedAtSnapshotUtc": "2026-09-27T12:00:00Z",
+        "updatedUtc": "",
+        "updatedByDisplayName": "",
+    }]
+
+
+class FakeRecommendationTrackingStore:
+    def __init__(self):
+        self.events = {}
+
+    def latest(self):
+        return self.events
+
+    def record(self, recommendation_id, status, run_id, snapshot_time_utc, actor_object_id, actor_display_name):
+        event = {
+            "RecommendationId": recommendation_id,
+            "UserStatus": status,
+            "MarkedAtRunId": run_id,
+            "MarkedAtSnapshotUtc": snapshot_time_utc,
+            "UpdatedUtc": "2026-09-27T12:05:00Z",
+            "UpdatedByObjectId": actor_object_id,
+            "UpdatedByDisplayName": actor_display_name,
+        }
+        self.events[recommendation_id] = event
+        return event
+
+
+def test_recommendation_tracking_api_requires_role_and_records_action(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("WEBSITE_HOSTNAME", "dashboard.azurewebsites.net")
+    (tmp_path / "dashboard").mkdir()
+    write_json(tmp_path / "dashboard/data/recommendations.json", [{
+        "RecommendationId": "rec-1",
+        "RecommendationName": "Update software",
+        "DataOrigin": "Live",
+    }])
+    write_json(tmp_path / "dashboard/data/findings.json", [])
+    write_json(tmp_path / "dashboard/data/collection-runs.json", [{
+        "CollectionRunId": "run-1",
+        "SnapshotTimeUtc": "2026-09-27T12:00:00Z",
+    }])
+    write_json(tmp_path / "dashboard/data/secure-scores.json", [])
+    tracking_store = FakeRecommendationTrackingStore()
+    app = create_app(
+        Settings(
+            dashboard_auth_enabled=True,
+            dashboard_recommendation_tracking_enabled=True,
+        ),
+        project_root=tmp_path,
+        recommendation_tracking_store=tracking_store,
+    )
+    body = json.dumps({"recommendationId": "rec-1", "status": "InProgress"}).encode()
+    headers = [
+        (b"x-ms-client-principal", encoded_principal(["Dashboard.Viewer"]).encode()),
+        (b"content-type", b"application/json"),
+    ]
+
+    denied_status, _, _ = asgi_response(
+        app,
+        "/api/recommendation-tracking",
+        headers,
+        method="PUT",
+        request_body=body,
+    )
+    headers[0] = (
+        b"x-ms-client-principal",
+        encoded_principal(["Dashboard.Viewer", "Recommendation.Tracker"]).encode(),
+    )
+    updated_status, _, updated_body = asgi_response(
+        app,
+        "/api/recommendation-tracking",
+        headers,
+        method="PUT",
+        request_body=body,
+    )
+    listed_status, listed_body = asgi_get(app, "/api/recommendation-tracking", headers)
+
+    assert denied_status == 403
+    assert updated_status == 200
+    assert json.loads(updated_body)["status"] == "InProgress"
+    assert listed_status == 200
+    assert json.loads(listed_body)["items"][0]["effectiveStatus"] == "InProgress"
+
+
+def test_recommendation_tracking_api_is_hidden_when_disabled(tmp_path: Path):
+    (tmp_path / "dashboard").mkdir()
+    app = create_app(Settings(), project_root=tmp_path)
+
+    status, _ = asgi_get(app, "/api/recommendation-tracking")
+
+    assert status == 404
+
+
+def test_recommendation_tracking_requires_dashboard_authentication(tmp_path: Path):
+    (tmp_path / "dashboard").mkdir()
+
+    with pytest.raises(RuntimeError, match="requires dashboard authentication"):
+        create_app(
+            Settings(dashboard_recommendation_tracking_enabled=True),
+            project_root=tmp_path,
+            recommendation_tracking_store=FakeRecommendationTrackingStore(),
+        )

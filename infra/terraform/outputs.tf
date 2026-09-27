@@ -90,6 +90,14 @@ output "dashboard_access_group_name" {
   ) : null
 }
 
+output "dashboard_recommendation_tracking_enabled" {
+  value = var.deploy_web_app ? var.dashboard_recommendation_tracking_enabled : null
+}
+
+output "dashboard_recommendation_tracking_container" {
+  value = var.deploy_web_app ? var.dashboard_recommendation_tracking_container : null
+}
+
 output "dashboard_url" {
   value = try("https://${azurerm_linux_web_app.dashboard["dashboard"].default_hostname}", null)
 }

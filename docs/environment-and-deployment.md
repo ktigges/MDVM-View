@@ -171,13 +171,12 @@ Use a development account that is separate from production. Never point local in
 | `dvm-current` container | Replaceable current manifest pointer | Implemented with `prevent_destroy` |
 | Function runtime storage | Function host state and deployment packages; separate from retained DVM history | Implemented when `deploy_function=true` |
 | User-assigned managed identity | Defender access and Storage Blob Data Contributor for the collector | Implemented when `deploy_function=true` |
-| Flex Consumption Function App | Daily scheduled collector | Implemented when `deploy_function=true`; durable orchestration remains future work |
+| Flex Consumption Function App | Scheduled collector | Implemented when `deploy_function=true` |
 | Application Insights | Function diagnostics, failures, and dependency timing | Implemented when `deploy_function=true` |
 | Linux Web App and plan | Hosts the dashboard and a same-origin API that reads current data from private ADLS | Implemented as an optional B1 Terraform stage |
 | Web App managed identity | Read-only access to `dvm-current` and referenced curated blobs | Implemented with Storage Blob Data Reader |
 | Microsoft Entra authentication | Restricts dashboard and API access to approved users or groups | Implemented with Easy Auth, assignment-required Enterprise Application, and Terraform-managed group app-role assignments |
-| Log Analytics | Function and Web App operational telemetry | Function workspace implemented; reporting queries deferred |
-| Azure App Configuration | Future runtime settings that can change without code deployment | Planned; not connected to the application |
+| Log Analytics | Function operational logs, metrics, failures, and dependency timing | Implemented when `deploy_function=true` |
 
 The retained-history account is a protected data resource. Function runtime storage and web hosting can be replaced without replacing or deleting DVM history.
 

@@ -29,6 +29,8 @@
   "dashboard_access_group_name": "DVM Viewer Users",
   "dashboard_access_member_object_ids": [],
   "dashboard_data_browser_enabled": true,
+  "dashboard_recommendation_tracking_enabled": false,
+  "dashboard_recommendation_tracking_container": "dvm-workflow",
   "dashboard_cache_seconds": 300,
   "app_mode": "live",
   "collection_schedule": "0 0 5 * * *",

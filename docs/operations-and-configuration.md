@@ -18,15 +18,14 @@ Managed identity remains the production authentication model. Client-secret auth
 
 A managed identity endpoint exists only on an Azure host. Local development cannot obtain a real managed-identity token. Local tests verify credential selection with mocks, while real local Azure access uses the developer identity. This preserves the same authorization requirements without retaining an application secret.
 
-The managed identity must eventually receive:
+The collector managed identity receives:
 
 - Defender application permissions and tenant admin consent
 - Storage Blob Data Contributor on the required storage scope
-- App Configuration Data Reader, and Data Owner only for a separate protected configuration-writing API if one is implemented
 
 ## Configuration layers
 
-### Where settings live
+### Configuration sources
 
 | Location | Used by | Commit to source control |
 |---|---|---|
@@ -69,6 +68,9 @@ Environment variables override values loaded from `.env`. When the Functions hos
 | `DASHBOARD_AUTH_ENABLED` | `false` | Keep `false` | Not used | `true` only after App Service Authentication is enabled | Requires a trusted App Service Easy Auth principal for every dashboard and API request |
 | `DASHBOARD_DATA_BROWSER_ENABLED` | `false` | Enable only when evidence inspection is needed | Not used | Explicit opt-in | Exposes the read-only curated Data evidence view and its bounded API |
 | `DASHBOARD_DATA_BROWSER_ROLE` | Empty | Usually empty | Not used | Recommended app role such as `Data.Evidence.Reader` | When set, requires that role in the authenticated App Service principal |
+| `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | `false` | Keep disabled | Not used | Explicit opt-in | Enables shared recommendation display-state reads and writes |
+| `DASHBOARD_RECOMMENDATION_TRACKING_ROLE` | `Recommendation.Tracker` | Not used | Not used | Required app role | Authorizes the shared tracking API after dashboard authentication |
+| `DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER` | `dvm-workflow` | Not used | Not used | Private Blob container | Stores append-only recommendation workflow events separately from retained evidence |
 
 ## Dashboard presentation configuration
 
@@ -128,7 +130,22 @@ Terraform outputs `dashboard_enterprise_application_object_id` and
 Entra ID > Enterprise applications > DVM Viewer > Users and groups**.
 Group-based Enterprise Application assignment requires the applicable
 Microsoft Entra ID licensing; if it is unavailable, assign individual users
-the `Dashboard.Viewer` role.
+the `Dashboard.Viewer` role and any enabled optional roles.
+
+### Shared recommendation tracking
+
+`DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=true` enables recommendation-level
+workflow status for authenticated users with the configured tracking role. The
+Web App managed identity receives Storage Blob Data Contributor on
+`dvm-workflow` only. It remains a reader on the retained history account and
+has no Defender or Graph permissions.
+
+The API appends an event for **In progress**, **Fixed**, or **Clear**. It does
+not delete prior events. A fixed recommendation is confirmed only after a newer
+current run reports no active live finding for that recommendation; otherwise
+it is shown as still detected. Synthetic recommendations cannot be updated.
+The feature affects recommendation display and filtering only. Finding
+lifecycle and SLA calculations continue to use collected Defender evidence.
 
 ### Dashboard server settings
 
@@ -148,6 +165,8 @@ Available operational endpoints are:
 GET /api/health
 GET /api/auth
 GET /api/status
+GET /api/recommendation-tracking
+PUT /api/recommendation-tracking
 GET /api/data-browser/catalog
 GET /api/data-browser/<dataset>?offset=0&limit=50&query=<text>
 GET /api/data/<dataset>.json
@@ -178,31 +197,6 @@ Keep settings required before other services can be reached in Function applicat
 - Defender API base URL
 
 These settings change infrequently and can require a Function restart.
-
-### Mutable runtime settings
-
-Use Azure App Configuration for values that should be changed without redeploying code:
-
-- Enrichment mode and weekly full-reconciliation day
-- Device freshness and fixed-confirmation thresholds
-- SLA policy version and active policy reference
-- Collection feature flags
-- Dashboard operational defaults
-- Future subscription/group scope mappings
-
-Use hierarchical keys such as:
-
-```text
-VulnerabilityView:Collection:EnrichmentMode
-VulnerabilityView:Collection:FullEnrichmentWeekday
-VulnerabilityView:Lifecycle:FixedConfirmationRuns
-VulnerabilityView:Lifecycle:DeviceFreshnessHours
-VulnerabilityView:Sla:ActivePolicyVersion
-```
-
-Use environment labels such as `Development`, `Test`, and `Production`. Do not store secrets in App Configuration values. Use Key Vault references only when a secret is unavoidable.
-
-App Configuration is a planned control-plane component and is not currently connected to the code. Until it is added, `.env`, Function application settings, and the versioned SLA policy file remain authoritative.
 
 ## Operational status sources
 
@@ -273,38 +267,3 @@ vulnerability-view status --azure
 ```
 
 The report never prints credential values. It reports whether a legacy secret is present but ignored.
-
-## Future admin API and interface
-
-Build the administrative interface as a separate protected API surface. Do not let the public dashboard write configuration directly.
-
-Recommended read endpoints:
-
-```text
-GET /api/admin/config
-GET /api/admin/status
-GET /api/admin/runs?limit=30
-GET /api/admin/runs/{runId}
-GET /api/admin/current
-```
-
-Recommended controlled update endpoint:
-
-```text
-PUT /api/admin/config
-```
-
-The update API should validate values, use ETags for concurrency, write to Azure App Configuration, record the acting user and timestamp, and never modify historical ADLS objects.
-
-The interface should display:
-
-- Effective schedule and enrichment mode
-- Current run ID, age, completeness, and status
-- Endpoint durations and row counts
-- Recent success, partial, and failed runs
-- Current dataset counts
-- Lifecycle and SLA counts
-- Current schema, normalization, and policy versions
-- Storage bundle integrity status
-
-Do not expose a routine user-facing control that starts collection. If a manual administrative run is added later, protect it with a separate privileged role, concurrency lock, confirmation, and audit event.

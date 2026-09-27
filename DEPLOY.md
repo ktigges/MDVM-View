@@ -7,7 +7,7 @@
 The deployment is staged so retained DVM history stays independent of
 replaceable application infrastructure.
 
-## Why there are two storage accounts
+## Storage-account separation
 
 The two storage-account variables serve different security and lifecycle
 purposes:
@@ -117,10 +117,13 @@ managed identities:
 | Collector | Storage Blob Data Owner, Storage Blob Data Contributor, Storage Queue Data Contributor, Storage Table Data Contributor | Dedicated Function runtime account |
 | Collector | Monitoring Metrics Publisher | Application Insights |
 | Dashboard | Storage Blob Data Reader | Protected history account; reads the current manifest and referenced curated datasets |
-| Dashboard users | `Dashboard.Viewer` and, when enabled, `Data.Evidence.Reader` | Enterprise Application authorization; these roles grant no Azure RBAC access |
+| Dashboard | Storage Blob Data Contributor, when recommendation tracking is enabled | Private `dvm-workflow` container only; appends and reads shared workflow events |
+| Dashboard users | `Dashboard.Viewer` and, when enabled, `Data.Evidence.Reader` and `Recommendation.Tracker` | Enterprise Application authorization; these roles grant no Azure RBAC access |
 
 The dashboard identity receives no Defender or Microsoft Graph permission and
-no storage write permission.
+cannot write to retained history or the current manifest. When recommendation
+tracking is enabled, its only storage write scope is the separate workflow
+container.
 
 ## Deployment packages
 
@@ -148,7 +151,7 @@ existing Web App. Both packages are local build artifacts covered by
 3. One private history container, `dvm-history` by default:
    - Holds append-only `raw/`, `curated/`, and `runs/` paths.
    - An unlocked 365-day time-based immutability policy protects existing and
-     future blobs from modification or deletion during their retention period.
+     newly written blobs from modification or deletion during their retention period.
    - Terraform `prevent_destroy`.
 4. One private current-pointer container, `dvm-current` by default:
    - Holds only `current/manifest.json`.
@@ -240,15 +243,17 @@ paths are append-only. Only `current/manifest.json` is replaceable.
 1. One Linux B1 App Service plan and Web App.
 2. One dedicated user-assigned managed identity.
 3. Storage Blob Data Reader on the history account for that identity.
-4. One single-tenant Entra app registration and Enterprise Application named
+4. When enabled, a private recommendation-workflow container and Storage Blob
+   Data Contributor on that container only.
+5. One single-tenant Entra app registration and Enterprise Application named
    `DVM Viewer`.
-5. `Dashboard.Viewer` and `Data.Evidence.Reader` user/group app roles.
-6. Assignment-required Enterprise Application access.
-7. A `DVM Viewer Users` security group when no existing group ID is supplied.
-8. Group assignment to `Dashboard.Viewer` and, when enabled,
-   `Data.Evidence.Reader`.
-9. App Service Easy Auth with unauthenticated requests redirected to Entra.
-10. Azure-backed FastAPI settings and a 300-second verified-bundle cache.
+6. `Dashboard.Viewer`, `Data.Evidence.Reader`, and `Recommendation.Tracker`
+   user/group app roles.
+7. Assignment-required Enterprise Application access.
+8. A `DVM Viewer Users` security group when no existing group ID is supplied.
+9. Group assignment to `Dashboard.Viewer` and the enabled optional roles.
+10. App Service Easy Auth with unauthenticated requests redirected to Entra.
+11. Azure-backed FastAPI settings and a 300-second verified-bundle cache.
 
 The Enterprise Application display name is `DVM Viewer`; the app registration
 uses the same name. After apply, Terraform outputs
@@ -264,10 +269,10 @@ membership after deployment.
 
 Group-based Enterprise Application assignment requires the applicable
 Microsoft Entra ID licensing. If it is unavailable, assign individual users
-the `Dashboard.Viewer` role at the same **Users and groups** page. The Easy Auth
-application credential has a two-year lifetime and an annual Terraform rotation
-trigger. Apply a reviewed Web App plan at least annually so Terraform rotates
-it before expiration.
+the `Dashboard.Viewer` role and any required optional roles at the same
+**Users and groups** page. The Easy Auth application credential has a two-year
+lifetime and an annual Terraform rotation trigger. Apply a reviewed Web App
+plan at least annually so Terraform rotates it before expiration.
 
 Plan, review, apply, publish, and verify:
 

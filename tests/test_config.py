@@ -10,6 +10,8 @@ ENVIRONMENT_KEYS = (
     "RECOMMENDATION_ENRICHMENT_MODE", "ENABLE_EXPERIMENTAL_ENDPOINTS", "FULL_ENRICHMENT_WEEKDAY", "DASHBOARD_DATA_SOURCE", "DASHBOARD_STATIC_DIR", "DASHBOARD_CACHE_SECONDS",
     "DASHBOARD_AUTH_ENABLED",
     "DASHBOARD_DATA_BROWSER_ENABLED", "DASHBOARD_DATA_BROWSER_ROLE",
+    "DASHBOARD_RECOMMENDATION_TRACKING_ENABLED", "DASHBOARD_RECOMMENDATION_TRACKING_ROLE",
+    "DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER",
 )
 
 
@@ -50,6 +52,9 @@ def test_enrichment_defaults_to_daily_targeted_with_weekly_full():
     assert settings.dashboard_auth_enabled is False
     assert settings.dashboard_data_browser_enabled is False
     assert settings.dashboard_data_browser_role == ""
+    assert settings.dashboard_recommendation_tracking_enabled is False
+    assert settings.dashboard_recommendation_tracking_role == "Recommendation.Tracker"
+    assert settings.dashboard_recommendation_tracking_container == "dvm-workflow"
     assert settings.synthetic_device_count == 2500
 
 

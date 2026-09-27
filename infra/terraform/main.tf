@@ -122,6 +122,18 @@ resource "azurerm_storage_container" "current" {
   }
 }
 
+resource "azurerm_storage_container" "dashboard_workflow" {
+  count = var.deploy_web_app && var.dashboard_recommendation_tracking_enabled ? 1 : 0
+
+  name                  = var.dashboard_recommendation_tracking_container
+  storage_account_id    = azurerm_storage_account.history.id
+  container_access_type = "private"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "azurerm_role_assignment" "history_blob_contributor_deployer" {
   count = var.grant_deployer_history_access ? 1 : 0
 
@@ -459,6 +471,15 @@ resource "azuread_application" "dashboard" {
     value                = "Data.Evidence.Reader"
   }
 
+  app_role {
+    allowed_member_types = ["User"]
+    description          = "Allows assigned users and groups to update shared recommendation workflow status."
+    display_name         = "Recommendation Tracker"
+    enabled              = true
+    id                   = "68a85f59-c190-405e-82e4-c2d66280eece"
+    value                = "Recommendation.Tracker"
+  }
+
   web {
     homepage_url  = "https://${var.web_app_name}.azurewebsites.net/"
     logout_url    = "https://${var.web_app_name}.azurewebsites.net/.auth/logout"
@@ -523,6 +544,14 @@ resource "azuread_app_role_assignment" "data_evidence_reader_group" {
   resource_object_id  = azuread_service_principal.dashboard[0].object_id
 }
 
+resource "azuread_app_role_assignment" "recommendation_tracker_group" {
+  count = var.deploy_web_app && var.dashboard_recommendation_tracking_enabled ? 1 : 0
+
+  app_role_id         = azuread_application.dashboard[0].app_role_ids["Recommendation.Tracker"]
+  principal_object_id = local.dashboard_access_group_object_id
+  resource_object_id  = azuread_service_principal.dashboard[0].object_id
+}
+
 resource "azurerm_user_assigned_identity" "dashboard" {
   for_each = local.web_app_instances
 
@@ -538,6 +567,15 @@ resource "azurerm_role_assignment" "dashboard_history_reader" {
   scope              = azurerm_storage_account.history.id
   role_definition_id = local.role_definition_ids.storage_blob_data_reader
   principal_id       = azurerm_user_assigned_identity.dashboard[each.key].principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "dashboard_workflow_contributor" {
+  count = var.deploy_web_app && var.dashboard_recommendation_tracking_enabled ? 1 : 0
+
+  scope              = azurerm_storage_container.dashboard_workflow[0].id
+  role_definition_id = local.role_definition_ids.storage_blob_data_contributor
+  principal_id       = azurerm_user_assigned_identity.dashboard["dashboard"].principal_id
   principal_type     = "ServicePrincipal"
 }
 
@@ -602,25 +640,30 @@ resource "azurerm_linux_web_app" "dashboard" {
   }
 
   app_settings = {
-    "AUTH_MODE"                                = "managed_identity"
-    "AZURE_CLIENT_ID"                          = azurerm_user_assigned_identity.dashboard[each.key].client_id
-    "DASHBOARD_AUTH_ENABLED"                   = "true"
-    "DASHBOARD_CACHE_SECONDS"                  = tostring(var.dashboard_cache_seconds)
-    "DASHBOARD_DATA_BROWSER_ENABLED"           = tostring(var.dashboard_data_browser_enabled)
-    "DASHBOARD_DATA_BROWSER_ROLE"              = var.dashboard_data_browser_enabled ? "Data.Evidence.Reader" : ""
-    "DASHBOARD_DATA_SOURCE"                    = "azure"
-    "DASHBOARD_STATIC_DIR"                     = "/home/site/wwwroot/dashboard"
-    "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET" = azuread_application_password.dashboard[0].value
-    "SCM_DO_BUILD_DURING_DEPLOYMENT"           = "true"
-    "STORAGE_ACCOUNT_NAME"                     = azurerm_storage_account.history.name
-    "STORAGE_CONTAINER_NAME"                   = azurerm_storage_container.history.name
-    "STORAGE_CURRENT_CONTAINER_NAME"           = azurerm_storage_container.current.name
+    "AUTH_MODE"                                   = "managed_identity"
+    "AZURE_CLIENT_ID"                             = azurerm_user_assigned_identity.dashboard[each.key].client_id
+    "DASHBOARD_AUTH_ENABLED"                      = "true"
+    "DASHBOARD_CACHE_SECONDS"                     = tostring(var.dashboard_cache_seconds)
+    "DASHBOARD_DATA_BROWSER_ENABLED"              = tostring(var.dashboard_data_browser_enabled)
+    "DASHBOARD_DATA_BROWSER_ROLE"                 = var.dashboard_data_browser_enabled ? "Data.Evidence.Reader" : ""
+    "DASHBOARD_DATA_SOURCE"                       = "azure"
+    "DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER" = var.dashboard_recommendation_tracking_container
+    "DASHBOARD_RECOMMENDATION_TRACKING_ENABLED"   = tostring(var.dashboard_recommendation_tracking_enabled)
+    "DASHBOARD_RECOMMENDATION_TRACKING_ROLE"      = var.dashboard_recommendation_tracking_enabled ? "Recommendation.Tracker" : ""
+    "DASHBOARD_STATIC_DIR"                        = "/home/site/wwwroot/dashboard"
+    "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"    = azuread_application_password.dashboard[0].value
+    "SCM_DO_BUILD_DURING_DEPLOYMENT"              = "true"
+    "STORAGE_ACCOUNT_NAME"                        = azurerm_storage_account.history.name
+    "STORAGE_CONTAINER_NAME"                      = azurerm_storage_container.history.name
+    "STORAGE_CURRENT_CONTAINER_NAME"              = azurerm_storage_container.current.name
   }
 
   tags = var.tags
 
   depends_on = [
     azurerm_role_assignment.dashboard_history_reader,
+    azurerm_role_assignment.dashboard_workflow_contributor,
     azuread_app_role_assignment.dashboard_viewer_group,
+    azuread_app_role_assignment.recommendation_tracker_group,
   ]
 }

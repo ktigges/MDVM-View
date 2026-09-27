@@ -11,10 +11,9 @@ The application collects Microsoft Defender Vulnerability Management data, prese
 Sections distinguish among:
 
 - **Current behavior:** logic that is implemented in the repository now.
-- **Evolving capability:** planned behavior that is not complete.
 - **Current limitation:** a boundary or consequence of the implementation.
 
-## What the application is for
+## Purpose and operating gap
 
 Microsoft Defender remains the system that discovers vulnerabilities, assesses devices, produces security recommendations, and reassesses devices after changes are made. This application does not replace those Defender capabilities.
 
@@ -22,20 +21,15 @@ The application adds a focused viewer over that data so daily work can be review
 
 The viewer follows the existing Tenable workflow: identify important work, narrow it to owned assets, review the recommendation, and return after reassessment to see what changed.
 
-The central questions the viewer is designed to answer are:
+The viewer provides:
 
-- What is vulnerable now?
-- Which devices and software are affected?
-- What should be fixed first?
-- Why is one item more urgent than another?
-- What does Defender recommend doing?
-- Which Azure subscription or traditional IT scope owns the affected assets?
-- Which findings are new since the previous collection?
-- Which findings are pending confirmation or confirmed fixed?
-- Which findings returned after previously disappearing?
-- Which items are within SLA, approaching SLA, or overdue?
-- Is the backlog improving over time?
-- Is the displayed data fresh, complete, and based on a successful collection?
+- Current vulnerability, affected-device, and software inventory.
+- Priority ordering with visible severity, exploit, exposure, and asset context.
+- Defender recommendations linked to the related findings and devices.
+- Ownership pivots for Azure subscriptions and traditional IT assets.
+- New, remaining, pending-confirmation, fixed, and reopened lifecycle states.
+- SLA status and historical backlog trends.
+- Collection health, freshness, completeness, and source evidence.
 
 The application consolidates data that Defender exposes through several related API surfaces. It then normalizes field names and relationships, correlates vulnerabilities with machines and recommendations, uses stable finding keys to compare observations, removes duplicate finding identities from the published result, and creates compact reporting datasets. Original API pages are retained in compressed form so a run can be inspected or replayed without downloading the source data again.
 
@@ -54,11 +48,18 @@ Defender and this application have different responsibilities.
 | Providing the source recommendation and remediation context | Making priority and SLA logic explicit and filterable |
 | Maintaining the authoritative security telemetry | Providing subscription, asset-class, team, and device pivots |
 
-This boundary keeps the application read-only. Users perform the actual patch, configuration, exception, or remediation work through the appropriate operational tools. The viewer then reflects what Defender reports on the next collection.
+This boundary keeps the Defender integration one-way and read-only. The
+application does not send telemetry, status, decisions, or changes back to
+Defender. Users perform patching, configuration, exception, and remediation
+work through the appropriate operational tools. The viewer records what
+Defender reports on each collection and uses those snapshots to show activity
+over time.
 
-### Why collect snapshots instead of querying only on page load
+### Snapshot rationale
 
-A current Defender response can answer what is visible now, but it cannot by itself explain what changed between yesterday and today. Snapshot collection creates the evidence needed to distinguish:
+A current Defender response shows the present state but does not provide the
+retained activity timeline used by this workflow. Snapshot collection creates
+the evidence needed to distinguish:
 
 - A newly observed finding
 - A finding that remained open
@@ -70,13 +71,13 @@ A current Defender response can answer what is visible now, but it cannot by its
 
 The raw snapshot is retained first, before transformation. This protects the source evidence and allows normalization to be replayed when application logic changes.
 
-### Why normalize and consolidate the data
+### Normalization rationale
 
 The Defender APIs return different parts of the operating picture from different endpoints. A machine-vulnerability row identifies an affected machine, CVE, product, and version, but the dashboard also needs machine ownership evidence, Azure subscription information, exploit context, recommendation details, and remediation context.
 
 Normalization combines those records into consistent datasets so every dashboard view uses the same definitions. Without that step, each page would have to independently interpret raw API fields and could produce conflicting counts.
 
-### Why deduplicate and correlate
+### Deduplication and correlation
 
 The same vulnerability can appear across many devices, software versions, recommendations, and collection runs. The application keeps the detailed device-level finding instances, while also building indexes and summaries that let the viewer show:
 
@@ -114,14 +115,11 @@ flowchart LR
 
 ### Current implementation
 
-The repository already implements live and synthetic collection, raw page archives, replay, normalization, finding-key validation, current-versus-previous reconciliation, SLA calculations, recommendation and machine pivots, historical summaries, CSV/JSON exports, and the browser viewer.
-
-Still in development:
-
-- More detailed and configurable SLA policy dimensions and filters
-- Longer-lived historical storage and reporting behavior
-- Scheduled execution of the same complete pipeline currently available through the CLI
-- User authentication and views scoped to permitted subscriptions or IT asset groups
+The repository implements live and synthetic collection, raw page archives,
+replay, normalization, finding-key validation, current-versus-previous
+reconciliation, SLA calculations, recommendation and machine pivots,
+historical summaries, CSV/JSON exports, scheduled Function collection, an
+authenticated Web App, and optional shared recommendation tracking.
 
 ## Current user workflow
 
@@ -130,11 +128,15 @@ The user workflow is intentionally simple:
 1. Open the dashboard.
 2. Scope the data to the user's Azure subscriptions or traditional IT assets.
 3. Review vulnerabilities and recommendations.
-4. Perform remediation outside this application.
-5. Wait for Defender to reassess the affected devices.
-6. Run the next collection and inspect the updated results.
+4. Optionally mark a live recommendation **In progress**.
+5. Perform remediation outside this application and mark the recommendation
+   **Fixed** when it is ready for validation.
+6. Wait for Defender to reassess the affected devices.
+7. Run the next collection and inspect the confirmed or still-detected result.
 
-The application does not currently assign work, apply patches, change Defender records, or maintain analyst notes. Its job is to preserve observations and make Defender data easier to review, compare, prioritize, and pivot.
+The application does not assign remediation tasks, apply patches, or change
+Defender records. Shared recommendation status is display-only application
+state and does not affect finding lifecycle or SLA calculations.
 
 ```mermaid
 flowchart LR
@@ -157,7 +159,7 @@ flowchart LR
 | Reconciliation logic | Compares the latest findings with prior observations to infer fixed and reopened findings. |
 | Export writer | Writes curated CSV files and dashboard JSON files. |
 | ADLS Gen2 | Stores immutable raw pages, curated snapshots, SLA policy, and run manifests when configured. |
-| Static dashboard | Loads generated JSON and performs filtering, grouping, pivots, and visual calculations in the browser. |
+| Dashboard Web App | Reads the verified current bundle, serves the browser, enforces Easy Auth identity, and optionally stores shared recommendation workflow events. |
 
 ## End-to-end data flow
 
@@ -184,7 +186,7 @@ flowchart TD
     I --> N[Browser dashboard]
 ```
 
-## How collected data becomes useful workflow information
+## Workflow information derived from collected data
 
 The collection is not simply a copy of one Defender table. Each useful dashboard result is assembled from several observations or from a comparison with an earlier run.
 
@@ -659,6 +661,14 @@ The seven dashboard views are:
 
 The dashboard also provides pivots from recommendations to affected machines and links back to Defender for live records.
 
+When recommendation tracking is enabled, the Recommendations view adds a
+shared status filter and actions for live recommendations. **Marked fixed**
+remains **Awaiting next collection** during the same run. On a newer complete
+run it becomes **Confirmed** when no active live findings remain, or **Still
+detected** when findings remain. The default **Needs attention** filter hides
+awaiting and confirmed recommendations. Synthetic recommendations are
+read-only, and tracking never changes the SLA or finding datasets.
+
 Collection-run records provide the displayed snapshot timestamp and health indicator.
 
 ```mermaid
@@ -676,9 +686,9 @@ flowchart LR
 
 Local dashboard authentication is disabled by default through
 `DASHBOARD_AUTH_ENABLED=false`; subscription and asset-class controls remain
-convenience filters rather than security boundaries. The FastAPI server now has
-a default-off App Service authentication enforcement layer. When a future Web
-App enables both App Service Authentication and `DASHBOARD_AUTH_ENABLED=true`,
+convenience filters rather than security boundaries. The FastAPI server has a
+default-off App Service authentication enforcement layer. The deployed Web App
+enables both App Service Authentication and `DASHBOARD_AUTH_ENABLED=true`, so
 every static page and `/api/*` request requires the trusted
 `X-MS-CLIENT-PRINCIPAL` identity supplied by App Service. The flag cannot be
 enabled on a local host and does not provision Entra resources.

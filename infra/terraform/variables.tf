@@ -186,6 +186,18 @@ variable "dashboard_data_browser_enabled" {
   default     = false
 }
 
+variable "dashboard_recommendation_tracking_enabled" {
+  description = "Enable shared recommendation workflow tracking in the dashboard."
+  type        = bool
+  default     = false
+}
+
+variable "dashboard_recommendation_tracking_container" {
+  description = "Private append-only event container used for shared recommendation workflow state."
+  type        = string
+  default     = "dvm-workflow"
+}
+
 variable "dashboard_cache_seconds" {
   description = "Seconds each Web App process caches the verified Azure current bundle."
   type        = number
