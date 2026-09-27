@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": "vulnerability-view-2026-09-21",
+  "lifecycle": {
+    "fixedConfirmationRuns": 2,
+    "deviceFreshnessHours": 48
+  },
+  "policies": [
+    {"policyName":"CriticalKnownExploit","severity":"Critical","knownExploitRequired":true,"slaDays":4},
+    {"policyName":"Critical","severity":"Critical","knownExploitRequired":false,"slaDays":2},
+    {"policyName":"High","severity":"High","knownExploitRequired":false,"slaDays":7},
+    {"policyName":"Medium","severity":"Medium","knownExploitRequired":false,"slaDays":30},
+    {"policyName":"Low","severity":"Low","knownExploitRequired":false,"slaDays":60}
+  ]
+}

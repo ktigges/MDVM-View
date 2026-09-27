@@ -1,0 +1,19 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AZURE_FUNCTIONS_ENVIRONMENT": "Development",
+    "AUTH_MODE": "local",
+    "AZURE_TENANT_ID": "<tenant-id>",
+    "DEFENDER_API_BASE_URL": "https://api.security.microsoft.com",
+    "STORAGE_ACCOUNT_NAME": "<development-history-account>",
+    "STORAGE_CONTAINER_NAME": "dvm-history",
+    "STORAGE_CURRENT_CONTAINER_NAME": "dvm-current",
+    "APP_MODE": "live",
+    "RECOMMENDATION_ENRICHMENT_MODE": "targeted",
+    "ENABLE_EXPERIMENTAL_ENDPOINTS": "false",
+    "FULL_ENRICHMENT_WEEKDAY": "6",
+    "COLLECTION_SCHEDULE": "0 0 5 * * *"
+  }
+}

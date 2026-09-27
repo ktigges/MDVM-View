@@ -1,0 +1,202 @@
+<!--
+  Author: Kevin Tigges
+  Last modified: 2026-09-27
+  Purpose: Provide an interactive Azure hosting cost calculator.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DVM Viewer Azure Cost Calculator</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --navy: #0b2f4f;
+      --cyan: #16899a;
+      --ink: #17212b;
+      --muted: #5d6b78;
+      --line: #d8e0e7;
+      --panel: #f4f7f9;
+      --accent: #e7f5f7;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #eef2f5; color: var(--ink); font: 15px/1.5 Inter, "Segoe UI", sans-serif; }
+    header { background: var(--navy); color: white; padding: 28px max(24px, calc((100vw - 1180px) / 2)); }
+    header p { margin: 6px 0 0; color: #d7e6f1; }
+    main { max-width: 1180px; margin: 24px auto; padding: 0 24px 40px; }
+    .notice { margin-bottom: 18px; padding: 12px 15px; border-left: 4px solid var(--cyan); background: var(--accent); }
+    .layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(320px, .85fr); gap: 20px; align-items: start; }
+    .panel { background: white; border: 1px solid var(--line); border-radius: 10px; padding: 20px; box-shadow: 0 3px 12px rgba(25, 49, 70, .06); }
+    .panel + .panel { margin-top: 18px; }
+    h1, h2, h3 { margin-top: 0; }
+    h1 { font-size: 26px; margin-bottom: 2px; }
+    h2 { color: var(--navy); font-size: 19px; margin-bottom: 15px; }
+    h3 { color: var(--navy); font-size: 15px; margin: 18px 0 8px; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 16px; }
+    label { display: grid; gap: 5px; color: var(--muted); font-size: 13px; font-weight: 600; }
+    input, select { width: 100%; padding: 9px 10px; border: 1px solid #b9c6d1; border-radius: 6px; background: white; color: var(--ink); font: inherit; }
+    .hint { display: block; margin-top: 10px; color: var(--muted); font-size: 12px; }
+    .summary { position: sticky; top: 18px; }
+    .total { padding: 18px; border-radius: 9px; background: var(--navy); color: white; }
+    .total span { display: block; color: #cce1ec; font-size: 13px; }
+    .total strong { display: block; margin-top: 2px; font-size: 34px; line-height: 1.2; }
+    .breakdown { margin: 15px 0 0; padding: 0; list-style: none; }
+    .breakdown li { display: flex; justify-content: space-between; gap: 18px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+    .breakdown li:last-child { border-bottom: 0; }
+    .breakdown span { color: var(--muted); }
+    .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+    .metric { padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+    .metric span { display: block; color: var(--muted); font-size: 12px; }
+    .metric strong { display: block; margin-top: 3px; color: var(--navy); }
+    .recommendation { margin-top: 16px; padding: 13px; border-radius: 7px; background: var(--accent); }
+    footer { max-width: 1180px; margin: 0 auto; padding: 0 24px 32px; color: var(--muted); font-size: 12px; }
+    @media (max-width: 820px) {
+      .layout { grid-template-columns: 1fr; }
+      .summary { position: static; }
+    }
+    @media (max-width: 520px) {
+      .fields, .metric-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DVM Viewer Azure Cost Calculator</h1>
+    <p>Standalone planning estimate for the collector, Web App, storage, monitoring, and optional services.</p>
+  </header>
+  <main>
+    <div class="notice">
+      Planning estimate only. Rates are editable and exclude taxes, support plans, negotiated discounts, and unrelated subscription usage. Confirm final prices in the Azure Pricing Calculator before deployment.
+    </div>
+    <div class="layout">
+      <div>
+        <section class="panel">
+          <h2>Collector Function</h2>
+          <div class="fields">
+            <label>Function memory (GB)<input id="functionMemory" type="number" min="0.25" step="0.25" value="2"></label>
+            <label>Average collection duration (minutes)<input id="collectionMinutes" type="number" min="0" step="1" value="14"></label>
+            <label>Collections per day<input id="collectionsPerDay" type="number" min="0" step="1" value="2"></label>
+            <label>Days per month<input id="daysPerMonth" type="number" min="1" max="31" step="1" value="30"></label>
+            <label>Free GB-seconds per month<input id="freeGbSeconds" type="number" min="0" step="1000" value="100000"></label>
+            <label>Execution rate per GB-second ($)<input id="executionRate" type="number" min="0" step="0.000001" value="0.000026"></label>
+            <label>Executions per collection<input id="executionsPerCollection" type="number" min="1" step="1" value="1"></label>
+            <label>Free executions per month<input id="freeExecutions" type="number" min="0" step="1000" value="250000"></label>
+            <label>Price per million executions ($)<input id="executionMillionRate" type="number" min="0" step="0.01" value="0.40"></label>
+          </div>
+          <span class="hint">The calculator frequency does not change the deployed Function timer schedule.</span>
+        </section>
+
+        <section class="panel">
+          <h2>Dashboard Web App</h2>
+          <div class="fields">
+            <label>Linux App Service tier
+              <select id="appServiceTier">
+                <option value="13.14">B1 — $13.14/month</option>
+                <option value="69.35">S1 — $69.35/month</option>
+                <option value="62.05">P0v3 — $62.05/month</option>
+                <option value="124.10">P1v3 — $124.10/month</option>
+                <option value="custom">Custom monthly rate</option>
+              </select>
+            </label>
+            <label>Custom Web App rate ($/instance/month)<input id="customAppRate" type="number" min="0" step="0.01" value="13.14" disabled></label>
+            <label>Web App instances<input id="appInstances" type="number" min="1" step="1" value="1"></label>
+            <label>Paid standby/secondary region ($/month)<input id="standbyCost" type="number" min="0" step="0.01" value="0"></label>
+          </div>
+          <span class="hint">The lowest-cost recommendation is one B1 instance in one region with Terraform redeployment recovery.</span>
+        </section>
+
+        <section class="panel">
+          <h2>Storage, monitoring, and optional services</h2>
+          <div class="fields">
+            <label>Storage capacity and transactions ($/month)<input id="storageCost" type="number" min="0" step="0.01" value="5"></label>
+            <label>Monitoring and log ingestion ($/month)<input id="monitoringCost" type="number" min="0" step="0.01" value="2"></label>
+            <label>Front Door ($/month)<input id="frontDoorCost" type="number" min="0" step="0.01" value="0"></label>
+            <label>Private networking/NAT ($/month)<input id="networkCost" type="number" min="0" step="0.01" value="0"></label>
+            <label>Other fixed services ($/month)<input id="otherCost" type="number" min="0" step="0.01" value="0"></label>
+            <label>Planning contingency (%)<input id="contingencyPercent" type="number" min="0" step="1" value="10"></label>
+          </div>
+          <span class="hint">Enter current Storage and Azure Monitor estimates from the official calculator; usage and retention determine these charges.</span>
+        </section>
+      </div>
+
+      <aside class="panel summary">
+        <h2>Monthly estimate</h2>
+        <div class="total"><span>Estimated total with contingency</span><strong id="monthlyTotal">$0.00</strong></div>
+        <ul class="breakdown">
+          <li><span>Collector execution</span><strong id="functionCost">$0.00</strong></li>
+          <li><span>Web App compute</span><strong id="webAppCost">$0.00</strong></li>
+          <li><span>Storage</span><strong id="storageResult">$0.00</strong></li>
+          <li><span>Monitoring</span><strong id="monitoringResult">$0.00</strong></li>
+          <li><span>Optional services</span><strong id="optionalResult">$0.00</strong></li>
+          <li><span>Contingency</span><strong id="contingencyResult">$0.00</strong></li>
+        </ul>
+        <div class="metric-grid">
+          <div class="metric"><span>Monthly GB-seconds</span><strong id="monthlyGbSeconds">0</strong></div>
+          <div class="metric"><span>Billable GB-seconds</span><strong id="billableGbSeconds">0</strong></div>
+          <div class="metric"><span>Monthly collections</span><strong id="monthlyCollections">0</strong></div>
+          <div class="metric"><span>Monthly executions</span><strong id="monthlyExecutions">0</strong></div>
+        </div>
+        <div class="recommendation">
+          <strong>Current low-cost baseline</strong><br>
+          Two collections per day, Flex Consumption with no Always Ready instances, one B1 Web App instance, one region, LRS storage, and no Front Door or private networking.
+        </div>
+      </aside>
+    </div>
+  </main>
+  <footer>Last updated 2026-09-27 21:09 UTC. Currency: USD. Captured planning rates should be refreshed before purchase.</footer>
+  <script>
+    const ids = [
+      "functionMemory", "collectionMinutes", "collectionsPerDay", "daysPerMonth",
+      "freeGbSeconds", "executionRate", "executionsPerCollection", "freeExecutions",
+      "executionMillionRate", "appServiceTier", "customAppRate", "appInstances",
+      "standbyCost", "storageCost", "monitoringCost", "frontDoorCost", "networkCost",
+      "otherCost", "contingencyPercent"
+    ];
+    /** Read a nonnegative numeric input value. */
+    const value = id => Math.max(0, Number(document.getElementById(id).value) || 0);
+    /** Format an amount as US currency. */
+    const money = amount => amount.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
+    /** Format a rounded number for display. */
+    const number = amount => Math.round(amount).toLocaleString("en-US");
+
+    /** Calculate and display the estimated monthly hosting cost. */
+    function calculate() {
+      const days = value("daysPerMonth");
+      const collections = value("collectionsPerDay") * days;
+      const gbSeconds = value("functionMemory") * value("collectionMinutes") * 60 * collections;
+      const billableGbSeconds = Math.max(0, gbSeconds - value("freeGbSeconds"));
+      const executions = collections * value("executionsPerCollection");
+      const billableExecutions = Math.max(0, executions - value("freeExecutions"));
+      const functionCost = billableGbSeconds * value("executionRate")
+        + (billableExecutions / 1000000) * value("executionMillionRate");
+
+      const tier = document.getElementById("appServiceTier");
+      const custom = tier.value === "custom";
+      document.getElementById("customAppRate").disabled = !custom;
+      const appRate = custom ? value("customAppRate") : Number(tier.value);
+      const webAppCost = appRate * value("appInstances") + value("standbyCost");
+      const storage = value("storageCost");
+      const monitoring = value("monitoringCost");
+      const optional = value("frontDoorCost") + value("networkCost") + value("otherCost");
+      const subtotal = functionCost + webAppCost + storage + monitoring + optional;
+      const contingency = subtotal * value("contingencyPercent") / 100;
+
+      document.getElementById("functionCost").textContent = money(functionCost);
+      document.getElementById("webAppCost").textContent = money(webAppCost);
+      document.getElementById("storageResult").textContent = money(storage);
+      document.getElementById("monitoringResult").textContent = money(monitoring);
+      document.getElementById("optionalResult").textContent = money(optional);
+      document.getElementById("contingencyResult").textContent = money(contingency);
+      document.getElementById("monthlyTotal").textContent = money(subtotal + contingency);
+      document.getElementById("monthlyGbSeconds").textContent = number(gbSeconds);
+      document.getElementById("billableGbSeconds").textContent = number(billableGbSeconds);
+      document.getElementById("monthlyCollections").textContent = number(collections);
+      document.getElementById("monthlyExecutions").textContent = number(executions);
+    }
+
+    ids.forEach(id => document.getElementById(id).addEventListener("input", calculate));
+    calculate();
+  </script>
+</body>
+</html>

@@ -1,0 +1,225 @@
+<!--
+  Author: Kevin Tigges
+  Last modified: 2026-09-27
+  Purpose: Define the vulnerability dashboard page structure and controls.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Microsoft Vulnerability Management</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-title">
+      <span class="ms-logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      <div>
+      <p class="eyebrow">VULNERABILITY VIEW</p>
+      <h1>Microsoft Vulnerability Management</h1>
+      </div>
+    </div>
+    <div class="topbar-meta">
+      <div class="freshness"><span id="healthDot"></span><strong id="freshnessText">Loading data</strong><small>Live snapshot</small><small id="revisionText" class="revision-text">UI revision loading</small><small id="authStatus" class="auth-status">Checking access mode</small></div>
+      <div id="availabilityItems" class="header-statuses" aria-label="Snapshot status" aria-live="polite">
+        <span class="header-status-item pending"><i aria-hidden="true"></i><strong>Loading status</strong><span class="status-info" aria-hidden="true">i</span></span>
+      </div>
+    </div>
+  </header>
+
+  <div id="loadingNotice" class="loading-notice" role="status" aria-live="polite">
+    <span class="loading-spinner" aria-hidden="true"></span>
+    <div><strong>Loading dashboard data</strong><span>Reading and verifying the current dataset.</span></div>
+  </div>
+
+  <section id="developmentWarning" class="development-warning" role="alert" hidden>
+    <strong>Local development only</strong>
+    <span>Client-secret authentication is enabled. Never deploy these settings or credentials to Azure.</span>
+  </section>
+
+  <div class="app-shell">
+  <nav id="primaryNavigation" class="story-nav" aria-label="Primary views">
+    <span class="nav-heading">Workspace</span>
+    <button class="active" data-view="executive"><span>Executive</span></button>
+    <button data-view="overview"><span>Vulnerabilities</span></button>
+    <button data-view="workstations"><span>Workstations</span></button>
+    <button data-view="recommendations"><span>Recommendations</span></button>
+    <button data-view="priority"><span>Prioritize</span></button>
+    <button data-view="sla"><span>Remediate</span></button>
+    <button data-view="trend"><span>Statistics</span></button>
+    <button data-view="data-browser" data-feature="data-browser" hidden><span>Data evidence</span></button>
+  </nav>
+  <div class="workspace">
+  <div class="workspace-controls">
+  <section class="filter-toolbar" aria-labelledby="filterTitle">
+    <div><span>FILTER WORKSPACE</span><strong id="filterTitle">Filter current view</strong><small id="filterCount">Loading scope</small></div>
+    <button id="filterToggle" class="filter-toggle" type="button" aria-controls="filterBar" aria-expanded="false" aria-label="Show filters" title="Show filters"></button>
+  </section>
+  <section id="filterBar" class="filterbar" aria-label="Dashboard filters">
+    <label>Severity / task priority<select id="severityFilter"><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
+    <fieldset class="type-filter"><legend>Recommendation type</legend><label><input type="checkbox" name="recommendationType" value="Vulnerability" checked>Vulnerability</label><label><input type="checkbox" name="recommendationType" value="Misconfiguration">Misconfiguration</label></fieldset>
+    <label class="classification-filter">Asset classification<select id="assetClassFilter"><option value="All">All classifications</option><option value="AzureCloud">Azure / Cloud</option><option value="TraditionalIT">Traditional IT</option><option value="Unknown">Unknown</option></select><span>Azure resource metadata → Defender machine tag → inventory fallback</span></label>
+    <label class="subscription-filter">Subscription<select id="subscriptionFilter"><option value="All">All subscriptions</option><option value="NoSubscription">No subscription</option></select><span>Derived from Defender machine resource metadata</span></label>
+    <label class="queue-filter">Operating queue (derived)<select id="teamFilter"><option>All</option></select><span>Inferred from asset evidence, not a Defender assignment</span></label>
+    <label class="search-filter">Find items<input id="searchFilter" type="search" placeholder="CVE, recommendation, machine..."></label>
+    <fieldset class="domain-filter"><legend>Asset domains</legend><label><input type="checkbox" name="assetDomain" value="Devices" checked>Devices</label><label><input type="checkbox" name="assetDomain" value="Cloud" checked>Cloud</label><label><input type="checkbox" name="assetDomain" value="SaaS Apps">SaaS Apps</label><label><input type="checkbox" name="assetDomain" value="Identities">Identities</label><label><input type="checkbox" name="assetDomain" value="Data">Data</label></fieldset>
+  </section>
+  <section id="scopeBar" class="scope-bar" aria-live="polite">
+    <div><span id="scopeView">Executive</span><strong>Current scope</strong><p id="scopeSummary">Loading filters</p><div id="activeFilterChips" class="active-filter-chips"></div></div>
+    <button id="resetFilters" type="button">Reset all filters</button>
+  </section>
+  </div>
+
+  <main>
+    <section id="pivotPanel" class="pivot-panel" role="dialog" aria-labelledby="pivotTitle" hidden aria-live="polite">
+      <button id="clearPivot" class="pivot-close" type="button" title="Clear machine pivot" aria-label="Clear machine pivot">&times;</button>
+      <div class="section-heading"><div><span>SELECTED WORK ITEM</span><h2 id="pivotTitle">Affected machines</h2></div><p id="pivotSummary"></p></div>
+      <div class="pivot-actions">
+        <a id="defenderRemediationLink" class="action-link primary" href="https://security.microsoft.com/exposure-recommendations?tabId=Devices" target="_blank" rel="noopener">Open Exposure Recommendations</a>
+        <button id="copyRecommendationReference" class="action-link" type="button">Copy recommendation reference</button>
+        <span id="pivotActionStatus" class="action-status" role="status"></span>
+      </div>
+      <p class="handoff-note">Opens <strong>Exposure management → Recommendations</strong>. Defender does not expose its selected flyout as a URL, so select <strong>Vulnerabilities</strong> and paste the copied recommendation reference to open the exact item.</p>
+      <div id="pivotCards" class="metric-grid compact"></div>
+      <div class="table-wrap"><table id="pivotTable"></table></div>
+      <div id="pivotDetails" class="pivot-details"></div>
+    </section>
+    <section id="executive" class="story active">
+    <section class="executive-band" aria-label="Executive security posture">
+      <div class="executive-heading"><div><span>EXECUTIVE POSTURE</span><h2>What needs attention and how we are performing</h2></div><p>Current remediation workload, Microsoft Secure Score, and policy SLA outcomes</p></div>
+      <div class="executive-decision-grid">
+        <article id="secureScoreCard" class="secure-score-card"></article>
+        <article class="decision-panel"><div class="decision-panel-title"><span>WORK TO DO NOW</span><h3>Current remediation workload</h3></div><div id="executiveWorkload" class="decision-metrics"></div></article>
+        <article class="decision-panel"><div class="decision-panel-title"><span>SLA PERFORMANCE</span><h3>How remediation is performing</h3></div><div id="executiveSlaPerformance" class="decision-metrics"></div></article>
+      </div>
+    </section>
+      <div class="subsection-heading"><div><span>RECOMMENDATION IMPACT</span><h3>Highest-impact actions</h3></div><p>One recommendation can address many findings, devices, and CVEs. Select an action to inspect exactly what it can fix.</p></div>
+      <div id="executiveRecommendationImpact" class="recommendation-impact-grid compact-impact"></div>
+      <div class="exec-visual-grid">
+        <article class="panel"><div class="panel-title"><h3>Recommendation severity</h3><span>Current filter context</span></div><div id="recommendationSeverityPie" class="donut-panel"></div></article>
+        <article class="panel"><div class="panel-title"><h3>Finding severity</h3><span>Open and unresolved findings</span></div><div id="findingSeverityPie" class="donut-panel"></div></article>
+        <article class="panel"><div class="panel-title"><h3>Asset exposure</h3><span>Current findings by asset class</span></div><div id="assetExposurePie" class="donut-panel"></div></article>
+      </div>
+      <div class="subsection-heading"><div><span>CURRENT EXPOSURE MIX</span><h3>Severity and subscription coverage</h3></div></div>
+      <div id="severityCards" class="metric-grid compact"></div>
+      <div class="subsection-heading"><div><span>GLOBAL VULNERABILITY SLA · FINDING CLOCK</span><h3>Defender-confirmed fixes against policy due dates</h3></div></div>
+      <div class="panel sla-severity-panel"><div class="table-wrap"><table id="executiveSlaBreakdown"></table></div></div>
+      <div id="overviewSlaCards" class="metric-grid compact sla-summary"></div>
+    </section>
+    <section id="overview" class="story">
+      <div class="section-heading"><div><h2>Vulnerabilities and known exploits</h2></div></div>
+      <div class="split">
+        <article class="panel wide"><div class="panel-title"><h3>Current Critical and High</h3><span>Click a row to inspect the device</span></div><div class="table-wrap"><table id="findingsTable"></table></div></article>
+        <article class="panel"><div class="panel-title"><h3>Known exploit watchlist</h3><span>One correlated row per CVE with public, verified, or exploit-kit evidence</span></div><div class="table-wrap"><table id="exploitTable"></table></div></article>
+      </div>
+    </section>
+
+    <section id="workstations" class="story">
+      <div class="section-heading"><div><h2>Workstation remediation impact</h2></div></div>
+      <div id="workstationCards" class="metric-grid"></div>
+      <article class="panel"><div class="panel-title"><h3>Workstation vulnerability movement</h3><span>Before → current reconciles new, reopened, and fixed findings in the latest refresh</span></div><div class="table-wrap"><table id="workstationTable"></table></div></article>
+    </section>
+
+    <section id="recommendations" class="story">
+      <div class="section-heading"><div><h2>Recommendations and estimated impact</h2></div></div>
+      <div id="recommendationCards" class="metric-grid"></div>
+      <aside id="recommendationPreview" class="recommendation-preview" role="status"><p class="recommendation-preview-empty">Pause over a recommendation for an impact preview. Select the row for complete details.</p></aside>
+      <article class="panel recommendation-inventory"><div class="table-wrap"><table id="recommendationTable"></table></div></article>
+    </section>
+
+    <section id="priority" class="story">
+      <div class="section-heading"><div><h2>Prioritized recommendations</h2></div></div>
+      <div class="formula">Defender recommendation severity score with current affected machines, CVE evidence, and subscription exposure</div>
+      <article class="panel"><div class="panel-title"><h3>Priority workbench</h3><span>Click a recommendation to inspect affected machines and CVEs</span></div><div class="table-wrap"><table id="priorityTable"></table></div></article>
+    </section>
+
+    <section id="sla" class="story">
+      <div class="section-heading"><div><h2>Remediation history and outcomes</h2></div></div>
+      <div id="slaCards" class="metric-grid"></div>
+      <div class="subsection-heading"><div><span>RECOMMENDATION OUTCOMES</span><h3>Things to fix: before, fixed, and current</h3></div><p>Finding-instance outcomes grouped by recommendation</p></div>
+      <div id="remediationOutcomeCards" class="metric-grid compact"></div>
+      <div class="panel recommendation-outcomes"><div class="table-wrap"><table id="remediationOutcomeTable"></table></div></div>
+      <div class="sla-graph-grid">
+        <article class="panel sla-graph-panel"><div class="panel-title"><h3 id="findingSlaGraphTitle">Finding outcomes by severity</h3><span>Open and Defender-confirmed fixed, within vs outside policy SLA</span></div><div id="findingSlaGraph" class="sla-bar-chart" role="region" aria-labelledby="findingSlaGraphTitle"></div></article>
+        <article class="panel sla-graph-panel"><div class="panel-title"><h3 id="recommendationSlaGraphTitle">Recommendation outcomes by severity</h3><span>Distinct recommendations represented in each finding outcome</span></div><div id="recommendationSlaGraph" class="sla-bar-chart recommendation-sla-chart" role="region" aria-labelledby="recommendationSlaGraphTitle"></div></article>
+      </div>
+      <div class="notice"><strong>How confirmation works</strong><p>The team remediates from Defender recommendations or its existing operational process. This view waits for Defender reassessment: a finding is confirmed fixed only after it disappears from fresh active-device snapshots. Remediation activities are supporting context, not the primary workflow.</p></div>
+      <div id="remediationActivityCards" class="metric-grid compact"></div>
+      <article class="panel"><div class="panel-title"><h3>Remediation activity context</h3><span>Supporting Defender task evidence when available</span></div><div class="table-wrap"><table id="remediationTable"></table></div></article>
+    </section>
+
+    <section id="trend" class="story">
+      <div class="section-heading"><div><h2>Workload and SLA statistics</h2></div></div>
+      <section class="statistics-period-panel" aria-labelledby="statisticsPeriodTitle">
+        <div>
+          <span>COMPARISON WINDOW</span>
+          <h3 id="statisticsPeriodTitle">What changed between periods?</h3>
+          <p id="statisticsPeriodContext">Loading comparison dates</p>
+        </div>
+        <label>Compare
+          <select id="statisticsPeriod">
+            <option value="week">This week vs previous week</option>
+            <option value="run">Latest run vs previous run</option>
+            <option value="30days">Last 30 days vs previous 30 days</option>
+            <option value="month">Month-to-date vs matched prior month</option>
+            <option value="custom">Custom range vs preceding equal range</option>
+          </select>
+        </label>
+        <div id="customPeriodFields" class="custom-period-fields" hidden>
+          <label>Start date<input id="statisticsStartDate" type="date"></label>
+          <label>End date<input id="statisticsEndDate" type="date"></label>
+          <button id="applyStatisticsPeriod" type="button">Apply range</button>
+        </div>
+      </section>
+      <div class="statistics-definitions">
+        <span><strong>New</strong> First reported during the period</span>
+        <span><strong>Fixed</strong> Defender stopped reporting during the period</span>
+        <span><strong>Net change</strong> New minus fixed</span>
+        <span><strong>Ending open</strong> Unresolved at period end</span>
+      </div>
+      <div id="statisticsPeriodCards" class="metric-grid statistics-period-cards"></div>
+      <article class="panel period-comparison-panel"><div class="panel-title"><h3>Selected period comparison</h3><span>Finding instances in the current global filter scope</span></div><div class="table-wrap"><table id="statisticsPeriodTable"></table></div></article>
+
+      <div class="subsection-heading"><div><h3>Selected-period SLA against policy due dates</h3></div></div>
+      <div id="statisticsSlaCards" class="metric-grid compact statistics-sla-cards"></div>
+      <div class="panel sla-severity-panel"><div class="table-wrap"><table id="statisticsSlaBreakdown"></table></div></div>
+
+      <div class="subsection-heading"><div><h3>Longer-term 90-day workload trajectory</h3></div></div>
+      <article class="panel chart-panel"><div class="trend-chart-head"><div><strong>90-day trajectory</strong><span id="trendFilterContext" class="filter-chip"></span></div><div class="legend"><span class="new">New</span><span class="fixed">Fixed</span><span class="remaining">Remaining</span><span class="exploit">Known exploit backlog</span></div></div><div id="trendChart" class="chart"></div></article>
+      <article class="panel trend-history"><div class="panel-title"><h3>Weekly change history</h3><span>Select New or Fixed for recommendation, CVE, and machine details</span></div><div class="weekly-legend"><span><i class="new-key"></i>New</span><span><i class="fixed-key"></i>Fixed</span></div><div id="weeklyTrendChart" class="weekly-chart"></div><div class="table-wrap"><table id="weeklyComparisonTable"></table></div></article>
+      <div class="subsection-heading"><div><h3>Weekly remediation task due-date history</h3></div></div>
+      <div id="trendTaskDueCards" class="metric-grid compact task-due-summary"></div>
+      <article class="panel task-history"><div class="panel-title"><h3>Remediation task performance over time</h3><span>Separate from Defender-confirmed finding remediation</span></div><div class="table-wrap"><table id="weeklyTaskDueTable"></table></div></article>
+    </section>
+
+    <section id="data-browser" class="story">
+      <div class="section-heading"><div><h2>Curated data evidence</h2></div></div>
+      <div class="notice data-browser-notice"><strong>Read-only evidence</strong><p>This view shows the normalized records used by the dashboard. It does not provide storage credentials, raw API access, editing, or deletion.</p></div>
+      <section class="data-browser-controls" aria-label="Data browser controls">
+        <label>Dataset<select id="dataBrowserDataset"></select></label>
+        <label>Search current dataset<input id="dataBrowserSearch" type="search" placeholder="Search any displayed field"></label>
+        <button id="dataBrowserSearchButton" type="button">Search</button>
+      </section>
+      <section id="dataBrowserMetadata" class="data-browser-metadata" aria-live="polite">Data browser is loading.</section>
+      <article class="panel data-browser-table-panel">
+        <div class="panel-title"><h3 id="dataBrowserTitle">Dataset rows</h3><span id="dataBrowserPageStatus"></span></div>
+        <div class="table-wrap"><table id="dataBrowserTable"></table></div>
+        <div class="data-browser-pagination"><button id="dataBrowserPrevious" type="button">Previous</button><button id="dataBrowserNext" type="button">Next</button></div>
+      </article>
+      <article class="panel data-browser-json-panel">
+        <div class="panel-title"><h3 id="dataBrowserRecordTitle">Select a row to inspect every field</h3><button id="copyDataBrowserJson" type="button" disabled>Copy JSON</button></div>
+        <pre id="dataBrowserJson">No record selected.</pre>
+      </article>
+    </section>
+
+  </main>
+  </div>
+  </div>
+
+  <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
+  <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

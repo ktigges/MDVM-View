@@ -1,0 +1,43 @@
+{
+  "subscription_id": "00000000-0000-0000-0000-000000000000",
+  "tenant_id": "00000000-0000-0000-0000-000000000000",
+  "collector_subscription_reader_ids": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "resource_group_name": "rg-dvmviewer-test",
+  "location": "centralus",
+  "project_name": "dvmviewer",
+  "environment": "test",
+  "history_storage_account_name": "stdvmviewerhist001",
+  "history_storage_replication_type": "LRS",
+  "history_container_name": "dvm-history",
+  "current_container_name": "dvm-current",
+  "storage_soft_delete_days": 30,
+  "history_immutability_days": 365,
+  "lock_history_immutability_policy": false,
+  "grant_deployer_history_access": true,
+  "deploy_function": false,
+  "deploy_web_app": false,
+  "function_runtime_storage_account_name": "stdvmviewerfunc001",
+  "function_app_name": "func-dvmviewer-test",
+  "web_app_name": "app-dvmviewer-test",
+  "web_app_service_plan_name": "plan-dvmviewer-web-test",
+  "web_app_identity_name": "id-dvmviewer-web-test",
+  "web_app_sku_name": "B1",
+  "dashboard_entra_application_name": "DVM Viewer",
+  "dashboard_access_group_object_id": "",
+  "dashboard_access_group_name": "DVM Viewer Users",
+  "dashboard_access_member_object_ids": [],
+  "dashboard_data_browser_enabled": true,
+  "dashboard_cache_seconds": 300,
+  "app_mode": "live",
+  "collection_schedule": "0 0 5 * * *",
+  "recommendation_enrichment_mode": "auto",
+  "enable_experimental_endpoints": false,
+  "full_enrichment_weekday": 6,
+  "tags": {
+    "application": "dvmviewer",
+    "environment": "test",
+    "managed-by": "terraform"
+  }
+}

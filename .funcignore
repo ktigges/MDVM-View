@@ -1,0 +1,12 @@
+.git*
+.venv/
+.pytest_cache/
+__pycache__/
+dashboard/
+docs/
+infra/
+output/
+tests/
+.env
+local.settings.json
+LOCAL-NOTES.txt

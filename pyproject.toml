@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools==75.8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vulnerability-view"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "azure-functions==1.21.3",
+  "azure-identity==1.19.0",
+  "azure-storage-blob==12.30.2",
+  "fastapi==0.115.8",
+  "python-dotenv==1.1.1",
+  "requests==2.32.3",
+  "uvicorn==0.34.0",
+]
+
+[project.scripts]
+vulnerability-view = "vulnerability_view.dataprep_cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]

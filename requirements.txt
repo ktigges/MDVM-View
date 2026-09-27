@@ -1,0 +1,2 @@
+# Azure Functions remote build installs this package and its pyproject dependencies.
+.
