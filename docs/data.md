@@ -1,6 +1,6 @@
 # Data structure, collection runs, and history
 
-> **Last modified:** 2026-09-27  
+> **Last modified:** 2026-09-27
 > **Purpose:** Define collected data, run processing, retention, change detection, and SLA calculations.
 
 ## Collection flow
@@ -736,7 +736,7 @@ The summary is reconstructed from lifecycle fields in the published finding rows
 - Collection before this schema used CVE-level `firstDetected`; backfill now reconstructs collector-owned first observation from retained runs.
 - Two qualified absent snapshots are required, but unusual source or scope changes can still require investigation.
 - Only one reopened timestamp is retained.
-- The policy is sample configuration, not an approved operating policy.
+- The policy is sample configuration, not an adopted operating policy.
 
 These limitations affect how strongly SLA results can be interpreted.
 

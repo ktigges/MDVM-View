@@ -1,7 +1,59 @@
-# Operations and configuration
+# Operations and monitoring
 
-> **Last modified:** 2026-09-27  
-> **Purpose:** Define authentication, runtime configuration, dashboard controls, and operational status sources.
+> **Last modified:** 2026-09-28
+> **Purpose:** Run and monitor collection, confirm publication, manage dashboard access, and understand runtime configuration.
+
+For initial installation use the [Azure deployment guide](../DEPLOY.md). For a
+local-only first view use [Local evaluation](local-evaluation.md). For
+symptom-led diagnosis use [Troubleshooting](troubleshooting.md).
+
+## Operator quick start
+
+### Check collection status
+
+```bash
+./infra/check-function-logs.sh 1 3 --status-only
+./infra/check-runs.sh 5 --progress
+```
+
+The first command checks Function invocation state. The second combines current
+progress with completed immutable runs. Do not invoke manually while status is
+`ACTIVE` or `INDETERMINATE`.
+
+### Run one intentional collection
+
+```bash
+CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
+./infra/check-runs.sh 5 --progress
+```
+
+Each successful invocation creates a new immutable run and advances only the
+current manifest pointer after validation.
+
+### Update collector or dashboard code
+
+```bash
+./infra/deploy.sh tfdeploy function
+./infra/deploy.sh tfverify function
+
+./infra/deploy.sh tfdeploy webapp
+./infra/deploy.sh tfverify webapp
+```
+
+Code-only deployments do not require a Terraform plan and do not start a
+collection.
+
+### Change infrastructure or settings
+
+Use the highest already-deployed cumulative stage:
+
+```bash
+./infra/deploy.sh tfplan webapp
+terraform -chdir=infra/terraform show webapp.tfplan
+./infra/deploy.sh tfapply webapp
+```
+
+Never apply a plan that removes protected storage or retained DVM history.
 
 ## Authentication for service-to-service access
 
@@ -51,8 +103,8 @@ Environment variables override values loaded from `.env`. When the Functions hos
 | `STORAGE_CONTAINER_NAME` | `dvm-history` | Optional override | Set explicitly | Set explicitly | Immutable raw, curated, policy, and run history |
 | `STORAGE_CURRENT_CONTAINER_NAME` | `dvm-current` | Optional override | Set explicitly | Set explicitly | Current completed-run manifest pointer |
 | `APP_MODE` | `synthetic` | `live`, `synthetic`, or `combined` | `live` | Terraform `app_mode` | Selects data mode for build commands; deployed `combined` mode carries forward explicitly seeded synthetic rows but never generates them |
-| `RECOMMENDATION_ENRICHMENT_MODE` | `auto` | Usually `targeted` | `targeted` for local host testing | `auto` or approved value | Controls recommendation-machine API calls |
-| `ENABLE_EXPERIMENTAL_ENDPOINTS` | `false` | Keep disabled | Keep disabled unless testing compatibility | Keep disabled unless explicitly approved | Enables undocumented Defender compatibility probes such as `/api/remediationTasks`; these are not required for core findings, lifecycle, SLA, recommendations, devices, or Secure Score |
+| `RECOMMENDATION_ENRICHMENT_MODE` | `auto` | Usually `targeted` | `targeted` for local host testing | `auto` or organization-defined value | Controls recommendation-machine API calls |
+| `ENABLE_EXPERIMENTAL_ENDPOINTS` | `false` | Keep disabled | Keep disabled unless testing compatibility | Keep disabled unless explicitly authorized | Enables undocumented Defender compatibility probes such as `/api/remediationTasks`; these are not required for core findings, lifecycle, SLA, recommendations, devices, or Secure Score |
 | `FULL_ENRICHMENT_WEEKDAY` | `6` | Optional | Optional | Required when enrichment is `auto` | Weekly full-reconciliation day, Monday `0` through Sunday `6` |
 | `COLLECTION_SCHEDULE` | `0 0 5 * * *` | Not used by direct CLI commands | Temporary test schedule | Production NCRONTAB schedule | Timer-trigger schedule |
 | `SYNTHETIC_SEED` | `24017` | Optional | Not needed for live Function test | Not needed | Reproducible sample data |
@@ -102,7 +154,7 @@ not advertise the feature. It provides:
 The browser is read-only and does not expose arbitrary filesystem/blob paths,
 storage credentials, raw Defender responses, or mutation operations. In a
 hosted environment, configure `DASHBOARD_DATA_BROWSER_ROLE` and assign that
-App Service application role only to approved operators or auditors. A hidden
+App Service application role only to authorized operators or auditors. A hidden
 URI obscurity is not an authorization boundary; the server enforces both the
 feature flag and optional role.
 
@@ -194,6 +246,7 @@ GET /api/health
 GET /api/auth
 GET /api/diagnostics
 GET /api/status
+GET /api/sla-policy
 GET /api/recommendation-tracking
 PUT /api/recommendation-tracking
 GET /api/data-browser/catalog

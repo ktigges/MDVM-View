@@ -1,6 +1,6 @@
 # Command reference
 
-> **Last modified:** 2026-09-28  
+> **Last modified:** 2026-09-28
 > **Purpose:** Explain supported project commands, what they change, and when operators should use them.
 
 Run commands from the repository root unless a section says otherwise.
@@ -22,6 +22,7 @@ Run commands from the repository root unless a section says otherwise.
 | Start the local dashboard | `./start-app.sh` |
 | Check effective non-secret application configuration | `vulnerability-view show-config` |
 | Validate local generated datasets | `vulnerability-view validate` |
+| Collect a raw-data sample on Windows | `.\tools\collect-sample-data.ps1 -TenantId "<tenant-guid>" -OutputDirectory "E:\SecureTransfer"` |
 
 Never manually invoke while the status checker reports `ACTIVE` or
 `INDETERMINATE`.
@@ -52,6 +53,23 @@ az account show --output table
 
 Use these before local live collection, Terraform, deployment, or Azure
 diagnostics. `az account show` is read-only and confirms the active context.
+
+### Collect and replay a sample
+
+Use the Windows collection script only after the organization authorizes export
+of full raw Defender and Microsoft Graph responses:
+
+```powershell
+.\tools\collect-sample-data.ps1 `
+  -TenantId "<source-tenant-guid>" `
+  -OutputDirectory "E:\SecureTransfer"
+```
+
+The script runs preflight and one local-only collection, validates the result,
+and creates a checksum-protected ZIP. The ZIP is not encrypted and must use an
+encrypted transfer channel defined by organizational policy. See
+[Collect and replay a sample](sample-replay.md) for prerequisites, data
+classification, import validation, replay behavior, and local use cases.
 
 ## 3. Local dashboard
 
@@ -351,4 +369,3 @@ watch -n 20 './infra/check-function-logs.sh 1 1 --status-only'
 
 Run the invocation only if the first command does not report `ACTIVE` or
 `INDETERMINATE`.
-

@@ -1,9 +1,9 @@
-CUSTOMER FIRST LIVE DATA SAMPLING - CALL BRIEF
+FIRST LIVE DATA SAMPLING - CALL BRIEF
 Prepared: 2026-09-28
 
 PURPOSE
 -------
-Prepare the customer for one controlled, read-only collection from Microsoft
+Prepare the organization for one controlled, read-only collection from Microsoft
 Defender Vulnerability Management so we can validate the dashboard with their
 real data before enabling a recurring schedule.
 
@@ -15,59 +15,60 @@ or SLA results in Defender.
 DECISIONS TO MAKE ON THE CALL
 -----------------------------
 1. Confirm the pilot scope:
-   - Customer tenant and Azure subscription(s).
+   - Source tenant and Azure subscription(s).
    - Approximate number of onboarded endpoints.
    - Defender device groups that must be visible.
    - Whether all subscriptions are in scope or only a named subset.
    - Whether Microsoft Secure Score is required in the first sample.
 
 2. Confirm where the pilot will run:
-   - Recommended: deploy the collector and protected storage in the customer's
+   - Recommended: start with the local collector and local file store before
+     deploying protected storage in the source
      tenant/subscription.
    - The current managed-identity design assumes the Azure deployment and
      Defender data are in the same Microsoft Entra tenant.
-   - Do not copy customer security data into another tenant or subscription
-     without explicit customer approval.
+   - Do not copy sensitive security data into another tenant or subscription
+     without explicit authorization.
 
 3. Confirm data governance:
-   - Approved Azure region.
-   - Approved storage replication (LRS, ZRS, GRS, or GZRS).
+   - Selected Azure region.
+   - Selected storage replication (LRS, ZRS, GRS, or GZRS).
    - Retention period and WORM/immutability requirements.
    - Authorized users/groups for the dashboard.
    - Whether device names, CVE details, subscription IDs, Azure resource IDs,
      and security findings may be retained for the pilot.
-   - Customer owner for approving access and reviewing results.
+   - Organization owner for authorizing access and reviewing results.
 
 4. Confirm the pilot cadence:
-   - Start with one manually approved collection.
+   - Start with one manually authorized collection.
    - Do not enable frequent recurring collection until row counts, runtime,
-     storage growth, memory, and customer expectations are validated.
+     storage growth, memory, and operational expectations are validated.
 
 
-CUSTOMER PREREQUISITES
+SOURCE-ENVIRONMENT PREREQUISITES
 ----------------------
 Microsoft security prerequisites:
 - Microsoft Defender for Endpoint / Defender Vulnerability Management is
   enabled and contains onboarded devices.
-- The customer can identify an administrator authorized to grant application
+- The organization can identify an administrator authorized to grant application
   permissions and tenant admin consent.
 - Defender device-group/RBAC visibility includes the intended pilot devices.
 
 Azure prerequisites:
-- An Azure subscription and resource group location approved for the pilot.
+- An Azure subscription and resource group location selected for the pilot.
 - Permission for the deployment operator to create the Function, Web App if
   included, storage accounts, monitoring resources, managed identities, role
   assignments, and Entra application objects.
 - Permission to assign Reader to the collector on each subscription that must
   appear in inventory, including subscriptions with zero current findings.
-- Customer-approved globally unique names for:
+- Organization-defined globally unique names for:
   - Protected history storage account.
   - Function runtime storage account.
   - Function App.
   - Optional dashboard Web App.
 
 Workstation prerequisites for deployment:
-- Azure CLI authenticated to the correct customer tenant and subscription.
+- Azure CLI authenticated to the correct source tenant and subscription.
 - Terraform 1.10 or later.
 - Python 3.12.
 - Bash, zip, jq, and curl.
@@ -83,7 +84,7 @@ permissions with tenant admin consent:
 
 Optional Microsoft Graph permission:
 - SecurityEvents.Read.All
-  Used for Microsoft Secure Score. If it is not approved, Secure Score is
+  Used for Microsoft Secure Score. If it is not authorized, Secure Score is
   displayed as unavailable; no synthetic score is substituted.
 
 Azure subscription access:
@@ -109,8 +110,8 @@ Required Defender data:
 
 Optional/derived data:
 - Recommendation-to-machine relationships.
-- Microsoft Secure Score when Graph permission is approved.
-- Azure subscription inventory for approved subscriptions.
+- Microsoft Secure Score when Graph permission is authorized.
+- Azure subscription inventory for selected subscriptions.
 - Normalized findings, lifecycle state, SLA calculations, summaries, and
   reconciliation evidence produced by the application.
 
@@ -138,13 +139,13 @@ RECOMMENDED PILOT SETTINGS
 - Do not enable an aggressive recurring schedule until the first run is
   measured.
 - Protected history: private StorageV2/ADLS Gen2 account with soft delete and
-  customer-approved immutable retention.
+  organization-defined immutable retention.
 - Function runtime storage: separate replaceable StorageV2 account.
 
 
 IMPLEMENTATION SEQUENCE
 -----------------------
-1. Customer supplies/approves:
+1. The organization supplies:
    - Tenant ID.
    - Subscription ID(s).
    - Region.
@@ -155,8 +156,8 @@ IMPLEMENTATION SEQUENCE
 2. Prepare environment-specific Terraform values.
 
 3. Sign in and verify context:
-   az login --tenant <customer-tenant-id>
-   az account set --subscription <customer-subscription-id>
+   az login --tenant <source-tenant-id>
+   az account set --subscription <source-subscription-id>
    az account show --output table
 
 4. Deploy protected foundation:
@@ -170,14 +171,14 @@ IMPLEMENTATION SEQUENCE
    terraform -chdir=infra/terraform show function.tfplan
    ./infra/deploy.sh tfapply function
 
-6. Customer administrator reviews and grants the required Defender permissions
+6. An administrator reviews and grants the required Defender permissions
    and tenant admin consent. Confirm device-group visibility.
 
 7. Run read-only API preflight:
    ./infra/deploy.sh tfpreflight
 
    Required endpoints must pass before the first collection. Optional Secure
-   Score may remain unavailable if its Graph permission was not approved.
+   Score may remain unavailable if its Graph permission was not authorized.
 
 8. Publish and verify collector code:
    ./infra/deploy.sh tfdeploy function
@@ -186,7 +187,7 @@ IMPLEMENTATION SEQUENCE
 9. Confirm no collection is already active:
    ./infra/check-function-logs.sh 1 3 --status-only
 
-10. Start one explicitly approved collection:
+10. Start one explicitly authorized collection:
     CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
 
 11. Monitor without starting a duplicate:
@@ -210,14 +211,14 @@ FIRST-RUN ACCEPTANCE CHECKS
 - Peak memory remains below the configured Function memory.
 - Duration and API throttling are acceptable.
 - Storage written per run is measured for retention/cost planning.
-- No unexpected subscription, device group, or customer data is included.
-- Customer validates a sample of devices, CVEs, recommendations, and counts
+- No unexpected subscription, device group, or source data is included.
+- The organization validates a sample of devices, CVEs, recommendations, and counts
   against Defender.
 
 
 AFTER THE FIRST SAMPLE
 ----------------------
-Review these measurements with the customer before scheduling recurring runs:
+Review these measurements with the organization before scheduling recurring runs:
 - Endpoint count.
 - Finding count and findings per endpoint.
 - Vulnerability catalog size.
@@ -245,35 +246,34 @@ IMPORTANT SAFETY AND DATA-HANDLING STATEMENTS
 - Every successful run is immutable.
 - Switching to live mode does not delete older synthetic or test history.
 - A failed collection does not replace the current manifest.
-- Stopping or redeploying the application is not approval to delete customer
+- Stopping or redeploying the application is not authorization to delete
   history.
 - Do not run two collectors concurrently.
-- Do not email or export customer security data without explicit approval.
+- Do not email or export sensitive security data without explicit authorization.
 - Do not put client secrets in tracked files.
 
 
-QUESTIONS TO ASK THE CUSTOMER
+QUESTIONS TO ASK
 -----------------------------
 1. Which tenant, subscriptions, and Defender device groups are in scope?
 2. Approximately how many endpoints and findings should we expect?
-3. Who can approve the three Defender read permissions and admin consent?
+3. Who can authorize the three Defender read permissions and admin consent?
 4. Is Microsoft Secure Score required for the pilot?
-5. Which Azure region and storage replication are approved?
+5. Which Azure region and storage replication should be used?
 6. What immutable retention period is required?
 7. May the pilot retain device names, CVEs, subscription/resource IDs, and raw
    security API responses?
 8. Who should have dashboard access?
-9. Do they want one manual sample first, or a short approved test cadence?
+9. Do they want one manual sample first, or a short defined test cadence?
 10. Who will validate sampled dashboard records against Defender?
 11. Who owns ongoing cost, failure monitoring, and access review?
 
 
 WHAT TO HAVE READY AFTER THE CALL
 ---------------------------------
-- Written pilot scope and customer approval.
+- Written pilot scope and authorization.
 - Tenant/subscription/region/naming values.
-- Named customer permission approver.
-- Approved data retention and access list.
+- Named permission administrator.
+- Defined data retention and access list.
 - Agreed first-run time window.
 - Agreed validation owner and acceptance criteria.
-

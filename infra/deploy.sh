@@ -10,10 +10,10 @@ TF_DIR="$ROOT_DIR/infra/terraform"
 TF_VARS="$TF_DIR/main.tfvars.json"
 
 require_tf_vars() {
-  # Stops deployment commands when the ignored customer values file is absent.
+  # Stops deployment commands when the ignored environment values file is absent.
   if [[ ! -f "$TF_VARS" ]]; then
     echo "Terraform values are missing: $TF_VARS" >&2
-    echo "Copy main.tfvars.example.json to main.tfvars.json and replace every customer value." >&2
+    echo "Copy main.tfvars.example.json to main.tfvars.json and replace every environment value." >&2
     exit 1
   fi
 }
@@ -224,6 +224,46 @@ tf_deploy() {
           -x '*/__pycache__/*' '*.pyc' 'dashboard/data/*' 'dashboard/calculator.html' 'dashboard/tools/*'
       )
 
+      require_command python3
+      local asset_version revised_package ui_revision
+      ui_revision="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+      asset_version="${ui_revision//[-:TZ]/}"
+      revised_package="$package.revised"
+      python3 - "$package" "$revised_package" "$ui_revision" "$asset_version" <<'PY'
+import re
+import sys
+import zipfile
+
+source_path, destination_path, revision, asset_version = sys.argv[1:]
+with zipfile.ZipFile(source_path, "r") as source, zipfile.ZipFile(destination_path, "w") as destination:
+    for entry in source.infolist():
+        content = source.read(entry.filename)
+        if entry.filename == "dashboard/config.js":
+            text = content.decode("utf-8")
+            text, replacements = re.subn(
+                r'revision: "[^"]+"',
+                f'revision: "{revision}"',
+                text,
+                count=1,
+            )
+            if replacements != 1:
+                raise RuntimeError("Could not stamp dashboard/config.js with the deployment revision")
+            content = text.encode("utf-8")
+        elif entry.filename == "dashboard/index.html":
+            text = content.decode("utf-8")
+            text, replacements = re.subn(
+                r'((?:styles\.css|config\.js|app\.js)\?v=)[^"]+',
+                rf"\g<1>{asset_version}",
+                text,
+            )
+            if replacements != 3:
+                raise RuntimeError("Could not stamp all dashboard asset versions")
+            content = text.encode("utf-8")
+        destination.writestr(entry, content)
+PY
+      mv "$revised_package" "$package"
+      echo "Packaged Web App UI revision $ui_revision"
+
       local previous_deployment_id deploy_exit latest_deployment deployment_id deployment_status
       previous_deployment_id="$(
         az webapp log deployment list \
@@ -429,7 +469,7 @@ For the first deployment after cloning the repository:
                        CONFIRM_TF_DESTROY_FUNCTION=yes.
 
 The Web App plan creates an assignment-required Enterprise Application but
-does not create groups or assign users. Assign approved users or groups in
+does not create groups or assign users. Assign authorized users or groups in
 Microsoft Entra after apply.
 EOF
 }

@@ -5,7 +5,7 @@
  */
 
 window.VULNERABILITY_VIEW_CONFIG = {
-  revision: "2026-09-28T14:43:25Z",
+  revision: "2026-09-28T15:53:02Z",
   branding: {
     eyebrow: "VULNERABILITY VIEW",
     title: "Microsoft Vulnerability Management",
@@ -30,5 +30,16 @@ window.VULNERABILITY_VIEW_CONFIG = {
   },
   authentication: {
     showStatus: true,
+  },
+  workloadGrouping: {
+    rules: [
+      {
+        id: "generated-scale-hosts",
+        label: "Generated scale workload",
+        field: "DeviceName",
+        operator: "prefix",
+        value: "gen-",
+      },
+    ],
   },
 };

@@ -1,10 +1,15 @@
 # Azure deployment guide
 
-> **Last modified:** 2026-09-27  
+> **Last modified:** 2026-09-28
 > **Purpose:** Deploy and validate protected storage, the collector Function, and the authenticated dashboard Web App.
 
 The deployment is staged so retained DVM history stays independent of
 replaceable application infrastructure.
+
+Before deploying, complete
+[Local evaluation before Azure deployment](docs/local-evaluation.md) to verify
+data access, dashboard behavior, SLA assumptions, collection duration, memory,
+and approximate run size without creating Azure resources.
 
 For the complete inventory of Terraform inputs, runtime environment variables,
 JSON keys, generated Azure App Settings, SLA controls, presentation settings,
@@ -13,6 +18,49 @@ and script overrides, see
 For all supported local, collection, deployment, validation, and diagnostic
 commands, including when each is safe to use, see
 [Command reference](docs/command-reference.md).
+
+## Deployment path
+
+Follow this order:
+
+1. Confirm [workstation requirements](#workstation-requirements).
+2. Confirm [required operator permissions](#required-operator-permissions).
+3. Create and review `infra/terraform/main.tfvars.json`.
+4. Sign in and confirm the target tenant/subscription.
+5. Deploy the protected foundation.
+6. Deploy the collector Function.
+7. Run and validate one collection.
+8. Deploy the authenticated dashboard Web App.
+9. Assign authorized dashboard users/groups.
+10. Use the [operations guide](docs/operations-and-configuration.md) and
+    [troubleshooting guide](docs/troubleshooting.md).
+
+The stages are cumulative. After the Web App exists, later Terraform plans
+should use the `webapp` stage so the plan preserves the foundation, Function,
+and Web App together.
+
+## Workstation requirements
+
+The deployment workstation needs:
+
+- Terraform 1.10 or newer;
+- Azure CLI authenticated to the target tenant and subscription;
+- Python 3.12 and the project virtual environment;
+- Bash, `zip`, `jq`, and `curl`;
+- access to a secured Terraform state backend for production;
+- outbound access required by Terraform providers, Azure CLI, package restore,
+  and code deployment.
+
+Install the application dependencies:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+```
+
+Windows operators should use WSL or another Bash environment for
+`infra/deploy.sh`.
 
 ## What `infra/deploy.sh` automates
 
@@ -76,15 +124,17 @@ stage for later infrastructure plans so Terraform preserves the foundation,
 Function, and Web App together. Never apply a plan that deletes the protected
 history account, its retained containers, or their data.
 
-After Terraform creates the Enterprise Application, assign approved users or
+After Terraform creates the Enterprise Application, assign authorized users or
 groups manually at **Microsoft Entra admin center > Enterprise applications >
 DVM Viewer > Users and groups**:
 
 - Assign **Dashboard Viewer** to everyone who may open the application.
 - Assign **Data Evidence Reader** only to users or groups that may use the
   hidden Data evidence browser.
-- Assign **Recommendation Tracker** to users or groups that may update shared
-  recommendation status.
+
+The legacy **Recommendation Tracker** app role remains for compatibility but is
+not evaluated by the current workflow API. Any authenticated Dashboard Viewer
+can use shared recommendation status when the feature is enabled.
 
 Terraform does not create an access group and does not manage these
 assignments.
@@ -96,8 +146,7 @@ three application roles to it. Before applying the cleanup plan:
 
 1. Assign the intended existing user or group to **Dashboard Viewer** in the
    `DVM Viewer` Enterprise Application.
-2. Assign **Data Evidence Reader** and **Recommendation Tracker** only where
-   those capabilities are required.
+2. Assign **Data Evidence Reader** only where the evidence browser is required.
 3. Run `./infra/deploy.sh tfplan webapp` and review the saved plan.
 4. Confirm that the plan removes only the generated group, its membership, and
    its three app-role assignments. It must retain the Enterprise Application,
@@ -146,13 +195,6 @@ The deployment helper requires
 files are ignored by Git. Store Terraform state in a secured backend that is
 separate from the protected DVM history account before production deployment.
 
-The deployment workstation needs:
-
-- Terraform 1.10 or later.
-- Azure CLI authenticated to the target tenant and subscription.
-- Python 3.12 and the project virtual environment.
-- Bash, `zip`, `jq`, and `curl`.
-
 The deployment-stage values in the file are informational when using the helper:
 
 - `tfplan foundation` disables the Function and Web App.
@@ -200,7 +242,7 @@ where Terraform creates role assignments. That person also needs Microsoft
 Entra directory authority to create applications and service principals.
 Whoever assigns dashboard users or groups needs permission to manage the
 Enterprise Application. Global Administrator is sufficient; use narrower
-approved roles when organizational policy requires them.
+authorized roles when organizational policy requires them.
 
 ## Runtime identities and permissions
 
@@ -548,7 +590,7 @@ For production, set `"app_mode": "live"`. The next successful live collection
 publishes a live-only current bundle; the older immutable synthetic run remains
 retained but is no longer referenced by the current manifest.
 
-## Deploy the collector
+## Deploy the collector Function
 
 ```bash
 ./infra/deploy.sh tfplan function
@@ -657,19 +699,13 @@ The script displays recent invocations, automatically investigates the newest
 failure, prints its warning/error traces and correlated exceptions, and reports
 the Function's minute-by-minute memory working set. It is read-only.
 
-The equivalent direct Azure CLI query is:
+The equivalent query can be run after resolving the workspace GUID from the
+Log Analytics workspace:
 
 ```bash
-WORKSPACE_ID="$(az monitor log-analytics workspace show \
-  --subscription c1f464b9-639a-4495-8118-0c6916a3ba3e \
-  --resource-group RG-DVMVIEWER \
-  --workspace-name log-dvmviewer-test \
-  --query customerId \
-  --output tsv)"
-
 az monitor log-analytics query \
   --subscription c1f464b9-639a-4495-8118-0c6916a3ba3e \
-  --workspace "$WORKSPACE_ID" \
+  --workspace "<workspace-guid>" \
   --analytics-query "AppRequests
     | where Name == 'dataprep_snapshot'
     | top 10 by TimeGenerated desc
@@ -680,6 +716,65 @@ az monitor log-analytics query \
 `TimeGenerated` is UTC. A failed invocation may not appear in
 `check-runs.sh` because the current manifest advances only after successful
 publication.
+
+## Deploy the authenticated dashboard Web App
+
+Deploy stage 3 only after the foundation, Function, and at least one verified
+current run exist:
+
+```bash
+./infra/deploy.sh tfplan webapp
+terraform -chdir=infra/terraform show webapp.tfplan
+./infra/deploy.sh tfapply webapp
+./infra/deploy.sh tfdeploy webapp
+./infra/deploy.sh tfverify webapp
+```
+
+Review the cumulative plan before applying it. It must preserve:
+
+- the protected history account and containers;
+- the Function runtime account;
+- the collector Function and managed identity;
+- existing immutable runs;
+- the current manifest pointer.
+
+`tfapply webapp` creates or updates Web App infrastructure, managed identity,
+Microsoft Entra application objects, App Service Authentication, settings, and
+role assignments. It does not publish the Python/dashboard source.
+`tfdeploy webapp` publishes the code package and stamps a UTC UI revision.
+
+After apply, assign authorized users or groups at:
+
+**Microsoft Entra admin center > Enterprise applications > DVM Viewer > Users
+and groups**
+
+Assign:
+
+- **Dashboard Viewer** to everyone allowed to open the dashboard;
+- **Data Evidence Reader** only to users allowed to use the optional evidence
+  browser.
+
+The legacy **Recommendation Tracker** role is not evaluated by the current
+workflow API. Shared recommendation status is available to authenticated
+Dashboard Viewers when tracking is enabled.
+
+Terraform does not create an access group or decide organization membership.
+Group-based assignment requires applicable Microsoft Entra licensing; assign
+individual users when group assignment is unavailable.
+
+Verify:
+
+1. `tfverify webapp` reports the expected running app and authentication
+   redirect.
+2. An assigned user can sign in.
+3. An unassigned user cannot access the app.
+4. The header shows the packaged UI revision.
+5. The data timestamp matches the current immutable run, not the Web App
+   deployment time.
+6. `/api/status` identifies the expected run and Azure data source.
+
+Publishing Web App code never starts a collection. If the data timestamp is
+old, inspect Function status and run history separately.
 
 ## Useful Terraform outputs
 

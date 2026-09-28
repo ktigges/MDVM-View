@@ -1,6 +1,6 @@
 # Data collection and dashboard workflow
 
-> **Last modified:** 2026-09-27  
+> **Last modified:** 2026-09-27
 > **Purpose:** Explain how Defender observations become retained evidence, lifecycle records, SLA results, and dashboard views.
 
 ## Scope
@@ -523,7 +523,7 @@ Possible SLA states are:
 
 `Unknown` is used when a reliable first-seen date or matching policy is unavailable.
 
-Live SLA starts at the first snapshot in which this collector observes the device-level finding. Defender's CVE `firstDetected` value is retained separately as source metadata. The policy is versioned and stored with each durable run, but the current values remain sample settings rather than approved operating policy.
+Live SLA starts at the first snapshot in which this collector observes the device-level finding. Defender's CVE `firstDetected` value is retained separately as source metadata. The policy is versioned and stored with each durable run, but the current values remain sample settings rather than adopted operating policy.
 
 ## Finding lifecycle and reconciliation
 

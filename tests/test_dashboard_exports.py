@@ -165,6 +165,31 @@ def test_dashboard_distinguishes_sla_targets_and_task_due_dates():
     assert "Risk-ranked work queue ordered by Defender severity score" in html
 
 
+def test_dashboard_orders_all_recommendation_surfaces_highest_first():
+    javascript = Path("dashboard/app.js").read_text()
+
+    assert "function compareRecommendations(a,b)" in javascript
+    assert "state.recommendations.filter(recommendationMatches).sort(compareRecommendations)" in javascript
+    assert '.filter(row=>state.severity==="All"||row.RecommendationSeverity===state.severity).sort(compareRecommendations)' in javascript
+    assert "recommendationImpactRows(recommendations).filter(row=>row.OpenFindings>0).slice(0,limit)" in javascript
+    assert "state.detailRecommendationIds=[...new Set(filteredRecommendations().map" in javascript
+
+
+def test_dashboard_groups_scale_out_instances_as_configurable_workloads():
+    javascript = Path("dashboard/app.js").read_text()
+    configuration = Path("dashboard/config.js").read_text()
+
+    assert "function remediationWorkload(row)" in javascript
+    assert "virtualMachineScaleSets" in javascript
+    assert "function configuredWorkload(row)" in javascript
+    assert "function actionableWorkloadCount(rows)" in javascript
+    assert 'id: "generated-scale-hosts"' in configuration
+    assert 'operator: "prefix"' in configuration
+    assert 'value: "gen-"' in configuration
+    assert '"ActionableWorkloads"' in javascript
+    assert '"WorkloadType","InstanceCount"' in javascript
+
+
 def test_dashboard_exposes_shared_recommendation_work_status_filter():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
@@ -260,7 +285,7 @@ def test_dashboard_orders_remediation_by_priority():
     assert "Highest Defender severity score, then current things to fix" in html
     assert "Active first, then task priority, overdue state, and due date" in html
     assert '["RecommendationSeverity","SeverityScore","RecommendationName"' in javascript
-    assert "b.SeverityScore-a.SeverityScore||b.CurrentThingsToFix-a.CurrentThingsToFix" in javascript
+    assert ".sort((a,b)=>compareRecommendations(a,b)||(b.NewToday+b.ReopenedToday)" in javascript
     assert "const priorityRank={critical:4,high:3,medium:2,low:1}" in javascript
 
 
@@ -550,6 +575,7 @@ def test_dashboard_shows_ui_revision_below_live_snapshot():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
     configuration = Path("dashboard/config.js").read_text()
+    deployment = Path("infra/deploy.sh").read_text()
 
     assert "Live snapshot" in html
     assert 'id="revisionText"' in html
@@ -557,6 +583,9 @@ def test_dashboard_shows_ui_revision_below_live_snapshot():
     assert "UI revision ${presentation.revision?formatUtc(presentation.revision)" in javascript
     assert "latest?formatUtc(latest.SnapshotTimeUtc)" in javascript
     assert re.search(r'revision: "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"', configuration)
+    assert 'ui_revision="$(date -u' in deployment
+    assert "Packaged Web App UI revision $ui_revision" in deployment
+    assert "Could not stamp all dashboard asset versions" in deployment
 
 
 def test_dashboard_uses_top_filters_and_responsive_workspace_navigation():

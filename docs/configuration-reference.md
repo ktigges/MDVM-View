@@ -1,6 +1,6 @@
 # Complete configuration reference
 
-> **Last modified:** 2026-09-28  
+> **Last modified:** 2026-09-28
 > **Purpose:** List every operator-controlled configuration file and setting used by the collector, dashboard, Terraform, and operational scripts.
 
 For executable workflows and safety guidance, see the
@@ -40,7 +40,7 @@ Azure-generated Easy Auth settings as configuration sources.
 
 ## 2. Terraform inputs
 
-Authoritative schema: `infra/terraform/variables.tf`  
+Authoritative schema: `infra/terraform/variables.tf`
 Environment values: `infra/terraform/main.tfvars.json`
 
 | Setting | Default / allowed values | Effect |
@@ -208,7 +208,8 @@ File: `dashboard/config.js`
 
 | Setting | Effect |
 |---|---|
-| `revision` | Revision displayed in the dashboard header |
+| `revision` | Source revision displayed locally; `tfdeploy webapp` replaces it in the deployment package with that package's UTC build time |
+| `workloadGrouping.rules` | Ordered UI grouping rules. Each rule supports `id`, `label`, `field`, and `operator` (`prefix`, `contains`, or `exact`) plus `value`; first match wins. Azure VM scale-set resource IDs are grouped automatically before configured rules. |
 | `branding.eyebrow` | Small header label |
 | `branding.title` | Main dashboard title |
 | `theme.primary` | Primary six-digit hex color |
@@ -222,6 +223,29 @@ File: `dashboard/config.js`
 | `filters.defaultDomains` | Initial asset-domain selections |
 | `diagnostics.showExperimentalEndpoints` | Whether experimental endpoint diagnostics are shown |
 | `authentication.showStatus` | Whether authentication status is displayed |
+
+Workload grouping changes presentation and remediation counts only. It never
+removes raw instances or findings. Azure resource IDs containing
+`/virtualMachineScaleSets/<name>` group automatically. Add ordered rules for
+organization-specific naming conventions:
+
+```javascript
+workloadGrouping: {
+  rules: [
+    {
+      id: "generated-scale-hosts",
+      label: "Generated scale workload",
+      field: "DeviceName",
+      operator: "prefix",
+      value: "gen-",
+    },
+  ],
+},
+```
+
+Supported operators are `prefix`, `contains`, and `exact`, compared
+case-insensitively. The first matching rule wins. Use separate, more-specific
+rules before a broad prefix when multiple scale sets share a naming stem.
 
 Asset query versions in `dashboard/index.html` control browser cache busting for
 `styles.css`, `config.js`, and `app.js`.

@@ -1,6 +1,6 @@
 # Dashboard and collection logic
 
-> **Last modified:** 2026-09-27  
+> **Last modified:** 2026-09-28
 > **Purpose:** Define the implemented rules that determine collection state, finding lifecycle, SLA results, prioritization, filtering, remediation outcomes, and shared recommendation workflow.
 
 This document describes current application behavior. Configuration files and
@@ -86,12 +86,15 @@ at 100 and is the sum of:
 
 `PriorityExplanation` retains the component calculation.
 
-Recommendation prioritization uses Defender recommendation
-`SeverityScore`, then current things to fix, then recommendation name.
-Remediation outcome tables use severity score, current workload, new/reopened
-findings, confirmed fixes, and name. Remediation task tables place active tasks
-before completed tasks, then order by task priority, overdue state, earliest
-task due date, and most recently modified.
+All recommendation-oriented dashboard surfaces use the same primary order:
+Defender recommendation `SeverityScore`, `ExposureImpact`, current open impact,
+`ConfigScoreImpact`, then recommendation name. This includes executive impact,
+recommendation inventory, priority workbench, remediation outcomes, SLA
+recommendation lists, related recommendations, and recommendation-detail
+navigation. Remediation outcome tables then use new/reopened and confirmed-fix
+counts as additional ties. Remediation task tables place active tasks before
+completed tasks, then order by task priority, overdue state, earliest task due
+date, and most recently modified.
 
 ## 5. SLA targeting
 
@@ -108,7 +111,7 @@ currently contains:
 
 An exploit-specific match takes precedence over general severity policies.
 Within the selected group, the shortest matching SLA is used. These are sample
-configuration values until approved as operating policy.
+configuration values until adopted as operating policy.
 
 For live data, the SLA starts when this collector first observes the exact
 finding:

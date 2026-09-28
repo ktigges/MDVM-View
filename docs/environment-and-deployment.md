@@ -1,6 +1,6 @@
 # Environment and deployment plan
 
-> **Last modified:** 2026-09-27  
+> **Last modified:** 2026-09-27
 > **Purpose:** Define local, test, and Azure deployment boundaries, resources, and production-readiness gates.
 
 ## Operating model
@@ -175,7 +175,7 @@ Use a development account that is separate from production. Never point local in
 | Application Insights | Function diagnostics, failures, and dependency timing | Implemented when `deploy_function=true` |
 | Linux Web App and plan | Hosts the dashboard and a same-origin API that reads current data from private ADLS | Implemented as an optional B1 Terraform stage |
 | Web App managed identity | Read-only access to `dvm-current` and referenced curated blobs | Implemented with Storage Blob Data Reader |
-| Microsoft Entra authentication | Restricts dashboard and API access to approved users or groups | Implemented with Easy Auth and an assignment-required Enterprise Application; assignments are managed manually in Entra |
+| Microsoft Entra authentication | Restricts dashboard and API access to authorized users or groups | Implemented with Easy Auth and an assignment-required Enterprise Application; assignments are managed manually in Entra |
 | Log Analytics | Function operational logs, metrics, failures, and dependency timing | Implemented when `deploy_function=true` |
 
 The retained-history account is a protected data resource. Function runtime storage and web hosting can be replaced without replacing or deleting DVM history.
@@ -225,7 +225,7 @@ Grant the web identity Storage Blob Data Reader on the history account. Do not g
 
 When the curated Data evidence browser is enabled, Terraform sets
 `DASHBOARD_DATA_BROWSER_ROLE=Data.Evidence.Reader`. A tenant administrator
-assigns that role to approved users or groups. The evidence API is read-only
+assigns that role to authorized users or groups. The evidence API is read-only
 and exposes only whitelisted normalized datasets.
 
 ### User and group access
@@ -363,7 +363,7 @@ Production deployment requires all of the following:
 - The web service and managed identity can read current curated data without exposing storage credentials.
 - Entra authentication and user/group authorization are tested.
 - Development, test, and production parameter files use separate resource names and identities.
-- The production SLA policy is approved and versioned.
+- The production SLA policy is adopted and versioned.
 - Backup, soft-delete, network-access, monitoring, and cost settings are reviewed.
 - A Terraform plan confirms that protected history is not managed, replaced, or deleted.
 

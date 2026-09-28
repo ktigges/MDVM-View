@@ -1,6 +1,6 @@
 # Publishing and Azure cost options
 
-> **Last modified:** 2026-09-27  
+> **Last modified:** 2026-09-27
 > **Purpose:** Compare Web App hosting, security, scale, availability, and Azure cost options.
 
 The editable standalone estimator is
@@ -18,8 +18,9 @@ accounts for increasing storage each month.
 
 Load the environment-specific `infra/terraform/main.tfvars.json` used for the
 deployment being estimated. For the current lab, use the repository's ignored
-`infra/terraform/main.tfvars.json`; for a customer estimate, first create the
-customer-specific copy from `main.tfvars.example.json` and load that copy.
+`infra/terraform/main.tfvars.json`; for an environment-specific estimate, first
+create the deployment-specific copy from `main.tfvars.example.json` and load
+that copy.
 The browser reads it locally and does not upload it.
 
 The deployed history model is append-only with no automatic purge. The
@@ -154,7 +155,7 @@ monthly_free_executions = 250,000
 in an estimate does not alter the Function timer. The current Terraform value
 remains one collection at 05:00 UTC (`0 0 5 * * *`). If operations later
 select two actual collections per day, set `collection_schedule` to an
-approved twice-daily NCRONTAB expression and deploy that change separately.
+organization-defined twice-daily NCRONTAB expression and deploy that change separately.
 
 With the default planning values:
 
@@ -374,7 +375,7 @@ protected storage provides data durability.
 
 **Regional disaster recovery**
 
-- Duplicate Web App deployment in a paired/approved second region.
+- Duplicate Web App deployment in a designated second region.
 - Front Door or Traffic Manager routing.
 - GRS/RA-GRS or GZRS/RA-GZRS selected according to read and failover needs.
 - Decide whether the collector remains active in one region or uses a
@@ -473,7 +474,7 @@ This is the lowest-cost publishing path:
 
 - App Service HTTPS endpoint.
 - App Service Authentication with Microsoft Entra ID.
-- Access restricted to approved users/groups.
+- Access restricted to authorized users/groups.
 - Managed identity from Web App to protected storage.
 - No Front Door and no private endpoint.
 
@@ -564,7 +565,7 @@ Group-based Enterprise Application assignment requires the applicable
 Microsoft Entra ID licensing; if it is unavailable, assign individual users
 the `Dashboard.Viewer` role.
 
-When the evidence browser is enabled, assign `Data.Evidence.Reader` to approved
+When the evidence browser is enabled, assign `Data.Evidence.Reader` to authorized
 users or groups in the Enterprise Application. The Web App does not maintain a
 separate user list.
 
@@ -690,7 +691,7 @@ For every scenario, enter:
 
 ## Cost-control guardrails
 
-- Add Azure Cost Management budgets at 50%, 80%, and 100% of the approved
+- Add Azure Cost Management budgets at 50%, 80%, and 100% of the adopted
   monthly estimate.
 - Tag resources with environment, owner, application, and cost center.
 - Keep development on B1 or local hosting.

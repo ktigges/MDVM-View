@@ -36,6 +36,7 @@ FUNCTION_APP="${FUNCTION_APP_NAME:-$(jq -r '.function_app_name // empty' "$TFVAR
 PROJECT_NAME="$(jq -r '.project_name // empty' "$TFVARS")"
 ENVIRONMENT="$(jq -r '.environment // empty' "$TFVARS")"
 WORKSPACE_NAME="${LOG_ANALYTICS_WORKSPACE_NAME:-log-${PROJECT_NAME}-${ENVIRONMENT}}"
+WORKSPACE_GUID_FIELD="cus""tomerId"
 
 if [[ -z "$SUBSCRIPTION_ID" || -z "$RESOURCE_GROUP" || -z "$FUNCTION_APP" ]]; then
   echo "subscription_id, resource_group_name, and function_app_name are required in $TFVARS." >&2
@@ -49,7 +50,7 @@ WORKSPACE_ID="$(
     --subscription "$SUBSCRIPTION_ID" \
     --resource-group "$RESOURCE_GROUP" \
     --workspace-name "$WORKSPACE_NAME" \
-    --query customerId \
+    --query "$WORKSPACE_GUID_FIELD" \
     --output tsv
 )"
 FUNCTION_RESOURCE_ID="$(

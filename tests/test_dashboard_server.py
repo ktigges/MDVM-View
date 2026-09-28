@@ -129,10 +129,11 @@ def test_dashboard_can_serve_static_assets_from_deployment_directory(tmp_path: P
         project_root=tmp_path / "installed-package",
     )
 
-    status, body = asgi_get(app, "/")
+    status, headers, body = asgi_response(app, "/")
 
     assert status == 200
     assert body == b"deployed dashboard"
+    assert headers[b"cache-control"] == b"no-cache, max-age=0, must-revalidate"
 
 
 def test_dashboard_resolves_relative_static_directory_from_virtual_environment(

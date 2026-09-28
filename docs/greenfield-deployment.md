@@ -1,18 +1,24 @@
 # Greenfield Azure deployment
 
-> **Last modified:** 2026-09-27  
+> **Last modified:** 2026-09-28
 > **Purpose:** Create and validate a new protected Azure environment in three reviewed Terraform stages.
 
 This workflow creates a new environment without changing or deleting any
 existing DVM history. It does not manage or remove storage accounts,
 containers, or populated data outside the reviewed Terraform state.
 
+Use this document as the concise operator checklist. The canonical explanation
+of requirements, permissions, resource behavior, package deployment, dashboard
+assignment, and recovery boundaries is the
+[Azure deployment guide](../DEPLOY.md). New evaluators should complete
+[Local evaluation](local-evaluation.md) first.
+
 The command names intentionally start with `tf` so Terraform infrastructure
 operations are easy to distinguish from application CLI commands.
 
 ## Values to set
 
-Customer values are intentionally excluded from source control. Create the
+Environment-specific values are intentionally excluded from source control. Create the
 local variable file from the tracked example, then replace every sample value:
 
 ```bash
@@ -39,7 +45,7 @@ files belong in the source repository.
 | `history_immutability_days` | Minimum WORM retention for history blobs; 365 days for this environment |
 | `lock_history_immutability_policy` | Keep `false` until validation is complete; locking cannot be reversed or shortened |
 | `grant_deployer_history_access` | Grants the Terraform execution identity Blob data access for local seeding, backfill, restore, and status |
-| `tags` | Customer ownership, environment, application, and cost tags |
+| `tags` | Organization ownership, environment, application, and cost tags |
 
 Storage names must contain only lowercase letters and numbers and be 3-24
 characters. The Function App name must be globally unique.
@@ -163,7 +169,7 @@ The optional cumulative Web App stage creates:
 
 Terraform creates the assignment-required `DVM Viewer` Enterprise Application
 but does not create an access group or assign users. A tenant administrator
-assigns approved existing users or groups to `Dashboard Viewer` and any
+assigns authorized existing users or groups to `Dashboard Viewer` and any
 required optional roles through the Enterprise Application.
 
 Group-based Enterprise Application assignment requires the applicable

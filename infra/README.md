@@ -1,6 +1,6 @@
 # Azure infrastructure
 
-> **Last modified:** 2026-09-27  
+> **Last modified:** 2026-09-27
 > **Purpose:** Summarize the staged Terraform infrastructure and point operators to the deployment procedures.
 
 The active Terraform configuration is in [`terraform/`](terraform/). It
@@ -16,7 +16,7 @@ required values, and commands are documented in
 [`../docs/greenfield-deployment.md`](../docs/greenfield-deployment.md).
 
 Before planning, copy `terraform/main.tfvars.example.json` to the ignored
-`terraform/main.tfvars.json` and replace all customer-specific values. Never
+`terraform/main.tfvars.json` and replace all environment-specific values. Never
 commit real tenant IDs, subscription IDs, names, or environment values.
 
 The Web App stage creates one Linux B1 App Service, a dedicated read-only
@@ -30,10 +30,10 @@ licensing; if it is unavailable, assign individual users the
 `Dashboard.Viewer` role.
 
 Terraform does not create an access group or assign users. After apply, assign
-approved users or groups to `Dashboard Viewer` in the `DVM Viewer` Enterprise
+authorized users or groups to `Dashboard Viewer` in the `DVM Viewer` Enterprise
 Application. Assign `Data Evidence Reader` only for the hidden
-`/?view=data-browser` feature and `Recommendation Tracker` only for shared
-recommendation updates. Hosting, security, caching, and scale recommendations are in
+`/?view=data-browser` feature. The legacy `Recommendation Tracker` app role is
+not evaluated by the current workflow API. Hosting, security, caching, and scale recommendations are in
 [`../docs/web-app-deployment-recommendations.md`](../docs/web-app-deployment-recommendations.md).
 Existing storage accounts and retained DVM history are outside this Terraform
 state and must not be deleted or imported into it.
