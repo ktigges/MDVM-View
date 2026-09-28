@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 
 from vulnerability_view.config import Settings
-from vulnerability_view.dataprep_cli import _include_synthetic_history, _latest_live_cve_catalog, backfill_history, main, seed_synthetic_history
+from vulnerability_view.dataprep_cli import _include_synthetic_history, _latest_live_cve_catalog, _read_existing, backfill_history, main, seed_synthetic_history
 from vulnerability_view.live_collector import normalize_live
-from vulnerability_view.storage_writer import DATASET_FILES, create_run_bundle, download_current_dataset, download_current_manifest, upload_raw_archive, upload_run_bundle, verify_run_bundle
+from vulnerability_view.storage_writer import DATASET_FILES, create_run_bundle, download_current_dataset, download_current_manifest, download_current_policy, upload_raw_archive, upload_run_bundle, verify_run_bundle
 
 
 def test_create_run_bundle_preserves_curated_data_policy_and_checksums(tmp_path: Path):
@@ -54,6 +54,43 @@ def test_create_run_bundle_supports_synthetic_runs_without_raw_pages(tmp_path: P
     assert manifest["snapshotTimeUtc"] == "2025-01-02T03:04:05Z"
     assert all(item["kind"] != "raw" for item in manifest["files"])
     assert verify_run_bundle(bundle, source_run) == []
+
+
+def test_read_existing_downloads_only_requested_datasets(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
+    manifest = {
+        "complete": True,
+        "schemaVersion": 1,
+        "files": [
+            {"kind": "curated", "dataset": "findings"},
+            {"kind": "curated", "dataset": "findingEvents"},
+            {"kind": "curated", "dataset": "vulnerabilities"},
+        ],
+    }
+    downloads = []
+    monkeypatch.setattr("vulnerability_view.dataprep_cli._create_credential", lambda settings: "credential")
+    monkeypatch.setattr(
+        "vulnerability_view.dataprep_cli.download_current_manifest",
+        lambda account, current_container, credential: manifest,
+    )
+
+    def download(account, container, current_container, dataset, credential, current_manifest):
+        downloads.append(dataset)
+        assert current_manifest is manifest
+        return [{"dataset": dataset}]
+
+    monkeypatch.setattr("vulnerability_view.dataprep_cli.download_current_dataset", download)
+
+    result = _read_existing(
+        Settings(storage_account_name="account"),
+        {"findings", "findingEvents"},
+    )
+
+    assert result == {
+        "findings": [{"dataset": "findings"}],
+        "findingEvents": [{"dataset": "findingEvents"}],
+    }
+    assert downloads == ["findings", "findingEvents"]
 
 
 def test_upload_run_bundle_writes_manifest_last(monkeypatch, tmp_path: Path):
@@ -158,6 +195,56 @@ def test_download_current_dataset_reads_compressed_json(monkeypatch):
     monkeypatch.setattr("azure.storage.blob.BlobServiceClient", ServiceClient)
 
     assert download_current_dataset("account", "dvm-history", "dvm-current", "findings", "credential") == [{"FindingKey": "finding-1"}]
+
+
+def test_download_current_policy_reads_verified_run_policy(monkeypatch):
+    policy = json.dumps({
+        "policyVersion": "policy-1",
+        "policies": [{"severity": "High", "slaDays": 7}],
+    }).encode()
+    manifest = {
+        "schemaVersion": 1,
+        "complete": True,
+        "files": [{
+            "kind": "policy",
+            "path": "runs/2025/01/02/live-20250102T030405Z/sla-policies.json",
+            "sizeBytes": len(policy),
+            "sha256": hashlib.sha256(policy).hexdigest(),
+        }],
+    }
+
+    class Download:
+        def readall(self):
+            return policy
+
+    class FileClient:
+        def download_blob(self):
+            return Download()
+
+    class ContainerClient:
+        def get_blob_client(self, remote_path):
+            assert remote_path == "runs/2025/01/02/live-20250102T030405Z/sla-policies.json"
+            return FileClient()
+
+    class ServiceClient:
+        def __init__(self, account_url, credential):
+            pass
+
+        def get_container_client(self, container_name):
+            return ContainerClient()
+
+    monkeypatch.setattr("azure.storage.blob.BlobServiceClient", ServiceClient)
+
+    result = download_current_policy(
+        "account",
+        "dvm-history",
+        "dvm-current",
+        "credential",
+        manifest,
+    )
+
+    assert result["policyVersion"] == "policy-1"
+    assert result["policies"] == [{"severity": "High", "slaDays": 7}]
 
 
 def test_download_current_manifest_is_a_single_pointer_read(monkeypatch):

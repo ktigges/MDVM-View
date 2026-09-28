@@ -9,7 +9,7 @@ def test_run_dataprep_uses_temporary_writable_workspace(monkeypatch):
 
     def fake_main(arguments: list[str]) -> int:
         observed["work_root"] = Path.cwd()
-        assert arguments == ["collect-live"]
+        assert arguments == ["collect-live", "--skip-local-exports"]
         assert observed["work_root"].parent == Path("/tmp")
         assert (observed["work_root"] / "config/sla-policies.json").is_file()
         output = observed["work_root"] / "output/raw/live-test"
@@ -28,7 +28,7 @@ def test_run_dataprep_restores_directory_after_failure(monkeypatch):
     original_directory = Path.cwd()
 
     def failing_main(arguments: list[str]) -> int:
-        assert arguments == ["collect-live"]
+        assert arguments == ["collect-live", "--skip-local-exports"]
         raise RuntimeError("collection failed")
 
     monkeypatch.setattr(function_app, "main", failing_main)

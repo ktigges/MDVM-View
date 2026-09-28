@@ -9,6 +9,7 @@ ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PYTHON="$ROOT_DIR/.venv/bin/python"
 PORT="${1:-8000}"
 HOST="${HOST:-127.0.0.1}"
+export DASHBOARD_RECOMMENDATION_TRACKING_ENABLED="${DASHBOARD_RECOMMENDATION_TRACKING_ENABLED:-true}"
 
 if [[ ! -x "$PYTHON" ]]; then
     printf 'Virtual environment not found. Create .venv and install the project first.\n' >&2

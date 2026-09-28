@@ -68,6 +68,143 @@ def test_dashboard_files_contract():
     assert ".development-warning" in stylesheet
 
 
+def test_dashboard_loads_datasets_progressively():
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert "loadDashboardDatasets" in javascript
+    assert "rebuildDerivedState" in javascript
+    assert "datasets ready" in javascript
+    assert "Promise.all(" not in javascript
+    assert ".loading-notice.degraded" in stylesheet
+
+
+def test_dashboard_filter_workspace_has_distinct_shading():
+    html = Path("dashboard/index.html").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+    final_toolbar_rule = [rule for rule in re.findall(r"\.filter-toolbar\{([^}]*)\}", stylesheet) if "background:" in rule][-1]
+    final_filterbar_rule = [rule for rule in re.findall(r"\.filterbar\{([^}]*)\}", stylesheet) if "background:" in rule][-1]
+
+    assert html.index('id="scopeBar"') < html.index('class="filter-toolbar"')
+    assert "background:#d9dde1!important" in final_toolbar_rule
+    assert "background:#adb7bd!important" in final_filterbar_rule
+    assert "box-shadow:inset 0 1px 0" in final_toolbar_rule
+    assert "box-shadow:0 16px 30px" in final_filterbar_rule
+    assert 'class="filter-check-options"' in html
+    assert "background-color:#cdd4d8!important" in stylesheet
+    assert "background:#c7cfd3" in stylesheet
+    assert ".filterbar fieldset{display:grid!important" in stylesheet
+    assert "border:0!important" in stylesheet
+    assert "background:#17384f!important" in stylesheet
+    assert "border-left:5px solid var(--cyan)!important" in stylesheet
+    assert "@media(max-width:1450px)" in stylesheet
+    assert "overflow-wrap:anywhere" in stylesheet
+
+
+def test_dashboard_scope_does_not_repeat_active_view():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert 'id="scopeView"' not in html
+    assert '$("scopeView")' not in javascript
+    assert "grid-template-columns:1fr;justify-items:start" in stylesheet
+    assert "justify-content:flex-start" in stylesheet
+    assert "box-shadow:0 11px 25px" in stylesheet
+
+
+def test_recommendation_detail_uses_fullscreen_navigation():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert 'id="pivotPrevious"' in html
+    assert 'id="pivotNext"' in html
+    assert 'id="pivotPosition"' in html
+    assert "navigateRecommendationDetail" in javascript
+    assert "detailRecommendationIds" in javascript
+    assert "fullscreen-mode" in javascript
+    assert ".pivot-panel.fullscreen-mode" in stylesheet
+    assert "inset:clamp(18px,3vh,36px) clamp(18px,3vw,52px)" in stylesheet
+    assert "box-shadow:0 30px 80px" in stylesheet
+    assert "backdrop-filter:blur(1.5px)" in stylesheet
+    assert "drawer-mode" not in javascript
+
+
+def test_recommendation_preview_is_anchored_to_hovered_row():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert 'id="recommendationPreview" class="recommendation-preview" role="status" hidden' in html
+    assert "row.getBoundingClientRect()" in javascript
+    assert "preview.style.left" in javascript
+    assert "preview.style.top" in javascript
+    assert 'row.addEventListener("mouseleave",hide)' in javascript
+    assert 'row.addEventListener("blur",hide)' in javascript
+    assert "max-height:calc(100vh - 24px)" in stylesheet
+    assert html.index('id="recommendationPreview"') > html.index("</main>")
+    assert ".recommendation-preview{display:none!important}" not in stylesheet
+    assert 'bindRecommendationPreviews("recommendationTable"' in javascript
+    assert 'bindRecommendationPreviews("priorityTable"' in javascript
+    assert 'bindRecommendationPreviews("remediationOutcomeTable"' in javascript
+    assert 'bindRecommendationPreviews("remediationTable"' in javascript
+
+
+def test_dashboard_distinguishes_sla_targets_and_task_due_dates():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+
+    assert "Selected-period results against severity-based SLA targets" in html
+    assert 'id="slaPolicySummary"' in html
+    assert 'fetch("/api/sla-policy")' in javascript
+    assert "Current dataset policy" in javascript
+    assert "Targets start at the collector's first observation" in javascript
+    assert "Weekly remediation task due-date history" in html
+    assert "Recommendation inventory and workflow" in html
+    assert "Risk-ranked work queue ordered by Defender severity score" in html
+
+
+def test_dashboard_exposes_shared_recommendation_work_status_filter():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+
+    assert "Recommendation work status" in html
+    assert "Shared status; filtering does not assign or lock work" in html
+    assert '<option value="InProgress">In progress</option>' in html
+    assert '<option value="NeedsReassignment">Needs reassignment</option>' in html
+    assert '<option value="Untracked">Untracked / not started</option>' in html
+    assert 'recommendationTrackingFilter:"All"' in javascript
+    assert "TrackingUpdatedBy" in javascript
+    assert "TrackingUserId" in javascript
+    assert "TrackingUpdatedUtc" in javascript
+    assert "Last updated by ${tracking.updatedByDisplayName}" in javascript
+    assert "recommendationWorkStatus" in javascript
+    assert 'const columns=["RecommendationName","RecommendationSeverity"' in javascript
+    assert "recommendationTrackingLocalPreview" in javascript
+    assert "recommendationWorkSwitch" not in javascript
+    assert 'aria-label="Working here:' not in javascript
+    assert "Use the compact ON/OFF switch" not in html
+    assert "Open a recommendation to update its dashboard work status" in html
+
+
+def test_dashboard_executive_subtiles_have_visible_contrast():
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert "background:#e2e6e8" in stylesheet
+    assert "background:#dde2e5" in stylesheet
+    assert "border:1px solid #aab6be" in stylesheet
+    assert "box-shadow:0 3px 7px" in stylesheet
+
+
+def test_dashboard_resets_scroll_to_top_on_refresh():
+    javascript = Path("dashboard/app.js").read_text()
+
+    assert 'history.scrollRestoration="manual"' in javascript
+    assert 'window.addEventListener("pageshow"' in javascript
+    assert "window.scrollTo(0,0)" in javascript
+
+
 def test_dashboard_uses_microsoft_vulnerability_management_branding():
     html = Path("dashboard/index.html").read_text()
     stylesheet = Path("dashboard/styles.css").read_text()
@@ -114,6 +251,18 @@ def test_dashboard_treats_remediation_activity_as_supporting_context():
     assert "PolicySLAWithin" in javascript
     assert "PolicySLAOutside" in javascript
     assert "renderStatisticsPeriod" in javascript
+
+
+def test_dashboard_orders_remediation_by_priority():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+
+    assert "Highest Defender severity score, then current things to fix" in html
+    assert "Active first, then task priority, overdue state, and due date" in html
+    assert '["RecommendationSeverity","SeverityScore","RecommendationName"' in javascript
+    assert "b.SeverityScore-a.SeverityScore||b.CurrentThingsToFix-a.CurrentThingsToFix" in javascript
+    assert "const priorityRank={critical:4,high:3,medium:2,low:1}" in javascript
+
 
 def test_dashboard_shows_endpoint_remediation_impact():
     javascript = Path("dashboard/app.js").read_text()
@@ -246,7 +395,7 @@ def test_dashboard_uses_statistics_tab_without_ownership_story():
     assert "Latest run vs previous run" in html
     assert "Custom range vs preceding equal range" in html
     assert 'id="statisticsSlaBreakdown"' in html
-    assert "Selected-period SLA against policy due dates" in html
+    assert "Selected-period results against severity-based SLA targets" in html
     assert 'data-view="ownership"' not in html
     assert 'id="ownership"' not in html
     assert 'id="assignmentTable"' not in html
@@ -315,7 +464,7 @@ def test_dashboard_filters_all_views_by_subscription():
     assert 'state.subscription="All"' in javascript
     assert '$("subscriptionFilter").value="All"' in javascript
     assert "SubscriptionId" in javascript
-    assert 'load("subscriptions").catch(()=>[])' in javascript
+    assert '{name:"subscriptions",key:"subscriptions",label:"subscriptions",required:false}' in javascript
     assert "state.subscriptionInventoryById" in javascript
     assert "subscription.SubscriptionName" in javascript
 
@@ -329,7 +478,7 @@ def test_dashboard_has_severity_based_finding_and_recommendation_sla_graphs():
     assert 'id="statisticsSlaCards"' in html
     assert 'id="statisticsSlaBreakdown"' in html
     assert "Finding outcomes by severity" in html
-    assert "Selected-period SLA against policy due dates" in html
+    assert "Selected-period results against severity-based SLA targets" in html
     assert "Recommendation outcomes by severity" in html
     assert "findingSlaSeverityRows" in javascript
     assert "recommendationSlaSeverityRows" in javascript
@@ -389,10 +538,10 @@ def test_dashboard_connects_executive_workload_sla_and_recommendation_impact():
     assert "CveExamples" in javascript
     assert "FixImpact" in javascript
     assert "bindRecommendationPreviews" in javascript
-    assert "setTimeout(()=>show(index),350)" in javascript
-    assert html.index('id="recommendationPreview"') < html.index('class="panel recommendation-inventory"')
+    assert "setTimeout(()=>show(index,row,event.clientX),350)" in javascript
+    assert html.index('id="recommendationPreview"') > html.index("</main>")
     assert "RECOMMENDATION INVENTORY" not in html
-    assert "<h2>Recommendations and estimated impact</h2>" in html
+    assert "<h2>Recommendation inventory and workflow</h2>" in html
     assert 'selectEntity("recommendation",id,true)' in javascript
     assert 'order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "data-browser"]' in configuration
 
@@ -445,3 +594,30 @@ def test_dashboard_data_browser_is_hidden_and_read_only_by_default():
     assert "openMetricEvidence" in javascript
     assert "View evidence" in javascript
     assert ".story-nav button[hidden]{display:none!important}" in stylesheet
+def test_cost_calculator_is_local_only():
+    deploy_script = Path("infra/deploy.sh").read_text()
+    calculator = Path("tools/calculator.html").read_text()
+
+    assert Path("tools/calculator.html").is_file()
+    assert not Path("dashboard/calculator.html").exists()
+    assert "'dashboard/calculator.html'" in deploy_script
+    assert "'dashboard/tools/*'" in deploy_script
+    assert 'id="tfvarsFile"' in calculator
+    assert 'id="functionMemory"' in calculator
+    assert 'id="appServiceTier"' in calculator
+    assert 'id="existingHistoryGib"' in calculator
+    assert 'id="runSizeGib"' in calculator
+    assert 'id="retentionModel"' in calculator
+    assert 'id="modeledRetentionDays"' in calculator
+    assert 'id="immutabilityDays"' in calculator
+    assert 'id="annualTotal"' in calculator
+    assert 'id="writesPerRun"' in calculator
+    assert 'id="workflowEvents"' in calculator
+    assert 'id="runtimeStorageGib"' in calculator
+    assert 'id="logsPerCollectionGib"' in calculator
+    assert 'id="chargeableLogRetentionGib"' in calculator
+    assert 'id="egressGib"' in calculator
+    assert 'id="licenseCost"' in calculator
+    assert "collectionsFromSchedule" in calculator
+    assert "The application does not delete retained raw or curated evidence." in calculator
+    assert "The bounded option changes estimates only; it does not configure deletion." in calculator

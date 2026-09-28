@@ -32,14 +32,14 @@ tf_output() {
 }
 
 show_dashboard_access_details() {
-  # Prints the exact Enterprise Application and group used for user assignment.
+  # Prints the Enterprise Application used for manual user and group assignment.
   cat <<EOF
 Enterprise Application: $(tf_output dashboard_enterprise_application_name)
 Application (client) ID: $(tf_output dashboard_entra_client_id)
 Enterprise Application object ID: $(tf_output dashboard_enterprise_application_object_id)
-Assigned group: $(tf_output dashboard_access_group_name)
-Assigned group object ID: $(tf_output dashboard_access_group_object_id)
 Assignment location: Microsoft Entra admin center > Enterprise applications > $(tf_output dashboard_enterprise_application_name) > Users and groups
+Required role: Dashboard Viewer
+Optional roles: Data Evidence Reader, Recommendation Tracker
 EOF
 }
 
@@ -100,22 +100,34 @@ tf_plan() {
 tf_apply() {
   # Applies only a previously reviewed stage plan.
   local stage="${1:-}"
+  local plan_file
   case "$stage" in
     foundation)
-      terraform -chdir="$TF_DIR" apply foundation.tfplan
+      plan_file="foundation.tfplan"
       ;;
     function)
-      terraform -chdir="$TF_DIR" apply function.tfplan
+      plan_file="function.tfplan"
       ;;
     webapp)
-      terraform -chdir="$TF_DIR" apply webapp.tfplan
-      show_dashboard_access_details
+      plan_file="webapp.tfplan"
       ;;
     *)
       echo "Usage: ./infra/deploy.sh tfapply <foundation|function|webapp>" >&2
       exit 1
       ;;
   esac
+
+  require_command terraform
+  if [[ ! -f "$TF_DIR/$plan_file" ]]; then
+    echo "Reviewed Terraform plan not found: $TF_DIR/$plan_file" >&2
+    echo "Run './infra/deploy.sh tfplan $stage', review the saved plan, then run tfapply." >&2
+    exit 1
+  fi
+
+  terraform -chdir="$TF_DIR" apply "$plan_file"
+  if [[ "$stage" == "webapp" ]]; then
+    show_dashboard_access_details
+  fi
 }
 
 tf_destroy() {
@@ -209,9 +221,18 @@ tf_deploy() {
       (
         cd "$ROOT_DIR"
         zip -q -r "$package" dashboard requirements.txt pyproject.toml src \
-          -x '*/__pycache__/*' '*.pyc' 'dashboard/data/*'
+          -x '*/__pycache__/*' '*.pyc' 'dashboard/data/*' 'dashboard/calculator.html' 'dashboard/tools/*'
       )
 
+      local previous_deployment_id deploy_exit latest_deployment deployment_id deployment_status
+      previous_deployment_id="$(
+        az webapp log deployment list \
+          --resource-group "$resource_group" \
+          --name "$web_app" \
+          --query 'sort_by(@,&start_time)[-1].id' \
+          --output tsv 2>/dev/null || true
+      )"
+      set +e
       az webapp deploy \
         --resource-group "$resource_group" \
         --name "$web_app" \
@@ -219,8 +240,42 @@ tf_deploy() {
         --type zip \
         --clean true \
         --restart true \
+        --track-status false \
         --timeout 600 \
         --output none
+      deploy_exit=$?
+      set -e
+
+      if (( deploy_exit != 0 )); then
+        echo "The deployment request returned an error. Checking Kudu for the final asynchronous result..."
+        for _ in {1..40}; do
+          latest_deployment="$(
+            az webapp log deployment list \
+              --resource-group "$resource_group" \
+              --name "$web_app" \
+              --query 'sort_by(@,&start_time)[-1].[id,status]' \
+              --output tsv 2>/dev/null || true
+          )"
+          read -r deployment_id deployment_status <<<"$latest_deployment"
+          if [[ -n "$deployment_id" && "$deployment_id" != "$previous_deployment_id" ]]; then
+            if [[ "$deployment_status" == "4" ]]; then
+              echo "Kudu completed deployment $deployment_id successfully after the client error."
+              deploy_exit=0
+              break
+            fi
+            if [[ "$deployment_status" == "3" ]]; then
+              echo "Kudu confirmed deployment $deployment_id failed." >&2
+              break
+            fi
+          fi
+          sleep 15
+        done
+        if (( deploy_exit != 0 )); then
+          echo "Kudu did not report a successful replacement deployment." >&2
+          echo "Run: az webapp log deployment show -n $web_app -g $resource_group" >&2
+          return "$deploy_exit"
+        fi
+      fi
       ;;
     *)
       echo "Usage: ./infra/deploy.sh tfdeploy <function|webapp>" >&2
@@ -295,7 +350,7 @@ tf_preflight() {
 }
 
 tf_invoke() {
-  # Explicitly starts one live collector run after a destructive-write acknowledgement.
+  # Explicitly starts one live collector run after an immutable-publication acknowledgement.
   local stage="${1:-}"
   if [[ "$stage" != "function" ]]; then
     echo "Usage: ./infra/deploy.sh tfinvoke function" >&2
@@ -328,6 +383,35 @@ usage() {
   cat <<'EOF'
 Usage: ./infra/deploy.sh <command>
 
+Terraform workflow:
+  - Do not run terraform init manually before tfplan.
+  - tfplan runs terraform init and terraform validate automatically, then
+    writes a saved <stage>.tfplan file. It does not apply infrastructure.
+  - Review the saved plan with:
+      terraform -chdir=infra/terraform show <stage>.tfplan
+  - tfapply applies only that existing saved plan. It does not create or
+    refresh the plan automatically.
+  - tfdeploy publishes application code to infrastructure that already exists.
+    It does not run terraform init, plan, or apply.
+
+For an existing Web App infrastructure change, run in this order:
+  ./infra/deploy.sh tfplan webapp
+  terraform -chdir=infra/terraform show webapp.tfplan
+  ./infra/deploy.sh tfapply webapp
+  ./infra/deploy.sh tfdeploy webapp
+  ./infra/deploy.sh tfverify webapp
+
+For a dashboard code-only change, run only:
+  ./infra/deploy.sh tfdeploy webapp
+  ./infra/deploy.sh tfverify webapp
+
+For the first deployment after cloning the repository:
+  1. Create and complete infra/terraform/main.tfvars.json.
+  2. Run tfplan foundation first. It performs terraform init automatically.
+  3. Review foundation.tfplan, then run tfapply and tfverify foundation.
+  4. Repeat plan, review, apply, deploy, and verify for function.
+  5. Repeat plan, review, apply, deploy, and verify for webapp.
+
   tfplan foundation    Plan the resource group and protected history storage.
   tfapply foundation   Apply the reviewed foundation.tfplan.
   tfverify foundation  Verify the signed-in deployer can list history containers.
@@ -344,8 +428,9 @@ Usage: ./infra/deploy.sh <command>
   tfdestroy function   Remove only the Function stage; requires
                        CONFIRM_TF_DESTROY_FUNCTION=yes.
 
-The Web App plan creates dashboard_access_group_name unless an existing
-dashboard_access_group_object_id is supplied in main.tfvars.json.
+The Web App plan creates an assignment-required Enterprise Application but
+does not create groups or assign users. Assign approved users or groups in
+Microsoft Entra after apply.
 EOF
 }
 

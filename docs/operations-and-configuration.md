@@ -1,6 +1,5 @@
 # Operations and configuration
 
-> **Author:** Kevin Tigges  
 > **Last modified:** 2026-09-27  
 > **Purpose:** Define authentication, runtime configuration, dashboard controls, and operational status sources.
 
@@ -63,13 +62,13 @@ Environment variables override values loaded from `.env`. When the Functions hos
 | `AZURE_RESOURCE_GROUP` | Empty | Operator convenience | Not required by collection | Managed by deployment | Resource group context |
 | `AZURE_LOCATION` | `eastus` | Operator convenience | Not required by collection | Managed by deployment | Deployment region; do not infer it from the resource-group metadata location |
 | `DASHBOARD_DATA_SOURCE` | `local` | `local` or `azure` | Not used | `azure` on the Web App | Selects generated local files or the verified Azure current bundle |
-| `DASHBOARD_STATIC_DIR` | Empty | Usually empty | Not used | `/home/site/wwwroot/dashboard` | Overrides the static asset directory when Python is installed outside the deployment root |
-| `DASHBOARD_CACHE_SECONDS` | `30` | Optional | Not used | Recommended | Limits repeated manifest and curated-blob downloads by the Web App |
+| `DASHBOARD_STATIC_DIR` | Empty | Usually empty | Not used | `dashboard` | Resolves static assets relative to the Oryx application directory, including compressed build extraction paths |
+| `DASHBOARD_CACHE_SECONDS` | `30` | Optional | Not used | Recommended | Controls how often the Web App checks the current manifest; requested immutable datasets are cached for the active run |
 | `DASHBOARD_AUTH_ENABLED` | `false` | Keep `false` | Not used | `true` only after App Service Authentication is enabled | Requires a trusted App Service Easy Auth principal for every dashboard and API request |
 | `DASHBOARD_DATA_BROWSER_ENABLED` | `false` | Enable only when evidence inspection is needed | Not used | Explicit opt-in | Exposes the read-only curated Data evidence view and its bounded API |
 | `DASHBOARD_DATA_BROWSER_ROLE` | Empty | Usually empty | Not used | Recommended app role such as `Data.Evidence.Reader` | When set, requires that role in the authenticated App Service principal |
 | `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | `false` | Keep disabled | Not used | Explicit opt-in | Enables shared recommendation display-state reads and writes |
-| `DASHBOARD_RECOMMENDATION_TRACKING_ROLE` | `Recommendation.Tracker` | Not used | Not used | Required app role | Authorizes the shared tracking API after dashboard authentication |
+| `DASHBOARD_RECOMMENDATION_TRACKING_ROLE` | `Recommendation.Tracker` | Not used | Not used | Legacy compatibility setting | No longer used; authenticated dashboard access authorizes the local shared workflow API |
 | `DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER` | `dvm-workflow` | Not used | Not used | Private Blob container | Stores append-only recommendation workflow events separately from retained evidence |
 
 ## Dashboard presentation configuration
@@ -135,17 +134,46 @@ the `Dashboard.Viewer` role and any enabled optional roles.
 ### Shared recommendation tracking
 
 `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=true` enables recommendation-level
-workflow status for authenticated users with the configured tracking role. The
-Web App managed identity receives Storage Blob Data Contributor on
-`dvm-workflow` only. It remains a reader on the retained history account and
-has no Defender or Graph permissions.
+workflow status for authenticated dashboard users. The
+private `dvm-workflow` container remains deployed when the feature is disabled
+so prior workflow history is not deleted. The Web App managed identity retains
+Storage Blob Data Contributor on that container only. The application does not
+read or write the workflow container while the feature flag is disabled. The
+identity remains a reader on retained history and has no Defender or Graph
+permissions.
 
 The API appends an event for **In progress**, **Fixed**, or **Clear**. It does
 not delete prior events. A fixed recommendation is confirmed only after a newer
 current run reports no active live finding for that recommendation; otherwise
 it is shown as still detected. Synthetic recommendations cannot be updated.
-The feature affects recommendation display and filtering only. Finding
-lifecycle and SLA calculations continue to use collected Defender evidence.
+Tracking is shared dashboard workflow metadata rather than a Defender
+assignment or lock:
+**In progress** remains in the recommendation lists, and another authorized
+tracker can update it. The Recommendations and Prioritize views show the latest
+status, updater, and update time. All work statuses are visible by default; the
+global filter can narrow the dashboard to Needs attention, Untracked / not
+started, In progress, Needs reassignment, Marked fixed / awaiting collection,
+Confirmed fixed, or Still detected after validation. A newer collection clears
+In progress from active work when no live findings remain. If fresh collection
+evidence still shows findings seven days after the last update, the effective
+state becomes Needs reassignment while preserving the prior user and timestamp.
+Finding lifecycle and SLA calculations continue to use collected Defender
+evidence.
+Changing the App Service setting restarts the application and does not require
+republishing the Web App package:
+
+```bash
+az webapp config appsettings set \
+  --resource-group <resource-group> \
+  --name <web-app-name> \
+  --settings DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=true
+```
+
+Use `false` to hide the controls and make the tracking API unavailable.
+Terraform retains the same value in
+`dashboard_recommendation_tracking_enabled`; update that variable before the
+next Terraform apply so infrastructure configuration does not reverse the
+runtime setting.
 
 ### Dashboard server settings
 
@@ -157,13 +185,14 @@ The dashboard runs as a same-origin FastAPI application. The browser always requ
 | `DASHBOARD_DATA_SOURCE=azure` locally | Developer credential | `DASHBOARD_AUTH_ENABLED=false` | Current manifest and immutable curated blobs | Production-like data integration testing without deployment |
 | `DASHBOARD_DATA_SOURCE=azure` in App Service | Web App managed identity | `DASHBOARD_AUTH_ENABLED=true` plus App Service Authentication | Current manifest and immutable curated blobs | Hosted dashboard |
 
-Azure mode calls the existing bundle reader, which rejects incomplete manifests and verifies compressed size and SHA-256 before returning any dataset. The cache holds one verified bundle for `DASHBOARD_CACHE_SECONDS`; it never writes to storage.
+Azure mode rejects incomplete manifests and verifies each requested curated blob's compressed size and SHA-256 before returning it. The Web App refreshes the current pointer after `DASHBOARD_CACHE_SECONDS` and caches only requested datasets for the active immutable run. A new run ID invalidates those dataset entries. This avoids downloading large optional datasets during the initial dashboard load and never writes to storage.
 
 Available operational endpoints are:
 
 ```text
 GET /api/health
 GET /api/auth
+GET /api/diagnostics
 GET /api/status
 GET /api/recommendation-tracking
 PUT /api/recommendation-tracking
@@ -172,6 +201,11 @@ GET /api/data-browser/<dataset>?offset=0&limit=50&query=<text>
 GET /api/data/<dataset>.json
 GET /api/data/cve-details/<cve-id>.json
 ```
+
+`GET /api/diagnostics` reports bounded, in-process request timings, current
+data-loading activity, cached dataset names, manifest state, and recent storage
+operations. It requires the same authenticated access as the dashboard and does
+not expose tokens, user identities, query strings, or vulnerability records.
 
 ### Azure Functions host settings
 

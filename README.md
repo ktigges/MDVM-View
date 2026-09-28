@@ -1,6 +1,5 @@
 # Vulnerability View
 
-> **Author:** Kevin Tigges  
 > **Last modified:** 2026-09-27  
 > **Purpose:** Set up, run, validate, and operate the Vulnerability View collector and dashboard.
 
@@ -8,7 +7,7 @@ Microsoft Defender Vulnerability Management provides strong vulnerability
 discovery, device assessment, and remediation guidance. Day-to-day review can
 still require moving among separate vulnerability, recommendation, device, and
 finding views. Vulnerability View brings those related records together in a
-low-cost, read-only dashboard built from the APIs available for the operator's
+low-cost, read-only dashboard built from the APIs available for the user's
 Defender environment.
 
 The viewer does not change Defender data, perform remediation, or send data,
@@ -23,23 +22,33 @@ status, and reporting behavior. Replace them with remediation targets approved
 by the organization before using SLA results for operational or compliance
 decisions.
 
-## Project status and responsibility
+## Independent project, trademarks, and disclaimer
 
-Vulnerability View is an independent project created by Kevin Tigges. The
-author is a Microsoft employee, but Microsoft did not commission, authorize,
-endorse, approve, support, or warrant this project. It is not a Microsoft
-product, and its content does not represent Microsoft guidance or policy.
+Vulnerability View is an independent project. It is not a Microsoft product and
+is not affiliated with, sponsored, endorsed, approved, supported, or warranted
+by Microsoft. References to Microsoft, Microsoft Azure, Microsoft Defender, and
+other Microsoft products or services are used only to identify the products and
+services with which this software interoperates. Microsoft and the names of its
+products and services are trademarks of the Microsoft group of companies.
 
-The software and documentation are provided as-is, without warranties. Users
-are responsible for validating the design, securing the deployment, reviewing
-permissions, protecting collected data, testing recovery, and confirming that
-the solution is appropriate for their environment. To the extent permitted by
-law, the author and Microsoft are not responsible for damage, loss, service
-interruption, data exposure, or other consequences resulting from deployment
-or use.
+THE SOFTWARE AND DOCUMENTATION ARE PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT
+WARRANTY OF ANY KIND, EXPRESS, IMPLIED, OR STATUTORY, INCLUDING WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT,
+ACCURACY, AVAILABILITY, SECURITY, OR RELIABILITY. TO THE MAXIMUM EXTENT
+PERMITTED BY APPLICABLE LAW, THE PROJECT CONTRIBUTORS DISCLAIM LIABILITY FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR OTHER
+DAMAGES, INCLUDING LOSS OF DATA, LOSS OF PROFITS, SERVICE INTERRUPTION,
+SECURITY INCIDENTS, OR COSTS ARISING FROM USE OF, INABILITY TO USE, DEPLOYMENT
+OF, OR RELIANCE ON THE SOFTWARE OR DOCUMENTATION.
+
+Users are solely responsible for evaluating suitability, validating the
+design, securing the deployment, reviewing permissions, protecting data,
+testing backup and recovery, complying with applicable laws and organizational
+requirements, and monitoring availability and cost. The documentation does not
+constitute legal, compliance, security, or professional advice.
 
 The design favors low-cost Azure services, but every deployed resource can
-incur charges. The operator is responsible for reviewing current Azure pricing,
+incur charges. Users are responsible for reviewing current Azure pricing,
 setting budgets and alerts, monitoring consumption and retention growth, and
 removing or resizing replaceable resources when they are no longer required.
 Protected DVM history must not be deleted as part of ordinary cost reduction or
@@ -147,12 +156,16 @@ Shared recommendation workflow tracking is independently controlled:
 
 ```dotenv
 DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=false
-DASHBOARD_RECOMMENDATION_TRACKING_ROLE=Recommendation.Tracker
 DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER=dvm-workflow
 ```
 
-When enabled, authorized users can mark a live recommendation **In progress**,
-**Fixed**, or clear its tracking state. “Fixed” waits for a newer collection:
+The Web App deployment preprovisions the private container and scoped managed
+identity permission. Every authenticated dashboard user can read and update
+this dashboard-local coordination state; no additional application role is
+required. Changing only `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` shows or
+hides the feature without republishing the Web App package. When enabled,
+users can mark a live recommendation **In progress**, **Fixed**, or clear its
+tracking state. “Fixed” waits for a newer collection:
 the dashboard then displays **Confirmed** when no active live findings remain,
 or **Still detected** when Defender continues to report affected findings.
 These shared display states are stored as append-only events in the separate
@@ -346,6 +359,12 @@ curl http://localhost:8000/api/status
 Azure mode uses the storage account and containers configured in `.env` and authenticates with the local developer credential. It is read-only. UI edits remain local and Uvicorn reloads server changes automatically, so App Service deployment is not required during normal design work.
 
 Pass a different port as the first argument, for example `./start-app.sh 8080`. Open [http://localhost:8000](http://localhost:8000). Set `DASHBOARD_RELOAD=false` to disable the development reloader. Stop the server with `Ctrl+C`.
+
+`start-app.sh` enables an in-memory recommendation-workflow preview by default.
+Local updates are labeled `Unknown dashboard user`, never write the
+`dvm-workflow` container, and reset when the local process restarts. Set
+`DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=false` before starting the script to
+hide the local preview.
 
 ## 10. Ten-minute walkthrough script
 

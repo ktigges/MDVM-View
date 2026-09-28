@@ -32,7 +32,7 @@ def _run_dataprep() -> int:
         shutil.copy2(policy_source, policy_target)
         try:
             os.chdir(work_root)
-            return main(["collect-live"])
+            return main(["collect-live", "--skip-local-exports"])
         finally:
             os.chdir(previous_directory)
 

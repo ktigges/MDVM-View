@@ -78,18 +78,6 @@ output "dashboard_enterprise_application_object_id" {
   value = try(azuread_service_principal.dashboard[0].object_id, null)
 }
 
-output "dashboard_access_group_object_id" {
-  value = local.dashboard_access_group_object_id
-}
-
-output "dashboard_access_group_name" {
-  value = var.deploy_web_app ? (
-    var.dashboard_access_group_object_id == ""
-    ? azuread_group.dashboard_access[0].display_name
-    : "Existing group"
-  ) : null
-}
-
 output "dashboard_recommendation_tracking_enabled" {
   value = var.deploy_web_app ? var.dashboard_recommendation_tracking_enabled : null
 }

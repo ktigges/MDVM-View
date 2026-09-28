@@ -1,6 +1,5 @@
 # Azure infrastructure
 
-> **Author:** Kevin Tigges  
 > **Last modified:** 2026-09-27  
 > **Purpose:** Summarize the staged Terraform infrastructure and point operators to the deployment procedures.
 
@@ -9,7 +8,7 @@ supports three cumulative reviewed stages:
 
 1. Greenfield resource group and protected history storage.
 2. Optional collector Function, managed identity, permissions, and monitoring.
-3. Optional authenticated B1 Linux Web App, read-only identity, and Entra group assignment.
+3. Optional authenticated B1 Linux Web App, read-only identity, and assignment-required Enterprise Application.
 
 Run the stages through [`deploy.sh`](deploy.sh) using `tfplan`, `tfapply`,
 `tfdeploy`, `tfverify`, and guarded `tfdestroy` commands. Full prerequisites,
@@ -30,11 +29,11 @@ groups**. Group-based assignment requires the applicable Microsoft Entra ID
 licensing; if it is unavailable, assign individual users the
 `Dashboard.Viewer` role.
 
-By default Terraform creates `DVM Viewer Users`; supply
-`dashboard_access_group_object_id` to reuse an existing group. When
-`dashboard_data_browser_enabled=true`, the same group also receives
-`Data.Evidence.Reader`; the link remains hidden and is opened directly at
-`/?view=data-browser`. Hosting, security, caching, and scale recommendations are in
+Terraform does not create an access group or assign users. After apply, assign
+approved users or groups to `Dashboard Viewer` in the `DVM Viewer` Enterprise
+Application. Assign `Data Evidence Reader` only for the hidden
+`/?view=data-browser` feature and `Recommendation Tracker` only for shared
+recommendation updates. Hosting, security, caching, and scale recommendations are in
 [`../docs/web-app-deployment-recommendations.md`](../docs/web-app-deployment-recommendations.md).
 Existing storage accounts and retained DVM history are outside this Terraform
 state and must not be deleted or imported into it.

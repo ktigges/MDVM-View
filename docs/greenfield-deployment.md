@@ -1,6 +1,5 @@
 # Greenfield Azure deployment
 
-> **Author:** Kevin Tigges  
 > **Last modified:** 2026-09-27  
 > **Purpose:** Create and validate a new protected Azure environment in three reviewed Terraform stages.
 
@@ -32,6 +31,7 @@ files belong in the source repository.
 | `history_storage_account_name` | Globally unique name for protected ADLS Gen2 history |
 | `function_runtime_storage_account_name` | Globally unique name for replaceable Functions host storage |
 | `function_app_name` | Globally unique Function App name |
+| `function_instance_memory_in_mb` | `2048` normally; use `4096` when measured collector working set requires it |
 | `app_mode` | `combined` for labeled synthetic plus live test data; `live` for production |
 | `collection_schedule` | Six-field NCRONTAB expression in UTC; `0 0 5 * * *` means daily at 05:00 UTC |
 | `history_storage_replication_type` | `LRS`, `ZRS`, `GRS`, or `GZRS` |
@@ -161,11 +161,10 @@ The optional cumulative Web App stage creates:
 - App Service Easy Auth with unauthenticated requests redirected to Entra;
 - Azure-backed dashboard settings and a 300-second verified-bundle cache.
 
-By default Terraform creates the `DVM Viewer Users` Entra security group and
-assigns it to the Enterprise Application. To reuse an existing group, put its
-object ID in `dashboard_access_group_object_id`. Optional initial user object
-IDs can be listed in `dashboard_access_member_object_ids`; group membership can
-also be managed later in Entra.
+Terraform creates the assignment-required `DVM Viewer` Enterprise Application
+but does not create an access group or assign users. A tenant administrator
+assigns approved existing users or groups to `Dashboard Viewer` and any
+required optional roles through the Enterprise Application.
 
 Group-based Enterprise Application assignment requires the applicable
 Microsoft Entra ID licensing. If it is unavailable, assign individual users

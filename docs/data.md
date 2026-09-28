@@ -1,6 +1,5 @@
 # Data structure, collection runs, and history
 
-> **Author:** Kevin Tigges  
 > **Last modified:** 2026-09-27  
 > **Purpose:** Define collected data, run processing, retention, change detection, and SLA calculations.
 
@@ -384,12 +383,26 @@ An event retains `RecommendationId`, `UserStatus`, `MarkedAtRunId`,
 shared display state. A `Clear` event hides earlier state without deleting
 history.
 
-`ReadyForValidation` is displayed as **Awaiting next collection** until a newer
-run is current. The dashboard derives **Confirmed** when that run contains no
-active live findings for the recommendation, or **Still detected** when active
-findings remain. These events are application workflow metadata, not Defender
-evidence, and they do not alter findings, lifecycle reconciliation, or SLA
-fields.
+Disabling the feature hides the controls and disables its API. The workflow
+container, existing events, managed-identity permission, and application-role
+assignment remain in place so changing the App Service setting can re-enable
+the feature without an infrastructure or package deployment.
+
+`InProgress` records the authenticated user's Entra object ID and display name;
+those values come from App Service Authentication rather than browser input. A
+newer run keeps the item **In progress** while active findings remain and
+derives **Confirmed** when none remain. If current collection evidence still
+shows active findings seven days after the last workflow update, the dashboard
+derives **Needs reassignment** and returns the item to the attention queue while
+preserving the prior user and time. Marking it in progress again appends a new
+event and restarts the seven-day window.
+
+`ReadyForValidation` is displayed as **Marked fixed · awaiting collection**
+until a newer run is current. The dashboard derives **Confirmed fixed** when
+that run contains no active live findings for the recommendation, or **Still
+detected after validation** when active findings remain. These events are
+application workflow metadata, not Defender evidence, and they do not alter
+findings, lifecycle reconciliation, or SLA fields.
 
 ## Published datasets
 

@@ -1,6 +1,5 @@
 # Environment and deployment plan
 
-> **Author:** Kevin Tigges  
 > **Last modified:** 2026-09-27  
 > **Purpose:** Define local, test, and Azure deployment boundaries, resources, and production-readiness gates.
 
@@ -40,6 +39,7 @@ The Terraform implementation needs these inputs:
 | `current_container_name` | `dvm-current` |
 | `function_runtime_storage_account_name` | Separate storage for the Functions host and Durable task hub |
 | `function_app_name` | Globally unique Function App name |
+| `function_instance_memory_in_mb` | Flex Consumption memory per collector instance; supported project values are 2048 and 4096 |
 | `deploy_function` | Creates Function, identity, permissions, and monitoring when `true` |
 | `collection_schedule` | Production NCRONTAB schedule |
 | `recommendation_enrichment_mode` | `targeted`, `full`, `none`, or `auto` |
@@ -175,7 +175,7 @@ Use a development account that is separate from production. Never point local in
 | Application Insights | Function diagnostics, failures, and dependency timing | Implemented when `deploy_function=true` |
 | Linux Web App and plan | Hosts the dashboard and a same-origin API that reads current data from private ADLS | Implemented as an optional B1 Terraform stage |
 | Web App managed identity | Read-only access to `dvm-current` and referenced curated blobs | Implemented with Storage Blob Data Reader |
-| Microsoft Entra authentication | Restricts dashboard and API access to approved users or groups | Implemented with Easy Auth, assignment-required Enterprise Application, and Terraform-managed group app-role assignments |
+| Microsoft Entra authentication | Restricts dashboard and API access to approved users or groups | Implemented with Easy Auth and an assignment-required Enterprise Application; assignments are managed manually in Entra |
 | Log Analytics | Function operational logs, metrics, failures, and dependency timing | Implemented when `deploy_function=true` |
 
 The retained-history account is a protected data resource. Function runtime storage and web hosting can be replaced without replacing or deleting DVM history.
@@ -224,9 +224,9 @@ python -m uvicorn vulnerability_view.dashboard_server:app --host 0.0.0.0 --port 
 Grant the web identity Storage Blob Data Reader on the history account. Do not grant contributor rights. Configure App Service Authentication before enabling `DASHBOARD_AUTH_ENABLED`; otherwise every request fails with HTTP 401. UI development does not require App Service deployment and keeps the flag disabled. Deploy the Web App only for Entra authentication, managed-identity, network, and hosted integration testing.
 
 When the curated Data evidence browser is enabled, Terraform sets
-`DASHBOARD_DATA_BROWSER_ROLE=Data.Evidence.Reader` and assigns that role to the
-configured dashboard access group. The evidence API is read-only and exposes
-only whitelisted normalized datasets.
+`DASHBOARD_DATA_BROWSER_ROLE=Data.Evidence.Reader`. A tenant administrator
+assigns that role to approved users or groups. The evidence API is read-only
+and exposes only whitelisted normalized datasets.
 
 ### User and group access
 
@@ -240,24 +240,23 @@ assignment perform different jobs:
   FastAPI.
 - The Enterprise Application has **Assignment required** enabled, so Entra
   issues access only to assigned users and groups.
-- Terraform creates `dashboard_access_group_name` when
-  `dashboard_access_group_object_id` is empty, or uses the supplied existing
-  group. It assigns that group to the `Dashboard.Viewer` app role.
-- When the hidden evidence browser is enabled, Terraform also assigns
+- Terraform does not create groups or manage Enterprise Application user/group
+  assignments. A tenant administrator assigns existing users or groups to
+  `Dashboard.Viewer`.
+- When the hidden evidence browser is enabled, the administrator also assigns
   `Data.Evidence.Reader` to that group.
+- Shared recommendation status is dashboard-local coordination. Any assigned
+  dashboard user can read and update it; it does not update Defender.
 
 Manage assignments at **Microsoft Entra ID > Enterprise applications > DVM
-Viewer > Users and groups**. Keeping assignments in Terraform prevents
-configuration drift. Group membership remains managed in Entra ID. Optional
-initial members can be supplied through
-`dashboard_access_member_object_ids`; users can also be added to the group
-later through normal Entra administration.
+Viewer > Users and groups**. Assignment and group membership remain managed in
+Microsoft Entra ID outside Terraform.
 Group-based Enterprise Application assignment requires the applicable
 Microsoft Entra ID licensing. If it is unavailable, assign individual users
 the `Dashboard.Viewer` role at the same **Users and groups** page.
-The Terraform operator needs permission to create applications and service
-principals and assign app roles, in addition to Azure permission to create the
-Web App and its Storage Blob Data Reader assignment.
+The person running Terraform needs permission to create applications and
+service principals, in addition to Azure permission to create the Web App and
+its storage role assignments.
 
 Populate `collector_subscription_reader_ids` with every Azure subscription
 that should appear in the dashboard selector. The Function Terraform stage

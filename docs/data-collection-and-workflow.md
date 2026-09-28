@@ -1,6 +1,5 @@
 # Data collection and dashboard workflow
 
-> **Author:** Kevin Tigges  
 > **Last modified:** 2026-09-27  
 > **Purpose:** Explain how Defender observations become retained evidence, lifecycle records, SLA results, and dashboard views.
 

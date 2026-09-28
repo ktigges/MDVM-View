@@ -5,7 +5,7 @@
  */
 
 window.VULNERABILITY_VIEW_CONFIG = {
-  revision: "2026-09-27T21:31:42Z",
+  revision: "2026-09-28T14:43:25Z",
   branding: {
     eyebrow: "VULNERABILITY VIEW",
     title: "Microsoft Vulnerability Management",

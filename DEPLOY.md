@@ -1,11 +1,112 @@
 # Azure deployment guide
 
-> **Author:** Kevin Tigges  
 > **Last modified:** 2026-09-27  
 > **Purpose:** Deploy and validate protected storage, the collector Function, and the authenticated dashboard Web App.
 
 The deployment is staged so retained DVM history stays independent of
 replaceable application infrastructure.
+
+For the complete inventory of Terraform inputs, runtime environment variables,
+JSON keys, generated Azure App Settings, SLA controls, presentation settings,
+and script overrides, see
+[Complete configuration reference](docs/configuration-reference.md).
+For all supported local, collection, deployment, validation, and diagnostic
+commands, including when each is safe to use, see
+[Command reference](docs/command-reference.md).
+
+## What `infra/deploy.sh` automates
+
+You do **not** need to run `terraform init` manually before a `tfplan` command.
+Every `./infra/deploy.sh tfplan <stage>` invocation automatically runs:
+
+1. `terraform init -input=false`
+2. `terraform validate`
+3. `terraform plan`, saved as `infra/terraform/<stage>.tfplan`
+
+Planning and applying remain deliberately separate. `tfplan` never applies
+infrastructure, and `tfapply` never creates or refreshes a plan. Review and
+apply the exact saved plan:
+
+```bash
+./infra/deploy.sh tfplan webapp
+terraform -chdir=infra/terraform show webapp.tfplan
+./infra/deploy.sh tfapply webapp
+```
+
+`tfdeploy` is a code-package operation. It does not run Terraform `init`,
+`plan`, or `apply`; it expects the selected Function or Web App infrastructure
+and Terraform outputs to already exist. For a dashboard code-only update to an
+existing Web App, use:
+
+```bash
+./infra/deploy.sh tfdeploy webapp
+./infra/deploy.sh tfverify webapp
+```
+
+Linux ZipDeploy can return HTTP 504 while Kudu continues an Oryx build. The
+deployment helper treats a nonzero client result as provisional and polls for
+a new Kudu deployment record. Kudu status `4` is successful and status `3` is
+failed. Before manually retrying an interrupted deployment, inspect its final
+state:
+
+```bash
+az webapp log deployment list \
+  --resource-group RG-DVMVIEWER \
+  --name app-dvmviewer-test \
+  --query 'sort_by(@,&start_time)[-1].{id:id,status:status,active:active,start:start_time,end:end_time}' \
+  --output table
+```
+
+## Consolidated deployment runbook
+
+Use this table to choose the smallest operation that matches the change:
+
+| Situation | Commands | Run a collection? |
+|---|---|---|
+| First deployment | `tfplan foundation`, review, `tfapply foundation`, `tfverify foundation`; then repeat for `function`; then repeat for `webapp` | Run `tfinvoke function` only if data is needed immediately |
+| Collector infrastructure or permissions changed | `tfplan function`, review, `tfapply function`, `tfdeploy function`, `tfverify function` | Only when an immediate fresh snapshot is needed |
+| Collector Python changed, infrastructure did not | `tfdeploy function`, then `tfverify function` | No; wait for the schedule unless fresh data is needed |
+| Web App infrastructure, Easy Auth, roles, or settings changed | `tfplan webapp`, review, `tfapply webapp`, `tfdeploy webapp`, `tfverify webapp` | No |
+| Dashboard or dashboard-server code changed | `tfdeploy webapp`, then `tfverify webapp` | No |
+| Recommendation tracking enabled persistently | Set `dashboard_recommendation_tracking_enabled=true` in `main.tfvars.json`; `tfplan webapp`, review, `tfapply webapp`, `tfdeploy webapp`, `tfverify webapp` | No |
+| A fresh Defender snapshot is needed immediately | `CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function`, then `tfverify function` | This is the collection |
+
+All Terraform stages are cumulative. Once the Web App exists, use the `webapp`
+stage for later infrastructure plans so Terraform preserves the foundation,
+Function, and Web App together. Never apply a plan that deletes the protected
+history account, its retained containers, or their data.
+
+After Terraform creates the Enterprise Application, assign approved users or
+groups manually at **Microsoft Entra admin center > Enterprise applications >
+DVM Viewer > Users and groups**:
+
+- Assign **Dashboard Viewer** to everyone who may open the application.
+- Assign **Data Evidence Reader** only to users or groups that may use the
+  hidden Data evidence browser.
+- Assign **Recommendation Tracker** to users or groups that may update shared
+  recommendation status.
+
+Terraform does not create an access group and does not manage these
+assignments.
+
+### Remove a group created by an earlier release
+
+An earlier Terraform configuration created `DVM Viewer Users` and assigned all
+three application roles to it. Before applying the cleanup plan:
+
+1. Assign the intended existing user or group to **Dashboard Viewer** in the
+   `DVM Viewer` Enterprise Application.
+2. Assign **Data Evidence Reader** and **Recommendation Tracker** only where
+   those capabilities are required.
+3. Run `./infra/deploy.sh tfplan webapp` and review the saved plan.
+4. Confirm that the plan removes only the generated group, its membership, and
+   its three app-role assignments. It must retain the Enterprise Application,
+   Web App, identities, storage accounts, containers, and stored data.
+5. Run `./infra/deploy.sh tfapply webapp`.
+6. Run `./infra/deploy.sh tfverify webapp`.
+
+Assigning the intended access first avoids a period where the
+assignment-required Enterprise Application has no authorized users.
 
 ## Storage-account separation
 
@@ -71,7 +172,7 @@ application settings.
 
 ## Required operator permissions
 
-The Terraform operator needs permission to:
+The person running Terraform needs permission to:
 
 - Create resources in the target subscription or resource group.
 - Create Azure role assignments.
@@ -79,8 +180,7 @@ The Terraform operator needs permission to:
 - Read the Microsoft Defender for Endpoint and Microsoft Graph enterprise
   applications.
 - Create application-role assignments for the collector identity.
-- Create an Entra application, Enterprise Application, security group, and
-  group app-role assignments for the dashboard.
+- Create an Entra application and Enterprise Application for the dashboard.
 
 Uploading existing local history requires Storage Blob Data Contributor on the
 history account. The foundation assigns this automatically to the Terraform
@@ -96,11 +196,11 @@ state and Web App application settings.
 For this deployment, subscription Owner is sufficient for Azure resource and
 role-assignment operations. An equivalent split is Contributor plus User
 Access Administrator or Role Based Access Control Administrator at every scope
-where Terraform creates role assignments. The operator also needs Microsoft
-Entra directory authority to create applications, service principals, groups,
-memberships, and application-role assignments. Global Administrator is
-sufficient; use a narrower approved role combination when organizational
-policy requires it.
+where Terraform creates role assignments. That person also needs Microsoft
+Entra directory authority to create applications and service principals.
+Whoever assigns dashboard users or groups needs permission to manage the
+Enterprise Application. Global Administrator is sufficient; use narrower
+approved roles when organizational policy requires them.
 
 ## Runtime identities and permissions
 
@@ -117,13 +217,13 @@ managed identities:
 | Collector | Storage Blob Data Owner, Storage Blob Data Contributor, Storage Queue Data Contributor, Storage Table Data Contributor | Dedicated Function runtime account |
 | Collector | Monitoring Metrics Publisher | Application Insights |
 | Dashboard | Storage Blob Data Reader | Protected history account; reads the current manifest and referenced curated datasets |
-| Dashboard | Storage Blob Data Contributor, when recommendation tracking is enabled | Private `dvm-workflow` container only; appends and reads shared workflow events |
-| Dashboard users | `Dashboard.Viewer` and, when enabled, `Data.Evidence.Reader` and `Recommendation.Tracker` | Enterprise Application authorization; these roles grant no Azure RBAC access |
+| Dashboard | Storage Blob Data Contributor | Private `dvm-workflow` container only; appends and reads shared workflow events when the application setting enables tracking |
+| Dashboard users | Roles assigned manually in the Enterprise Application | `Dashboard.Viewer` is required; `Data.Evidence.Reader` authorizes the optional evidence browser; local recommendation workflow needs no additional role |
 
 The dashboard identity receives no Defender or Microsoft Graph permission and
-cannot write to retained history or the current manifest. When recommendation
-tracking is enabled, its only storage write scope is the separate workflow
-container.
+cannot write to retained history or the current manifest. Its only storage
+write scope is the separate workflow container; the application does not access
+that container while recommendation tracking is disabled.
 
 ## Deployment packages
 
@@ -228,7 +328,7 @@ Terraform configures these Function application settings:
 | `FULL_ENRICHMENT_WEEKDAY` | `full_enrichment_weekday` |
 | `RECOMMENDATION_ENRICHMENT_MODE` | `recommendation_enrichment_mode` |
 | `ENABLE_EXPERIMENTAL_ENDPOINTS` | `enable_experimental_endpoints`; keep `false` unless explicitly testing undocumented compatibility routes |
-| `APP_MODE` | `app_mode`; use `combined` only when labeled synthetic test history should remain visible beside live data |
+| `APP_MODE` | `app_mode`; deployed values are `live` or `combined`. `live` publishes only collected Defender data; `combined` carries retained synthetic rows into new live runs. Local build commands also support `synthetic` |
 | `STORAGE_ACCOUNT_NAME` | History storage account |
 | `STORAGE_CONTAINER_NAME` | History container |
 | `STORAGE_CURRENT_CONTAINER_NAME` | Current-pointer container |
@@ -243,17 +343,17 @@ paths are append-only. Only `current/manifest.json` is replaceable.
 1. One Linux B1 App Service plan and Web App.
 2. One dedicated user-assigned managed identity.
 3. Storage Blob Data Reader on the history account for that identity.
-4. When enabled, a private recommendation-workflow container and Storage Blob
-   Data Contributor on that container only.
+4. A private recommendation-workflow container and Storage Blob Data
+   Contributor for the dashboard identity on that container only.
 5. One single-tenant Entra app registration and Enterprise Application named
    `DVM Viewer`.
-6. `Dashboard.Viewer`, `Data.Evidence.Reader`, and `Recommendation.Tracker`
-   user/group app roles.
+6. `Dashboard.Viewer`, `Data.Evidence.Reader`, and the legacy
+   `Recommendation.Tracker` app roles for manual assignment. Shared local
+   workflow updates require only normal dashboard access.
 7. Assignment-required Enterprise Application access.
-8. A `DVM Viewer Users` security group when no existing group ID is supplied.
-9. Group assignment to `Dashboard.Viewer` and the enabled optional roles.
-10. App Service Easy Auth with unauthenticated requests redirected to Entra.
-11. Azure-backed FastAPI settings and a 300-second verified-bundle cache.
+8. App Service Easy Auth with unauthenticated requests redirected to Entra.
+9. Azure-backed FastAPI settings, a 300-second current-manifest refresh interval,
+   and per-dataset caching for the active immutable run.
 
 The Enterprise Application display name is `DVM Viewer`; the app registration
 uses the same name. After apply, Terraform outputs
@@ -263,16 +363,13 @@ Entra ID > Enterprise applications > DVM Viewer > Users and groups**.
 
 The proposed `app-dvmviewer-test` name was available when checked on
 2026-09-27, but global availability must be confirmed again at apply time.
-The ignored `main.tfvars.json` includes the signed-in deployment administrator
-as the initial group member. Add and remove users through normal Entra group
-membership after deployment.
-
 Group-based Enterprise Application assignment requires the applicable
 Microsoft Entra ID licensing. If it is unavailable, assign individual users
-the `Dashboard.Viewer` role and any required optional roles at the same
-**Users and groups** page. The Easy Auth application credential has a two-year
-lifetime and an annual Terraform rotation trigger. Apply a reviewed Web App
-plan at least annually so Terraform rotates it before expiration.
+at the same **Users and groups** page. Terraform intentionally leaves all
+assignments to the tenant administrator. The Easy Auth application credential
+has a two-year lifetime and an annual Terraform rotation trigger. Apply a
+reviewed Web App plan at least annually so Terraform rotates it before
+expiration.
 
 Plan, review, apply, publish, and verify:
 
@@ -364,6 +461,39 @@ and operator CLI. `seed-synthetic-history` is one command within it; the same
 CLI also performs live collection, replay, validation, status, restoration, and
 history backfill.
 
+### APP_MODE reference
+
+| Value | Where supported | Result |
+|---|---|---|
+| `live` | Local collection and deployed Function | Collects and publishes Defender data only. Use this to remove synthetic rows from the dashboard's current dataset |
+| `combined` | Local collection and deployed Function | Collects live Defender data and carries forward previously seeded rows labeled `DataOrigin=Synthetic` |
+| `synthetic` | Local build/test commands only | Generates deterministic sample data without calling Defender. Terraform intentionally rejects this value for the deployed Function |
+
+Changing from `combined` to `live` does not delete any Azure Storage history.
+The next **successful** live collection creates a new immutable live-only run
+and updates only `current/manifest.json` to reference it. Older synthetic and
+combined runs remain retained and can still be audited.
+
+To switch the deployed collector to live-only mode, set:
+
+```json
+"app_mode": "live"
+```
+
+Then apply only the Function configuration and run or await a collection:
+
+```bash
+./infra/deploy.sh tfplan function
+terraform -chdir=infra/terraform show function.tfplan
+./infra/deploy.sh tfapply function
+CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
+./infra/check-runs.sh
+```
+
+The dashboard remains on the prior current bundle if that collection fails.
+Synthetic rows disappear from the current dashboard only after the live-only
+run publishes successfully.
+
 For a test environment that should display synthetic history beside current
 Defender data, set this Terraform value before planning the Function:
 
@@ -452,6 +582,53 @@ publication. In `combined` test mode it retains previously seeded synthetic rows
 but does not generate them. Do not start a manual run while another invocation
 is active.
 
+### Temporary two-hour lab schedule
+
+The collector normally uses 2 GB and runs daily. If telemetry shows the Python
+worker exiting after its working set approaches or exceeds 2 GB, temporarily
+set these Terraform values for a lab-day test:
+
+```json
+"function_instance_memory_in_mb": 4096,
+"app_mode": "live",
+"collection_schedule": "0 30 */2 * * *"
+```
+
+This runs at minute 30 of every even UTC hour. Apply the Function
+infrastructure/settings, then launch one current run:
+
+```bash
+./infra/deploy.sh tfplan function
+terraform -chdir=infra/terraform show function.tfplan
+./infra/deploy.sh tfapply function
+CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
+```
+
+Do not invoke manually if a scheduled invocation is already running or is due
+before the manual collection can finish. Monitor invocation and memory
+telemetry, then verify immutable publication:
+
+```bash
+./infra/check-function-logs.sh 6 10
+./infra/check-runs.sh 5
+```
+
+After the lab, restore the normal daily schedule:
+
+```json
+"collection_schedule": "0 0 5 * * *"
+```
+
+If repeated live-only runs remain comfortably below 2 GB, also restore:
+
+```json
+"function_instance_memory_in_mb": 2048
+```
+
+Run `tfplan function`, review it, and run `tfapply function` again after
+restoring those values. Changing the schedule or instance memory does not
+delete or overwrite immutable run history.
+
 List the latest ten durable Azure runs and their manifest status:
 
 ```bash
@@ -461,6 +638,48 @@ List the latest ten durable Azure runs and their manifest status:
 Pass a different positive count when needed, for example
 `./infra/check-runs.sh 20`. The script performs read-only Azure operations and
 uses a temporary local download directory that it removes on exit.
+
+This lists only runs that reached immutable manifest publication. To see timer
+invocations that failed before a run was published, query the Function's
+workspace-based Application Insights data:
+
+```bash
+./infra/check-function-logs.sh
+```
+
+The optional arguments are the lookback in hours and maximum invocation count:
+
+```bash
+./infra/check-function-logs.sh 48 20
+```
+
+The script displays recent invocations, automatically investigates the newest
+failure, prints its warning/error traces and correlated exceptions, and reports
+the Function's minute-by-minute memory working set. It is read-only.
+
+The equivalent direct Azure CLI query is:
+
+```bash
+WORKSPACE_ID="$(az monitor log-analytics workspace show \
+  --subscription c1f464b9-639a-4495-8118-0c6916a3ba3e \
+  --resource-group RG-DVMVIEWER \
+  --workspace-name log-dvmviewer-test \
+  --query customerId \
+  --output tsv)"
+
+az monitor log-analytics query \
+  --subscription c1f464b9-639a-4495-8118-0c6916a3ba3e \
+  --workspace "$WORKSPACE_ID" \
+  --analytics-query "AppRequests
+    | where Name == 'dataprep_snapshot'
+    | top 10 by TimeGenerated desc
+    | project TimeGenerated, Success, DurationMs, OperationId" \
+  --output table
+```
+
+`TimeGenerated` is UTC. A failed invocation may not appear in
+`check-runs.sh` because the current manifest advances only after successful
+publication.
 
 ## Useful Terraform outputs
 

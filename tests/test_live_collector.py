@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 import gzip
 from datetime import datetime, timezone
 
@@ -66,6 +67,43 @@ def test_pagination_reports_percentage_when_defender_supplies_total(monkeypatch)
     assert any("2/2 rows (100.0%)" in message for message in progress)
 
 
+def test_pagination_can_archive_without_retaining_rows(monkeypatch):
+    archived = []
+    client = DefenderClient(
+        "https://example.test",
+        Credential(),
+        lambda name, page, content: archived.append((name, page, json.loads(content))),
+    )
+    pages = iter([
+        response({"value": [{"id": 1}], "@odata.nextLink": "https://example.test/page2"}),
+        response({"value": [{"id": 2}]}),
+    ])
+    monkeypatch.setattr(client, "request", lambda url: next(pages))
+
+    rows, status = client.collect(ENDPOINTS[1], retain_rows=False)
+
+    assert rows == []
+    assert status["RowCount"] == 2
+    assert [page for _, page, _ in archived] == [1, 2]
+
+
+def test_pagination_stops_reporting_invalid_total(monkeypatch):
+    progress = []
+    client = DefenderClient("https://example.test", Credential(), progress_callback=progress.append)
+    pages = iter([
+        response({"@odata.count": 1, "value": [{"id": 1}], "@odata.nextLink": "https://example.test/page2"}),
+        response({"value": [{"id": 2}], "@odata.nextLink": "https://example.test/page3"}),
+        response({"value": [{"id": 3}]}),
+    ])
+    monkeypatch.setattr(client, "request", lambda url: next(pages))
+
+    client.collect(ENDPOINTS[1])
+
+    assert any("1/1 rows (100.0%)" in message for message in progress)
+    assert any("2 rows downloaded; more data available" in message for message in progress)
+    assert not any("2/1 rows" in message for message in progress)
+
+
 def test_targeted_enrichment_skips_derivable_vulnerability_recommendations():
     vulnerability = {"id": "va-_-vendor-_-product", "exposedMachinesCount": 10}
     configuration = {"id": "sca-_-scid-1", "exposedMachinesCount": 10}
@@ -92,6 +130,75 @@ def test_live_normalization_uses_collector_first_observation_for_sla():
     assert row["SlaPolicyVersion"] == "vulnerability-view-2026-09-21"
     assert row["SlaStatus"] == "OpenWithinSla"
     assert row["AssignedEngineer"] == ""
+
+
+def test_live_normalization_consumes_large_payloads_without_changing_results():
+    payloads = {
+        "machine_vulnerabilities": [
+            {"id": "finding-1", "machineId": "device-1", "cveId": "CVE-2026-0001", "severity": "High"},
+            {"id": "finding-2", "machineId": "device-1", "cveId": "CVE-2026-0002", "severity": "Medium"},
+        ],
+        "machines": [{"id": "device-1", "computerDnsName": "device-one"}],
+        "vulnerabilities": [
+            {"id": "CVE-2026-0001", "severity": "High", "cvssV3": 8.0},
+            {"id": "CVE-2026-0002", "severity": "Medium", "cvssV3": 6.0},
+            {"id": "CVE-2026-UNUSED", "severity": "Low", "cvssV3": 2.0},
+        ],
+        "recommendations": [],
+    }
+    expected_payloads = deepcopy(payloads)
+    consumed_payloads = deepcopy(payloads)
+    snapshot = datetime(2026, 9, 17, tzinfo=timezone.utc)
+
+    expected = normalize_live(expected_payloads, snapshot, "live-run")
+    actual = normalize_live(consumed_payloads, snapshot, "live-run", consume_payloads=True)
+
+    assert actual == expected
+    assert expected_payloads == payloads
+    assert "machine_vulnerabilities" not in consumed_payloads
+    assert "vulnerabilities" not in consumed_payloads
+
+
+def test_live_normalization_streams_archived_large_payloads_without_changing_results(tmp_path):
+    payloads = {
+        "machine_vulnerabilities": [
+            {"id": "finding-1", "machineId": "device-1", "cveId": "CVE-2026-0001", "severity": "High"},
+            {"id": "finding-2", "machineId": "device-1", "cveId": "CVE-2026-0002", "severity": "Medium"},
+        ],
+        "machines": [{"id": "device-1", "computerDnsName": "device-one"}],
+        "vulnerabilities": [
+            {"id": "CVE-2026-0001", "name": "first", "severity": "High", "cvssV3": 8.0},
+            {"id": "CVE-2026-0002", "severity": "Medium", "cvssV3": 6.0},
+            {"id": "CVE-2026-0001", "name": "replacement", "severity": "Critical", "cvssV3": 9.5},
+            {"id": "CVE-2026-UNUSED", "severity": "Low", "cvssV3": 2.0},
+        ],
+        "recommendations": [],
+    }
+    run_folder = tmp_path / "live-run"
+    run_folder.mkdir()
+    archived_pages = {
+        "machine_vulnerabilities": [payloads["machine_vulnerabilities"][:1], payloads["machine_vulnerabilities"][1:]],
+        "vulnerabilities": [payloads["vulnerabilities"][:2], payloads["vulnerabilities"][2:]],
+    }
+    for endpoint, pages in archived_pages.items():
+        for page_number, rows in enumerate(pages, start=1):
+            with gzip.open(run_folder / f"{endpoint}-page-{page_number:04d}.json.gz", "wt", encoding="utf-8") as handle:
+                json.dump({"value": rows}, handle)
+    snapshot = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    expected = normalize_live(deepcopy(payloads), snapshot, "live-run")
+    small_payloads = {key: deepcopy(rows) for key, rows in payloads.items() if key not in archived_pages}
+
+    actual = normalize_live(
+        small_payloads,
+        snapshot,
+        "live-run",
+        consume_payloads=True,
+        archived_large_payloads=run_folder,
+        archived_row_counts={"machine_vulnerabilities": 2, "vulnerabilities": 4},
+    )
+
+    assert actual == expected
+    assert actual["vulnerabilities"][0]["Name"] == "replacement"
 
 
 def test_live_normalization_extracts_subscription_and_classifies_direct_resource_metadata():

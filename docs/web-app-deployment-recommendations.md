@@ -1,21 +1,39 @@
 # Publishing and Azure cost options
 
-> **Author:** Kevin Tigges  
 > **Last modified:** 2026-09-27  
 > **Purpose:** Compare Web App hosting, security, scale, availability, and Azure cost options.
 
 The editable standalone estimator is
-[`dashboard/calculator.html`](../dashboard/calculator.html). With the local
-dashboard server running, open `http://127.0.0.1:8000/calculator.html`. It is
-intentionally separate from the operational dashboard navigation.
+[`tools/calculator.html`](../tools/calculator.html). Open it directly as a
+local file, or run `python -m http.server 8765 --directory tools` and open
+`http://127.0.0.1:8765/calculator.html`. It is
+intentionally separate from the operational dashboard navigation. The
+calculator can load `infra/terraform/main.tfvars.json` locally and models
+Function execution, Web App compute, immutable-history growth and operations,
+Function runtime storage, workflow events, Log Analytics/Application Insights,
+bandwidth, optional networking, licensing, support, and contingency. Rates
+remain editable because Azure pricing, offers, and regions change. It reports
+both the monthly run-rate at the selected horizon and a first-year total that
+accounts for increasing storage each month.
+
+Load the environment-specific `infra/terraform/main.tfvars.json` used for the
+deployment being estimated. For the current lab, use the repository's ignored
+`infra/terraform/main.tfvars.json`; for a customer estimate, first create the
+customer-specific copy from `main.tfvars.example.json` and load that copy.
+The browser reads it locally and does not upload it.
+
+The deployed history model is append-only with no automatic purge. The
+calculator's bounded-retention selection is a cost scenario only; it does not
+change Terraform or storage. The configured immutability period is a minimum
+no-change/no-delete period, not an expiration date.
 
 ## Recommended starting point
 
 Keep the collector and dashboard as separate workloads:
 
 - **Collector:** retain the existing Azure Functions Flex Consumption `FC1`
-  plan, 2 GB instance size, maximum instance count of one, and zero Always
-  Ready instances.
+  plan, current 4 GB lab instance size, maximum instance count of one, and zero
+  Always Ready instances. Re-evaluate memory and cadence after measured runs.
 - **Dashboard:** publish the existing FastAPI application to one Linux Azure
   Web App.
 - **Published dashboard:** use one Basic B1 instance in one region.
@@ -546,9 +564,9 @@ Group-based Enterprise Application assignment requires the applicable
 Microsoft Entra ID licensing; if it is unavailable, assign individual users
 the `Dashboard.Viewer` role.
 
-When the evidence browser is enabled, Terraform assigns
-`Data.Evidence.Reader` to the same group. Group membership is maintained in
-Entra ID; the Web App does not maintain a separate user list.
+When the evidence browser is enabled, assign `Data.Evidence.Reader` to approved
+users or groups in the Enterprise Application. The Web App does not maintain a
+separate user list.
 
 The application flag is defense in depth, not a replacement for Easy Auth.
 When enabled, FastAPI accepts only the trusted

@@ -90,6 +90,20 @@ def test_local_store_reads_generated_dashboard_data(tmp_path: Path):
     }
 
 
+def test_sla_policy_endpoint_returns_policy_for_current_data(tmp_path: Path):
+    (tmp_path / "dashboard").mkdir()
+    write_json(tmp_path / "config/sla-policies.json", {
+        "policyVersion": "test-policy",
+        "policies": [{"severity": "High", "slaDays": 7}],
+    })
+    app = create_app(Settings(dashboard_data_source="local"), project_root=tmp_path)
+
+    status, body = asgi_get(app, "/api/sla-policy")
+
+    assert status == 200
+    assert json.loads(body)["policies"] == [{"severity": "High", "slaDays": 7}]
+
+
 def test_large_data_responses_are_gzip_compressed(tmp_path: Path):
     findings = [{"FindingKey": f"finding-{index}", "Description": "repeated-value" * 20} for index in range(100)]
     write_json(tmp_path / "dashboard/data/findings.json", findings)
@@ -121,8 +135,31 @@ def test_dashboard_can_serve_static_assets_from_deployment_directory(tmp_path: P
     assert body == b"deployed dashboard"
 
 
-def test_azure_store_reuses_verified_bundle_and_resolves_cve_detail():
-    calls = []
+def test_dashboard_resolves_relative_static_directory_from_virtual_environment(
+    tmp_path: Path,
+    monkeypatch,
+):
+    deployment_root = tmp_path / "deployment"
+    static_directory = deployment_root / "dashboard"
+    static_directory.mkdir(parents=True)
+    (static_directory / "index.html").write_text("oryx dashboard", encoding="utf-8")
+    virtual_environment = deployment_root / "antenv"
+    virtual_environment.mkdir()
+    monkeypatch.setattr("vulnerability_view.dashboard_server.sys.prefix", str(virtual_environment))
+    app = create_app(
+        Settings(dashboard_static_dir="dashboard"),
+        project_root=tmp_path / "installed-package",
+    )
+
+    status, body = asgi_get(app, "/")
+
+    assert status == 200
+    assert body == b"oryx dashboard"
+
+
+def test_azure_store_loads_only_requested_datasets_and_resolves_cve_detail():
+    manifest_calls = []
+    dataset_calls = []
     credential = object()
     datasets = {
         "findings": [{"FindingKey": "finding-1"}],
@@ -132,11 +169,16 @@ def test_azure_store_reuses_verified_bundle_and_resolves_cve_detail():
     manifest = {
         "runId": "live-20260923T050000Z",
         "snapshotTimeUtc": "2026-09-23T05:00:00Z",
+        "files": [{"kind": "curated", "dataset": "secureScores"}],
     }
 
-    def load_bundle(*args):
-        calls.append(args)
-        return datasets, manifest
+    def load_manifest(*args):
+        manifest_calls.append(args)
+        return manifest
+
+    def load_dataset(*args):
+        dataset_calls.append(args)
+        return datasets[args[3]]
 
     store = DashboardDataStore(
         Settings(
@@ -145,15 +187,26 @@ def test_azure_store_reuses_verified_bundle_and_resolves_cve_detail():
             dashboard_data_source="azure",
         ),
         cache_seconds=60,
-        bundle_loader=load_bundle,
+        dataset_loader=load_dataset,
+        manifest_loader=load_manifest,
         credential_factory=lambda *_: credential,
     )
 
     assert store.read("findings.json") == datasets["findings"]
     assert store.read("cve-details/cve-2026-1234.json") == datasets["vulnerabilities"][0]
     assert store.status()["secureScoreAvailable"] is True
-    assert len(calls) == 1
-    assert calls[0] == ("historyaccount", "dvm-history", "dvm-current", credential)
+    assert manifest_calls == [("historyaccount", "dvm-current", credential)]
+    assert [call[3] for call in dataset_calls] == ["findings", "vulnerabilities"]
+    assert all(call[5] is manifest for call in dataset_calls)
+    diagnostics = store.diagnostics()
+    assert diagnostics["dataLoadingMode"] == "per-dataset"
+    assert diagnostics["manifestRunId"] == manifest["runId"]
+    assert diagnostics["cachedDatasets"] == ["findings", "vulnerabilities"]
+    assert diagnostics["pendingDataRequests"] == 0
+    assert [operation["dataset"] for operation in diagnostics["recentOperations"][:2]] == [
+        "vulnerabilities",
+        "findings",
+    ]
 
 
 def test_store_rejects_unknown_or_unsafe_paths(tmp_path: Path):
@@ -193,14 +246,17 @@ def test_dashboard_rejects_client_secret_mode_on_azure_host(monkeypatch, tmp_pat
         create_app(Settings(auth_mode="client_secret", allow_local_client_secret=True), project_root=tmp_path)
 
 
-def encoded_principal(roles: list[str] | None = None) -> str:
+def encoded_principal(roles: list[str] | None = None, include_identity: bool = True) -> str:
+    identity_claims = [
+        {"typ": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name", "val": "Test User"},
+        {"typ": "http://schemas.microsoft.com/identity/claims/objectidentifier", "val": "object-id"},
+    ] if include_identity else []
     principal = {
         "auth_typ": "aad",
         "name_typ": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
         "role_typ": "roles",
         "claims": [
-            {"typ": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name", "val": "Test User"},
-            {"typ": "http://schemas.microsoft.com/identity/claims/objectidentifier", "val": "object-id"},
+            *identity_claims,
             *[{"typ": "roles", "val": role} for role in (roles or ["Dashboard.Viewer"])],
         ],
     }
@@ -414,8 +470,73 @@ def test_recommendation_tracking_view_waits_for_a_newer_run_and_hides_clear():
         "markedAtRunId": "run-1",
         "markedAtSnapshotUtc": "2026-09-27T12:00:00Z",
         "updatedUtc": "",
+        "updatedByObjectId": "",
         "updatedByDisplayName": "",
     }]
+
+
+def test_recommendation_tracking_view_keeps_recent_open_work_in_progress():
+    finding = {
+        "RecommendationId": "rec-1",
+        "DataOrigin": "Live",
+        "FindingStatus": "Open",
+        "LastObservedUtc": "2026-09-30T12:00:00Z",
+    }
+    events = {
+        "rec-1": {
+            "UserStatus": "InProgress",
+            "MarkedAtRunId": "run-1",
+            "MarkedAtSnapshotUtc": "2026-09-27T12:00:00Z",
+            "UpdatedUtc": "2026-09-27T12:05:00Z",
+            "UpdatedByObjectId": "user-1",
+            "UpdatedByDisplayName": "User One",
+        },
+    }
+
+    rows = recommendation_tracking_view(events, [finding], "run-2", "2026-09-30T12:00:00Z")
+
+    assert rows[0]["effectiveStatus"] == "InProgress"
+    assert rows[0]["updatedByObjectId"] == "user-1"
+
+
+def test_recommendation_tracking_view_confirms_in_progress_work_when_closed():
+    events = {
+        "rec-1": {
+            "UserStatus": "InProgress",
+            "MarkedAtRunId": "run-1",
+            "MarkedAtSnapshotUtc": "2026-09-27T12:00:00Z",
+            "UpdatedUtc": "2026-09-27T12:05:00Z",
+        },
+    }
+
+    rows = recommendation_tracking_view(events, [], "run-2", "2026-09-28T12:00:00Z")
+
+    assert rows[0]["effectiveStatus"] == "Confirmed"
+
+
+def test_recommendation_tracking_view_releases_open_work_after_seven_days():
+    finding = {
+        "RecommendationId": "rec-1",
+        "DataOrigin": "Live",
+        "FindingStatus": "Open",
+        "LastObservedUtc": "2026-10-04T12:05:00Z",
+    }
+    events = {
+        "rec-1": {
+            "UserStatus": "InProgress",
+            "MarkedAtRunId": "run-1",
+            "MarkedAtSnapshotUtc": "2026-09-27T12:00:00Z",
+            "UpdatedUtc": "2026-09-27T12:05:00Z",
+            "UpdatedByObjectId": "user-1",
+            "UpdatedByDisplayName": "User One",
+        },
+    }
+
+    rows = recommendation_tracking_view(events, [finding], "run-8", "2026-10-04T12:05:00Z")
+
+    assert rows[0]["effectiveStatus"] == "NeedsReassignment"
+    assert rows[0]["updatedByDisplayName"] == "User One"
+    assert rows[0]["updatedByObjectId"] == "user-1"
 
 
 class FakeRecommendationTrackingStore:
@@ -439,7 +560,7 @@ class FakeRecommendationTrackingStore:
         return event
 
 
-def test_recommendation_tracking_api_requires_role_and_records_action(monkeypatch, tmp_path: Path):
+def test_recommendation_tracking_api_allows_dashboard_user_and_records_action(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("WEBSITE_HOSTNAME", "dashboard.azurewebsites.net")
     (tmp_path / "dashboard").mkdir()
     write_json(tmp_path / "dashboard/data/recommendations.json", [{
@@ -468,17 +589,6 @@ def test_recommendation_tracking_api_requires_role_and_records_action(monkeypatc
         (b"content-type", b"application/json"),
     ]
 
-    denied_status, _, _ = asgi_response(
-        app,
-        "/api/recommendation-tracking",
-        headers,
-        method="PUT",
-        request_body=body,
-    )
-    headers[0] = (
-        b"x-ms-client-principal",
-        encoded_principal(["Dashboard.Viewer", "Recommendation.Tracker"]).encode(),
-    )
     updated_status, _, updated_body = asgi_response(
         app,
         "/api/recommendation-tracking",
@@ -488,11 +598,26 @@ def test_recommendation_tracking_api_requires_role_and_records_action(monkeypatc
     )
     listed_status, listed_body = asgi_get(app, "/api/recommendation-tracking", headers)
 
-    assert denied_status == 403
     assert updated_status == 200
     assert json.loads(updated_body)["status"] == "InProgress"
     assert listed_status == 200
     assert json.loads(listed_body)["items"][0]["effectiveStatus"] == "InProgress"
+
+    headers[0] = (
+        b"x-ms-client-principal",
+        encoded_principal(["Dashboard.Viewer"], include_identity=False).encode(),
+    )
+    fallback_status, _, _ = asgi_response(
+        app,
+        "/api/recommendation-tracking",
+        headers,
+        method="PUT",
+        request_body=body,
+    )
+
+    assert fallback_status == 200
+    assert tracking_store.events["rec-1"]["UpdatedByObjectId"] == "unknown"
+    assert tracking_store.events["rec-1"]["UpdatedByDisplayName"] == "Unknown dashboard user"
 
 
 def test_recommendation_tracking_api_is_hidden_when_disabled(tmp_path: Path):
@@ -504,10 +629,29 @@ def test_recommendation_tracking_api_is_hidden_when_disabled(tmp_path: Path):
     assert status == 404
 
 
-def test_recommendation_tracking_requires_dashboard_authentication(tmp_path: Path):
+def test_recommendation_tracking_uses_unknown_actor_for_local_preview(tmp_path: Path):
+    (tmp_path / "dashboard").mkdir()
+    write_json(tmp_path / "dashboard/data/findings.json", [])
+    write_json(tmp_path / "dashboard/data/collection-runs.json", [])
+    write_json(tmp_path / "dashboard/data/secure-scores.json", [])
+    tracking_store = FakeRecommendationTrackingStore()
+    app = create_app(
+        Settings(dashboard_recommendation_tracking_enabled=True),
+        project_root=tmp_path,
+        recommendation_tracking_store=tracking_store,
+    )
+
+    status, body = asgi_get(app, "/api/recommendation-tracking")
+
+    assert status == 200
+    assert json.loads(body) == {"items": []}
+
+
+def test_recommendation_tracking_requires_authentication_on_azure(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("WEBSITE_HOSTNAME", "dashboard.azurewebsites.net")
     (tmp_path / "dashboard").mkdir()
 
-    with pytest.raises(RuntimeError, match="requires dashboard authentication"):
+    with pytest.raises(RuntimeError, match="requires dashboard authentication on Azure"):
         create_app(
             Settings(dashboard_recommendation_tracking_enabled=True),
             project_root=tmp_path,

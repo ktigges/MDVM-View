@@ -152,34 +152,6 @@ variable "dashboard_entra_application_name" {
   default     = "DVM Viewer"
 }
 
-variable "dashboard_access_group_object_id" {
-  description = "Existing Microsoft Entra group object ID to assign. Leave empty to create dashboard_access_group_name."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = var.dashboard_access_group_object_id == "" || can(regex("^[0-9a-fA-F-]{36}$", var.dashboard_access_group_object_id))
-    error_message = "dashboard_access_group_object_id must be empty or an Entra group object GUID."
-  }
-}
-
-variable "dashboard_access_group_name" {
-  description = "Display name of the Entra security group created when no existing group object ID is supplied."
-  type        = string
-  default     = "DVM Viewer Users"
-}
-
-variable "dashboard_access_member_object_ids" {
-  description = "Initial Entra user object IDs added when Terraform creates the dashboard access group."
-  type        = set(string)
-  default     = []
-
-  validation {
-    condition     = alltrue([for object_id in var.dashboard_access_member_object_ids : can(regex("^[0-9a-fA-F-]{36}$", object_id))])
-    error_message = "Every dashboard_access_member_object_ids value must be an Entra object GUID."
-  }
-}
-
 variable "dashboard_data_browser_enabled" {
   description = "Enable the hidden read-only Data evidence URI and assign its app role to the dashboard access group."
   type        = bool
@@ -187,7 +159,7 @@ variable "dashboard_data_browser_enabled" {
 }
 
 variable "dashboard_recommendation_tracking_enabled" {
-  description = "Enable shared recommendation workflow tracking in the dashboard."
+  description = "Display shared recommendation workflow tracking and enable its API; infrastructure remains provisioned when false."
   type        = bool
   default     = false
 }
@@ -217,6 +189,17 @@ variable "function_runtime_storage_account_name" {
 variable "function_app_name" {
   description = "Globally unique Function App name."
   type        = string
+}
+
+variable "function_instance_memory_in_mb" {
+  description = "Memory allocated to each Flex Consumption Function instance."
+  type        = number
+  default     = 2048
+
+  validation {
+    condition     = contains([2048, 4096], var.function_instance_memory_in_mb)
+    error_message = "function_instance_memory_in_mb must be 2048 or 4096."
+  }
 }
 
 variable "collection_schedule" {

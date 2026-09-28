@@ -7,12 +7,26 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TF_DIR="$ROOT_DIR/infra/terraform"
-LIMIT="${1:-10}"
+LIMIT=10
+LIMIT_SET=false
+SHOW_PROGRESS=false
 
-if ! [[ "$LIMIT" =~ ^[1-9][0-9]*$ ]]; then
-  echo "Usage: ./infra/check-runs.sh [positive-count]" >&2
-  exit 2
-fi
+for argument in "$@"; do
+  case "$argument" in
+    --progress)
+      SHOW_PROGRESS=true
+      ;;
+    *)
+      if [[ "$argument" =~ ^[1-9][0-9]*$ ]] && [[ "$LIMIT_SET" == "false" ]]; then
+        LIMIT="$argument"
+        LIMIT_SET=true
+      else
+        echo "Usage: ./infra/check-runs.sh [positive-count] [--progress]" >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
 
 for command in az jq terraform; do
   if ! command -v "$command" >/dev/null 2>&1; then
@@ -20,6 +34,11 @@ for command in az jq terraform; do
     exit 1
   fi
 done
+
+if [[ "$SHOW_PROGRESS" == "true" ]]; then
+  "$ROOT_DIR/infra/check-function-logs.sh" 1 1 --status-only
+  echo
+fi
 
 ACCOUNT_NAME="${STORAGE_ACCOUNT_NAME:-$(terraform -chdir="$TF_DIR" output -raw history_storage_account_name)}"
 CONTAINER_NAME="${STORAGE_CONTAINER_NAME:-$(terraform -chdir="$TF_DIR" output -raw history_container_name)}"
@@ -66,6 +85,7 @@ if [[ "$INCLUDE_EXPERIMENTAL" == "true" ]]; then
 else
   echo "Experimental endpoint results: hidden (ENABLE_EXPERIMENTAL_ENDPOINTS is false)"
 fi
+echo "Published durable runs only; failed Function invocations may not appear."
 echo
 
 for manifest in "${manifests[@]}"; do

@@ -1,0 +1,277 @@
+<!--
+  Author: Kevin Tigges
+  Last modified: 2026-09-28
+  Purpose: Provide a local-only interactive cost model for the complete Azure design.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DVM Viewer Azure Cost Calculator</title>
+  <style>
+    :root{color-scheme:light;--navy:#0b2f4f;--cyan:#16899a;--ink:#17212b;--muted:#5d6b78;--line:#d8e0e7;--panel:#f4f7f9;--accent:#e7f5f7;--warn:#fff3d6}
+    *{box-sizing:border-box}body{margin:0;background:#eef2f5;color:var(--ink);font:15px/1.5 Inter,"Segoe UI",sans-serif}header{background:var(--navy);color:#fff;padding:28px max(24px,calc((100vw - 1260px)/2))}header p{margin:6px 0 0;color:#d7e6f1}main{max-width:1260px;margin:24px auto;padding:0 24px 40px}.notice{margin-bottom:18px;padding:12px 15px;border-left:4px solid var(--cyan);background:var(--accent)}.notice.warning{border-color:#b7791f;background:var(--warn)}.layout{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(340px,.75fr);gap:20px;align-items:start}.panel{background:#fff;border:1px solid var(--line);border-radius:10px;padding:20px;box-shadow:0 3px 12px rgba(25,49,70,.06)}.panel+.panel{margin-top:18px}h1,h2,h3{margin-top:0}h1{margin-bottom:2px;font-size:26px}h2{margin-bottom:15px;color:var(--navy);font-size:19px}h3{margin:18px 0 8px;color:var(--navy);font-size:15px}.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px 16px}label{display:grid;gap:5px;color:var(--muted);font-size:13px;font-weight:650}input,select{width:100%;padding:9px 10px;border:1px solid #b9c6d1;border-radius:6px;background:#fff;color:var(--ink);font:inherit}.hint{display:block;margin-top:10px;color:var(--muted);font-size:12px}.profile{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end}.profile-status{margin-top:10px;color:var(--muted);font-size:12px}.summary{position:sticky;top:18px}.total{padding:18px;border-radius:9px;background:var(--navy);color:#fff}.total span{display:block;color:#cce1ec;font-size:13px}.total strong{display:block;margin-top:2px;font-size:34px;line-height:1.2}.breakdown{margin:15px 0 0;padding:0;list-style:none}.breakdown li{display:flex;justify-content:space-between;gap:18px;padding:8px 0;border-bottom:1px solid var(--line)}.breakdown li:last-child{border-bottom:0}.breakdown span{color:var(--muted)}.metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}.metric{padding:11px;border:1px solid var(--line);border-radius:7px;background:var(--panel)}.metric span{display:block;color:var(--muted);font-size:12px}.metric strong{display:block;margin-top:3px;color:var(--navy)}.included{margin:14px 0 0;padding-left:20px}.included li{margin:5px 0}.recommendation{margin-top:16px;padding:13px;border-radius:7px;background:var(--accent)}footer{max-width:1260px;margin:0 auto;padding:0 24px 32px;color:var(--muted);font-size:12px}@media(max-width:860px){.layout{grid-template-columns:1fr}.summary{position:static}}@media(max-width:560px){.fields,.metric-grid,.profile{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DVM Viewer Azure Cost Calculator</h1>
+    <p>Local-only planning model for every cost-bearing resource in the current Terraform design.</p>
+  </header>
+  <main>
+    <div class="notice">Rates are editable planning assumptions, not a quote. Confirm region, currency, offers, Defender/Entra licensing, taxes, support, and discounts in the official Azure Pricing Calculator before purchase.</div>
+    <div class="notice warning"><strong>Immutable history grows every successful run.</strong> The application does not delete retained raw or curated evidence. The planning horizon below estimates the monthly run-rate after that many months of accumulation; WORM and soft-delete settings are retention controls, not automatic deletion schedules.</div>
+    <div class="layout">
+      <div>
+        <section class="panel">
+          <h2>Load deployed Terraform profile</h2>
+          <div class="profile">
+            <label>Terraform values JSON<input id="tfvarsFile" type="file" accept=".json,application/json"></label>
+            <button id="clearProfile" type="button">Reset profile message</button>
+          </div>
+          <div id="profileStatus" class="profile-status">No file loaded. Values stay in this browser and are never uploaded.</div>
+          <span class="hint">Recognized cost drivers: location, memory, schedule, replication, immutability/soft-delete days, Web App SKU, deployment stages, tracking, mode, cache, and subscription-reader count. Naming, tags, RBAC, identities, app registration, and containers are reported as no-direct-charge configuration.</span>
+        </section>
+
+        <section class="panel">
+          <h2>Collector Function workload</h2>
+          <div class="fields">
+            <label>Function memory (GB)<select id="functionMemory"><option value="2">2 GB</option><option value="4" selected>4 GB</option></select></label>
+            <label>Average collection duration (minutes)<input id="collectionMinutes" type="number" min="0" step=".1" value="8"></label>
+            <label>Collections per day<input id="collectionsPerDay" type="number" min="0" step=".1" value="12"></label>
+            <label>Days per month<input id="daysPerMonth" type="number" min="1" max="31" step="1" value="30"></label>
+            <label>Executions per collection<input id="executionsPerCollection" type="number" min="1" step="1" value="1"></label>
+            <label>Free executions per month<input id="freeExecutions" type="number" min="0" step="1000" value="250000"></label>
+            <label>Execution price per million ($)<input id="executionMillionRate" type="number" min="0" step=".01" value=".40"></label>
+            <label>Free GB-seconds per month<input id="freeGbSeconds" type="number" min="0" step="1000" value="100000"></label>
+            <label>On-demand execution rate per GB-second ($)<input id="executionRate" type="number" min="0" step=".000001" value=".000026"></label>
+            <label>Always Ready/base charge ($/month)<input id="alwaysReadyCost" type="number" min="0" step=".01" value="0"></label>
+          </div>
+          <span class="hint">Current Terraform sets one FC1 Flex Consumption instance maximum and configures no Always Ready instance. The calculator frequency does not change the deployed NCRONTAB schedule.</span>
+        </section>
+
+        <section class="panel">
+          <h2>Dashboard Web App</h2>
+          <div class="fields">
+            <label>Linux App Service tier
+              <select id="appServiceTier">
+                <option value="13.14">B1 — editable planning rate $13.14/month</option>
+                <option value="69.35">S1 — editable planning rate $69.35/month</option>
+                <option value="62.05">P0v3 — editable planning rate $62.05/month</option>
+                <option value="124.10">P1v3 — editable planning rate $124.10/month</option>
+                <option value="custom">Custom monthly rate</option>
+              </select>
+            </label>
+            <label>Custom Web App rate ($/instance/month)<input id="customAppRate" type="number" min="0" step=".01" value="13.14" disabled></label>
+            <label>Web App instances<input id="appInstances" type="number" min="0" step="1" value="1"></label>
+            <label>Standby/secondary region ($/month)<input id="standbyCost" type="number" min="0" step=".01" value="0"></label>
+          </div>
+          <span class="hint">The deployed design uses one always-on Linux B1 Web App. Easy Auth, managed identity, role assignments, and the Entra app registration have no separate resource meter in this model.</span>
+        </section>
+
+        <section class="panel">
+          <h2>Protected immutable history storage</h2>
+          <div class="fields">
+            <label>Planning horizon (months)<input id="horizonMonths" type="number" min="1" step="1" value="12"></label>
+            <label>Storage-growth model<select id="retentionModel"><option value="append">Append-only, no deletion (deployed)</option><option value="bounded">Bounded-retention cost scenario only</option></select></label>
+            <label>Modeled retention when bounded (days)<input id="modeledRetentionDays" type="number" min="1" step="1" value="365"></label>
+            <label>Configured minimum immutability (days)<input id="immutabilityDays" type="number" min="1" step="1" value="365"></label>
+            <label>Existing retained history (GiB)<input id="existingHistoryGib" type="number" min="0" step=".1" value="1"></label>
+            <label>Compressed immutable data per run (GiB)<input id="runSizeGib" type="number" min="0" step=".001" value=".159"></label>
+            <label>Replication<select id="historyReplication"><option value=".0184">LRS</option><option value=".023">ZRS</option><option value=".0368">GRS</option><option value=".046">GZRS</option><option value="custom">Custom</option></select></label>
+            <label>History capacity rate ($/GiB-month)<input id="historyCapacityRate" type="number" min="0" step=".0001" value=".0184"></label>
+            <label>Soft-deleted retained data (GiB)<input id="softDeletedGib" type="number" min="0" step=".1" value="0"></label>
+            <label>Write/create operations per run<input id="writesPerRun" type="number" min="0" step="1" value="935"></label>
+            <label>Other reads/list operations per month<input id="historyReadsMonth" type="number" min="0" step="100" value="5000"></label>
+            <label>Write price per 10,000 operations ($)<input id="writeRate" type="number" min="0" step=".001" value=".05"></label>
+            <label>Read/list price per 10,000 operations ($)<input id="readRate" type="number" min="0" step=".001" value=".004"></label>
+            <label>Workflow events per month<input id="workflowEvents" type="number" min="0" step="100" value="1000"></label>
+            <label>Average workflow event size (KiB)<input id="workflowEventKib" type="number" min="0" step=".1" value="2"></label>
+          </div>
+          <span class="hint">Includes raw pages, curated datasets, manifests, retained SLA policy, current-pointer writes, and append-only recommendation workflow events. The bounded option changes estimates only; it does not configure deletion. The deployed application and Terraform do not purge retained history.</span>
+        </section>
+
+        <section class="panel">
+          <h2>Function runtime storage</h2>
+          <div class="fields">
+            <label>Runtime/deployment storage (GiB)<input id="runtimeStorageGib" type="number" min="0" step=".1" value="1"></label>
+            <label>Runtime capacity rate ($/GiB-month)<input id="runtimeCapacityRate" type="number" min="0" step=".0001" value=".0184"></label>
+            <label>Runtime blob/queue/table operations per month<input id="runtimeOperations" type="number" min="0" step="1000" value="100000"></label>
+            <label>Blended runtime price per 10,000 operations ($)<input id="runtimeOperationRate" type="number" min="0" step=".001" value=".01"></label>
+          </div>
+          <span class="hint">This is the separate replaceable StorageV2 LRS account used by the Functions host, trigger monitor, queues/tables, and deployment package. It is not retained DVM evidence.</span>
+        </section>
+
+        <section class="panel">
+          <h2>Application Insights and Log Analytics</h2>
+          <div class="fields">
+            <label>Telemetry ingestion per collection (GiB)<input id="logsPerCollectionGib" type="number" min="0" step=".001" value=".01"></label>
+            <label>Other telemetry per month (GiB)<input id="otherLogsGib" type="number" min="0" step=".1" value=".5"></label>
+            <label>Included ingestion per month (GiB)<input id="freeLogsGib" type="number" min="0" step=".1" value="5"></label>
+            <label>Ingestion rate ($/GiB)<input id="logIngestionRate" type="number" min="0" step=".01" value="2.76"></label>
+            <label>Chargeable retained telemetry (GiB-month)<input id="chargeableLogRetentionGib" type="number" min="0" step=".1" value="0"></label>
+            <label>Retention rate ($/GiB-month)<input id="logRetentionRate" type="number" min="0" step=".01" value=".12"></label>
+          </div>
+          <span class="hint">Terraform uses workspace-based Application Insights, Log Analytics PerGB2018, 30-day retention, diagnostics, traces, requests, exceptions, and Function metrics. Refresh rates for Central US before purchase.</span>
+        </section>
+
+        <section class="panel">
+          <h2>Network, licensing, support, and optional architecture</h2>
+          <div class="fields">
+            <label>Internet egress (GiB/month)<input id="egressGib" type="number" min="0" step=".1" value="1"></label>
+            <label>Egress rate ($/GiB)<input id="egressRate" type="number" min="0" step=".01" value=".087"></label>
+            <label>Front Door/CDN/WAF ($/month)<input id="frontDoorCost" type="number" min="0" step=".01" value="0"></label>
+            <label>Private endpoints/DNS/NAT ($/month)<input id="networkCost" type="number" min="0" step=".01" value="0"></label>
+            <label>Incremental Defender/Entra licensing ($/month)<input id="licenseCost" type="number" min="0" step=".01" value="0"></label>
+            <label>Azure support plan allocation ($/month)<input id="supportCost" type="number" min="0" step=".01" value="0"></label>
+            <label>Other fixed services ($/month)<input id="otherCost" type="number" min="0" step=".01" value="0"></label>
+            <label>Planning contingency (%)<input id="contingencyPercent" type="number" min="0" step="1" value="10"></label>
+          </div>
+          <span class="hint">The current Terraform does not deploy Front Door, WAF, NAT Gateway, private endpoints, Private DNS, or a secondary region. Defender and Entra licenses are external prerequisites, so enter only incremental costs attributable to this project.</span>
+        </section>
+
+        <section class="panel">
+          <h2>Current design resources with no direct meter</h2>
+          <ul class="included">
+            <li>Resource group, blob containers, WORM policy object, Terraform state metadata, tags, and Azure CAF names</li>
+            <li>User-assigned managed identities, Azure RBAC assignments, Defender/Graph app-role assignments</li>
+            <li>Entra application, service principal, app roles, and Easy Auth secret rotation object</li>
+            <li>Current manifest pointer capacity beyond the storage/operation inputs above</li>
+          </ul>
+          <span class="hint">No-direct-meter does not mean prerequisites are free: tenant licensing, administrator labor, security review, support, and unrelated shared services remain outside Azure resource metering.</span>
+        </section>
+      </div>
+
+      <aside class="panel summary">
+        <h2>Monthly run-rate estimate</h2>
+        <div class="total"><span>Monthly run-rate at end of planning horizon, with contingency</span><strong id="monthlyTotal">$0.00</strong></div>
+        <div class="total" style="margin-top:10px"><span>Estimated first-year total, including storage growth</span><strong id="annualTotal">$0.00</strong></div>
+        <ul class="breakdown">
+          <li><span>Collector Function</span><strong id="functionCost">$0.00</strong></li>
+          <li><span>Web App compute</span><strong id="webAppCost">$0.00</strong></li>
+          <li><span>History capacity</span><strong id="historyCapacityCost">$0.00</strong></li>
+          <li><span>History operations</span><strong id="historyOperationsCost">$0.00</strong></li>
+          <li><span>Function runtime storage</span><strong id="runtimeStorageCost">$0.00</strong></li>
+          <li><span>Monitoring</span><strong id="monitoringCost">$0.00</strong></li>
+          <li><span>Network/optional</span><strong id="networkOptionalCost">$0.00</strong></li>
+          <li><span>Licensing/support</span><strong id="licenseSupportCost">$0.00</strong></li>
+          <li><span>Contingency</span><strong id="contingencyResult">$0.00</strong></li>
+        </ul>
+        <div class="metric-grid">
+          <div class="metric"><span>Monthly collections</span><strong id="monthlyCollections">0</strong></div>
+          <div class="metric"><span>Monthly GB-seconds</span><strong id="monthlyGbSeconds">0</strong></div>
+          <div class="metric"><span>New history/month</span><strong id="monthlyHistoryGrowth">0 GiB</strong></div>
+          <div class="metric"><span>History at horizon</span><strong id="historyAtHorizon">0 GiB</strong></div>
+          <div class="metric"><span>Monthly history writes</span><strong id="monthlyHistoryWrites">0</strong></div>
+          <div class="metric"><span>Telemetry ingestion</span><strong id="monthlyLogs">0 GiB</strong></div>
+        </div>
+        <div class="recommendation">
+          <strong>Current deployed profile</strong><br>
+          4 GB Flex Consumption, every two hours, one B1 Web App, two StorageV2 accounts, LRS immutable hot history, 30-day Log Analytics retention, and no Front Door/private networking.
+        </div>
+      </aside>
+    </div>
+  </main>
+  <footer>Last updated 2026-09-28 14:45 UTC. Currency: USD. All rates are editable assumptions and must be refreshed before purchase.</footer>
+  <script>
+    const ids=["functionMemory","collectionMinutes","collectionsPerDay","daysPerMonth","executionsPerCollection","freeExecutions","executionMillionRate","freeGbSeconds","executionRate","alwaysReadyCost","appServiceTier","customAppRate","appInstances","standbyCost","horizonMonths","retentionModel","modeledRetentionDays","immutabilityDays","existingHistoryGib","runSizeGib","historyReplication","historyCapacityRate","softDeletedGib","writesPerRun","historyReadsMonth","writeRate","readRate","workflowEvents","workflowEventKib","runtimeStorageGib","runtimeCapacityRate","runtimeOperations","runtimeOperationRate","logsPerCollectionGib","otherLogsGib","freeLogsGib","logIngestionRate","chargeableLogRetentionGib","logRetentionRate","egressGib","egressRate","frontDoorCost","networkCost","licenseCost","supportCost","otherCost","contingencyPercent"];
+    const value=id=>Math.max(0,Number(document.getElementById(id).value)||0);
+    const money=amount=>amount.toLocaleString("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2});
+    const number=amount=>Math.round(amount).toLocaleString("en-US");
+    const gib=amount=>`${amount.toLocaleString("en-US",{maximumFractionDigits:1})} GiB`;
+    const setValue=(id,next)=>{if(next!==undefined&&next!==null&&next!=="")document.getElementById(id).value=next;};
+
+    function calculate(){
+      const days=value("daysPerMonth"),collections=value("collectionsPerDay")*days;
+      const gbSeconds=value("functionMemory")*value("collectionMinutes")*60*collections;
+      const billableGbSeconds=Math.max(0,gbSeconds-value("freeGbSeconds"));
+      const executions=collections*value("executionsPerCollection");
+      const billableExecutions=Math.max(0,executions-value("freeExecutions"));
+      const functionCost=billableGbSeconds*value("executionRate")+(billableExecutions/1000000)*value("executionMillionRate")+value("alwaysReadyCost");
+
+      const tier=document.getElementById("appServiceTier"),custom=tier.value==="custom";
+      document.getElementById("customAppRate").disabled=!custom;
+      const appRate=custom?value("customAppRate"):Number(tier.value);
+      const webAppCost=appRate*value("appInstances")+value("standbyCost");
+
+      const monthlyHistoryGrowth=value("runSizeGib")*collections;
+      const workflowGib=value("workflowEvents")*value("workflowEventKib")/1048576;
+      const growthMonths=month=>document.getElementById("retentionModel").value==="bounded"?Math.min(month,value("modeledRetentionDays")/30.4375):month;
+      const historyAt=month=>value("existingHistoryGib")+(monthlyHistoryGrowth+workflowGib)*growthMonths(month)+value("softDeletedGib");
+      const historyAtHorizon=historyAt(value("horizonMonths"));
+      const historyCapacityCost=historyAtHorizon*value("historyCapacityRate");
+      const historyWrites=collections*value("writesPerRun")+value("workflowEvents");
+      const historyOperationsCost=historyWrites/10000*value("writeRate")+value("historyReadsMonth")/10000*value("readRate");
+      const runtimeStorageCost=value("runtimeStorageGib")*value("runtimeCapacityRate")+value("runtimeOperations")/10000*value("runtimeOperationRate");
+
+      const logs=collections*value("logsPerCollectionGib")+value("otherLogsGib");
+      const monitoringCost=Math.max(0,logs-value("freeLogsGib"))*value("logIngestionRate")+value("chargeableLogRetentionGib")*value("logRetentionRate");
+      const networkOptionalCost=value("egressGib")*value("egressRate")+value("frontDoorCost")+value("networkCost")+value("otherCost");
+      const licenseSupportCost=value("licenseCost")+value("supportCost");
+      const subtotal=functionCost+webAppCost+historyCapacityCost+historyOperationsCost+runtimeStorageCost+monitoringCost+networkOptionalCost+licenseSupportCost;
+      const contingency=subtotal*value("contingencyPercent")/100;
+      const fixedMonthly=subtotal-historyCapacityCost;
+      const annualTotal=Array.from({length:12},(_,index)=>{
+        const monthlySubtotal=fixedMonthly+historyAt(index+1)*value("historyCapacityRate");
+        return monthlySubtotal*(1+value("contingencyPercent")/100);
+      }).reduce((sum,amount)=>sum+amount,0);
+
+      const results={functionCost,webAppCost,historyCapacityCost,historyOperationsCost,runtimeStorageCost,monitoringCost,networkOptionalCost,licenseSupportCost,contingencyResult:contingency,monthlyTotal:subtotal+contingency,annualTotal};
+      Object.entries(results).forEach(([id,amount])=>document.getElementById(id).textContent=money(amount));
+      document.getElementById("monthlyCollections").textContent=number(collections);
+      document.getElementById("monthlyGbSeconds").textContent=number(gbSeconds);
+      document.getElementById("monthlyHistoryGrowth").textContent=gib(monthlyHistoryGrowth);
+      document.getElementById("historyAtHorizon").textContent=gib(historyAtHorizon);
+      document.getElementById("monthlyHistoryWrites").textContent=number(historyWrites);
+      document.getElementById("monthlyLogs").textContent=gib(logs);
+    }
+
+    function collectionsFromSchedule(schedule){
+      const fields=String(schedule||"").trim().split(/\s+/);
+      if(fields.length!==6)return null;
+      if(/^\*\/\d+$/.test(fields[2]))return 24/Number(fields[2].slice(2));
+      if(/^\d+$/.test(fields[2]))return 1;
+      if(fields[2]==="*")return 24;
+      const hours=fields[2].split(",").filter(value=>/^\d+$/.test(value));
+      return hours.length||null;
+    }
+
+    document.getElementById("historyReplication").addEventListener("change",event=>{
+      if(event.target.value!=="custom")setValue("historyCapacityRate",event.target.value);
+      calculate();
+    });
+    document.getElementById("tfvarsFile").addEventListener("change",event=>{
+      const file=event.target.files[0];
+      if(!file)return;
+      const reader=new FileReader();
+      reader.onload=()=>{
+        try{
+          const profile=JSON.parse(reader.result),messages=[];
+          setValue("functionMemory",Number(profile.function_instance_memory_in_mb||0)/1024);
+          setValue("immutabilityDays",profile.history_immutability_days);
+          const collections=collectionsFromSchedule(profile.collection_schedule);
+          if(collections)setValue("collectionsPerDay",collections);
+          const replication=String(profile.history_storage_replication_type||"").toUpperCase();
+          const replicationOption=[...document.getElementById("historyReplication").options].find(option=>option.textContent===replication);
+          if(replicationOption){document.getElementById("historyReplication").value=replicationOption.value;setValue("historyCapacityRate",replicationOption.value);}
+          const sku=String(profile.web_app_sku_name||"");
+          const tierOption=[...document.getElementById("appServiceTier").options].find(option=>option.textContent.startsWith(`${sku} `));
+          if(tierOption)document.getElementById("appServiceTier").value=tierOption.value;
+          messages.push(`Region ${profile.location||"not set"}`,`${profile.function_instance_memory_in_mb||"?"} MiB Function`,profile.collection_schedule||"schedule not set",`${replication||"?"} history`,`${sku||"?"} Web App`);
+          messages.push(`APP_MODE=${profile.app_mode||"?"}`,`immutability ${profile.history_immutability_days??"?"} days`,`soft delete ${profile.storage_soft_delete_days??"?"} days`);
+          messages.push(`tracking ${profile.dashboard_recommendation_tracking_enabled?"enabled":"disabled"}`,`${(profile.collector_subscription_reader_ids||[]).length} subscription Reader scope(s)`);
+          document.getElementById("profileStatus").textContent=`Loaded ${file.name}: ${messages.join(" · ")}. Stage flags are helper defaults overridden by tfplan; choose instance counts for the deployed stage. Naming, tags, identities, RBAC, auth registration, containers, cache, and feature switches have no separate meter.`;
+          calculate();
+        }catch(error){
+          document.getElementById("profileStatus").textContent=`Could not read ${file.name}: ${error.message}`;
+        }
+      };
+      reader.readAsText(file);
+    });
+    document.getElementById("clearProfile").addEventListener("click",()=>{document.getElementById("tfvarsFile").value="";document.getElementById("profileStatus").textContent="No file loaded. Values stay in this browser and are never uploaded.";});
+    ids.forEach(id=>document.getElementById(id).addEventListener("input",calculate));
+    calculate();
+  </script>
+</body>
+</html>

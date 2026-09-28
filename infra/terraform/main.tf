@@ -36,16 +36,10 @@ provider "azurecaf" {}
 provider "time" {}
 
 data "azurerm_client_config" "current" {}
-data "azuread_client_config" "current" {}
 
 locals {
   function_instances = var.deploy_function ? { collector = true } : {}
   web_app_instances  = var.deploy_web_app ? { dashboard = true } : {}
-  dashboard_access_group_object_id = var.deploy_web_app ? (
-    var.dashboard_access_group_object_id != ""
-    ? var.dashboard_access_group_object_id
-    : azuread_group.dashboard_access[0].object_id
-  ) : null
   role_definition_ids = {
     storage_blob_data_owner        = "/subscriptions/${var.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/b7e6dc6d-f1e8-4753-8033-0f276bb0955b"
     storage_blob_data_contributor  = "/subscriptions/${var.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe"
@@ -123,7 +117,7 @@ resource "azurerm_storage_container" "current" {
 }
 
 resource "azurerm_storage_container" "dashboard_workflow" {
-  count = var.deploy_web_app && var.dashboard_recommendation_tracking_enabled ? 1 : 0
+  count = var.deploy_web_app ? 1 : 0
 
   name                  = var.dashboard_recommendation_tracking_container
   storage_account_id    = azurerm_storage_account.history.id
@@ -334,7 +328,7 @@ resource "azurerm_function_app_flex_consumption" "collector" {
   runtime_name                                   = "python"
   runtime_version                                = "3.12"
   maximum_instance_count                         = 1
-  instance_memory_in_mb                          = 2048
+  instance_memory_in_mb                          = var.function_instance_memory_in_mb
   https_only                                     = true
   public_network_access_enabled                  = true
   webdeploy_publish_basic_authentication_enabled = false
@@ -484,24 +478,12 @@ resource "azuread_application" "dashboard" {
     homepage_url  = "https://${var.web_app_name}.azurewebsites.net/"
     logout_url    = "https://${var.web_app_name}.azurewebsites.net/.auth/logout"
     redirect_uris = ["https://${var.web_app_name}.azurewebsites.net/.auth/login/aad/callback"]
+
+    implicit_grant {
+      access_token_issuance_enabled = false
+      id_token_issuance_enabled     = true
+    }
   }
-}
-
-resource "azuread_group" "dashboard_access" {
-  count = var.deploy_web_app && var.dashboard_access_group_object_id == "" ? 1 : 0
-
-  display_name            = var.dashboard_access_group_name
-  description             = "Users authorized to sign in to the DVM Viewer Enterprise Application."
-  security_enabled        = true
-  prevent_duplicate_names = true
-  owners                  = [data.azuread_client_config.current.object_id]
-}
-
-resource "azuread_group_member" "dashboard_initial" {
-  for_each = var.deploy_web_app ? var.dashboard_access_member_object_ids : toset([])
-
-  group_object_id  = local.dashboard_access_group_object_id
-  member_object_id = each.value
 }
 
 resource "azuread_service_principal" "dashboard" {
@@ -528,30 +510,6 @@ resource "azuread_application_password" "dashboard" {
   }
 }
 
-resource "azuread_app_role_assignment" "dashboard_viewer_group" {
-  count = var.deploy_web_app ? 1 : 0
-
-  app_role_id         = azuread_application.dashboard[0].app_role_ids["Dashboard.Viewer"]
-  principal_object_id = local.dashboard_access_group_object_id
-  resource_object_id  = azuread_service_principal.dashboard[0].object_id
-}
-
-resource "azuread_app_role_assignment" "data_evidence_reader_group" {
-  count = var.deploy_web_app && var.dashboard_data_browser_enabled ? 1 : 0
-
-  app_role_id         = azuread_application.dashboard[0].app_role_ids["Data.Evidence.Reader"]
-  principal_object_id = local.dashboard_access_group_object_id
-  resource_object_id  = azuread_service_principal.dashboard[0].object_id
-}
-
-resource "azuread_app_role_assignment" "recommendation_tracker_group" {
-  count = var.deploy_web_app && var.dashboard_recommendation_tracking_enabled ? 1 : 0
-
-  app_role_id         = azuread_application.dashboard[0].app_role_ids["Recommendation.Tracker"]
-  principal_object_id = local.dashboard_access_group_object_id
-  resource_object_id  = azuread_service_principal.dashboard[0].object_id
-}
-
 resource "azurerm_user_assigned_identity" "dashboard" {
   for_each = local.web_app_instances
 
@@ -571,7 +529,7 @@ resource "azurerm_role_assignment" "dashboard_history_reader" {
 }
 
 resource "azurerm_role_assignment" "dashboard_workflow_contributor" {
-  count = var.deploy_web_app && var.dashboard_recommendation_tracking_enabled ? 1 : 0
+  count = var.deploy_web_app ? 1 : 0
 
   scope              = azurerm_storage_container.dashboard_workflow[0].id
   role_definition_id = local.role_definition_ids.storage_blob_data_contributor
@@ -598,6 +556,7 @@ resource "azurerm_linux_web_app" "dashboard" {
   location                                       = var.location
   service_plan_id                                = azurerm_service_plan.dashboard[each.key].id
   https_only                                     = true
+  ftp_publish_basic_authentication_enabled       = false
   webdeploy_publish_basic_authentication_enabled = false
 
   identity {
@@ -649,8 +608,8 @@ resource "azurerm_linux_web_app" "dashboard" {
     "DASHBOARD_DATA_SOURCE"                       = "azure"
     "DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER" = var.dashboard_recommendation_tracking_container
     "DASHBOARD_RECOMMENDATION_TRACKING_ENABLED"   = tostring(var.dashboard_recommendation_tracking_enabled)
-    "DASHBOARD_RECOMMENDATION_TRACKING_ROLE"      = var.dashboard_recommendation_tracking_enabled ? "Recommendation.Tracker" : ""
-    "DASHBOARD_STATIC_DIR"                        = "/home/site/wwwroot/dashboard"
+    "DASHBOARD_RECOMMENDATION_TRACKING_ROLE"      = "Recommendation.Tracker"
+    "DASHBOARD_STATIC_DIR"                        = "dashboard"
     "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"    = azuread_application_password.dashboard[0].value
     "SCM_DO_BUILD_DURING_DEPLOYMENT"              = "true"
     "STORAGE_ACCOUNT_NAME"                        = azurerm_storage_account.history.name
@@ -663,7 +622,5 @@ resource "azurerm_linux_web_app" "dashboard" {
   depends_on = [
     azurerm_role_assignment.dashboard_history_reader,
     azurerm_role_assignment.dashboard_workflow_contributor,
-    azuread_app_role_assignment.dashboard_viewer_group,
-    azuread_app_role_assignment.recommendation_tracker_group,
   ]
 }
