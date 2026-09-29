@@ -23,7 +23,7 @@ fi
 
 printf 'Dashboard: http://%s:%s\n' "$HOST" "$PORT"
 
-UVICORN_ARGS=(vulnerability_view.dashboard_server:app --host "$HOST" --port "$PORT")
+UVICORN_ARGS=(vulnerability_view.dashboard_server:app --app-dir "$ROOT_DIR/src" --host "$HOST" --port "$PORT")
 if [[ "${DASHBOARD_RELOAD:-true}" == "true" ]]; then
     UVICORN_ARGS+=(--reload --reload-dir "$ROOT_DIR/src" --reload-dir "$ROOT_DIR/dashboard")
 fi
