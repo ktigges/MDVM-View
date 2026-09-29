@@ -538,10 +538,13 @@ Current behavior is:
 
 1. A finding present in both snapshots keeps its earlier `FirstObservedUtc`.
 2. A previously fixed finding that appears again becomes `Reopened` and receives `ReopenedUtc`.
-3. A first qualified absence becomes `PendingConfirmation`.
-4. A second consecutive qualified absence while the device is active and fresh becomes `Fixed`.
-5. Stale, offboarded, or missing device evidence becomes `StaleDevice`, `OutOfScope`, or `Unknown` instead of fixed.
-6. SLA is recalculated after lifecycle changes.
+3. A first qualified partial absence becomes `PendingConfirmation`.
+4. A second consecutive qualified partial absence while the device is active and fresh becomes `Fixed`.
+5. If all findings disappear for an active, fresh device, they remain
+   `PendingVerification`; wholesale API disappearance alone cannot confirm
+   remediation.
+6. Stale, offboarded, or missing device evidence becomes `StaleDevice`, `OutOfScope`, or `Unknown` instead of fixed.
+7. SLA is recalculated after lifecycle changes.
 
 ```mermaid
 flowchart TD
@@ -562,9 +565,16 @@ flowchart TD
 
 ### Meaning of fixed today
 
-Under the current code, **fixed means the exact finding key was absent from two consecutive complete snapshots while the device remained active and had reported within 48 hours**.
+Under the current code, **fixed means the exact finding key was absent from two
+consecutive complete snapshots while the device remained active, had reported
+within 48 hours, and still had other vulnerability evidence in the current
+snapshot**.
 
-The first qualified absence is `PendingConfirmation`. Stale, offboarded, unsupported, or missing inventory evidence is reported separately. Defender remediation-task completion is supporting context but does not directly set finding status.
+The first qualified partial absence is `PendingConfirmation`. A complete
+finding disappearance for an active, fresh device is `PendingVerification`.
+Stale, offboarded, unsupported, or missing inventory evidence is reported
+separately. Defender remediation-task completion is supporting context but
+does not directly set finding status.
 
 ## Daily summaries and trends
 
@@ -651,7 +661,7 @@ Filters are applied in the browser. Current filters include:
 The seven dashboard views are:
 
 1. Find
-2. Workstations
+2. Assets
 3. Recommendations
 4. Prioritize
 5. Remediate

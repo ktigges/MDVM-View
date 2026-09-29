@@ -162,13 +162,18 @@ def test_dashboard_distinguishes_sla_targets_and_task_due_dates():
     assert "Targets start at the collector's first observation" in javascript
     assert "Weekly remediation task due-date history" in html
     assert "Recommendation inventory and workflow" in html
-    assert "Risk-ranked work queue ordered by Defender severity score" in html
+    assert "Risk-ranked work queue ordered by effective severity" in html
+    assert "Highest linked open-finding severity combined with Defender recommendation score" in html
 
 
 def test_dashboard_orders_all_recommendation_surfaces_highest_first():
     javascript = Path("dashboard/app.js").read_text()
 
+    assert "const SEVERITY_RANK={Critical:4,High:3,Medium:2,Low:1}" in javascript
     assert "function compareRecommendations(a,b)" in javascript
+    assert "row.RecommendationSeverity||recommendationSeverity(row)" in javascript
+    assert "recommendationSeverity(row,impact.rows)" in javascript
+    assert "recommendationSeverity(row,linked)" in javascript
     assert "state.recommendations.filter(recommendationMatches).sort(compareRecommendations)" in javascript
     assert '.filter(row=>state.severity==="All"||row.RecommendationSeverity===state.severity).sort(compareRecommendations)' in javascript
     assert "recommendationImpactRows(recommendations).filter(row=>row.OpenFindings>0).slice(0,limit)" in javascript
@@ -282,7 +287,7 @@ def test_dashboard_orders_remediation_by_priority():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
 
-    assert "Highest Defender severity score, then current things to fix" in html
+    assert "Highest effective severity, then current things to fix" in html
     assert "Active first, then task priority, overdue state, and due date" in html
     assert '["RecommendationSeverity","SeverityScore","RecommendationName"' in javascript
     assert ".sort((a,b)=>compareRecommendations(a,b)||(b.NewToday+b.ReopenedToday)" in javascript
@@ -454,6 +459,38 @@ def test_dashboard_defaults_to_vulnerabilities_devices_and_cloud():
     assert 'defaultDomains: ["Devices", "Cloud"]' in configuration
 
 
+def test_dashboard_can_hide_devices_outside_a_snapshot_relative_reporting_window():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    configuration = Path("dashboard/config.js").read_text()
+
+    assert 'id="hideNonReporting" type="checkbox"' in html
+    assert 'id="reportingDays"' in html
+    for days in (7, 14, 30, 60, 90):
+        assert f'value="{days}">Last reported within {days} days' in html
+    assert "defaultHideNonReporting: false" in configuration
+    assert "defaultReportingDays: 30" in configuration
+    assert "datasetSnapshotMs" in javascript
+    assert "row.LastSeenUtc" in javascript
+    assert "snapshot-state.reportingDays*86400000" in javascript
+    assert "reportingMatches(row)" in javascript
+    assert "reportingLinked=linked.filter(reportingMatches)" in javascript
+    assert "linked=(state.findingsByRecommendation.get(id)||[]).filter(reportingMatches)" in javascript
+    assert "machineInScope=row=>" in javascript
+    assert "subscriptionMatches(row)&&reportingMatches(row)" in javascript
+    assert "function trendScopedFindings()" in javascript
+    assert "item.DeviceId===row.DeviceId&&item.DataOrigin===row.DataOrigin&&reportingMatches(item)" in javascript
+    assert 'state.hideNonReporting=Boolean(filterConfig.defaultHideNonReporting)' in javascript
+    assert '`Within ${state.reportingDays} days`' in javascript
+
+
+def test_attention_required_vulnerability_recommendations_remain_in_vulnerability_scope():
+    javascript = Path("dashboard/app.js").read_text()
+
+    assert r"/\bvulnerabilit(?:y|ies)\b/.test(text)" in javascript
+    assert '`${row.RecommendationName||""} ${row.SubCategory||""}`' in javascript
+
+
 def test_dashboard_carries_remediation_outcomes_into_weekly_history():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
@@ -492,6 +529,24 @@ def test_dashboard_filters_all_views_by_subscription():
     assert '{name:"subscriptions",key:"subscriptions",label:"subscriptions",required:false}' in javascript
     assert "state.subscriptionInventoryById" in javascript
     assert "subscription.SubscriptionName" in javascript
+
+
+def test_dashboard_asset_inventory_uses_devices_and_includes_cloud_assets_without_findings():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+
+    assert '<button data-view="workstations"><span>Assets</span></button>' in html
+    assert "<h2>Asset inventory</h2>" in html
+    assert "including assets with no current vulnerability rows" in html
+    assert '{name:"devices",key:"devices",label:"device inventory",required:true}' in javascript
+    assert "state.devices.filter(device=>inventoryDeviceMatches(device)" in javascript
+    assert 'state.domains.has(findingDomain(row))' in javascript
+    assert 'id="includeDiscoveredAssets" type="checkbox"' in html
+    assert "defaultIncludeDiscoveredOnly: false" in Path("dashboard/config.js").read_text()
+    assert 'state.includeDiscoveredOnly||device.OnboardingStatus==="Onboarded"' in javascript
+    assert 'coverage=assessed?"Endpoint assessed":item.OpenFindings?"Limited evidence":"Not assessed"' in javascript
+    assert '["OpenFindings","Critical","High","Medium","Low"].includes(column)&&row.VulnerabilityCoverage==="Not assessed"' in javascript
+    assert '["DeviceName","WorkloadType","InstanceCount","OSPlatform","AssetClass","Subscription","HealthStatus","OnboardingStatus","VulnerabilityCoverage","LastSeenUtc","OpenFindings","Critical","High","Medium","Low"]' in javascript
 
 
 def test_dashboard_has_severity_based_finding_and_recommendation_sla_graphs():

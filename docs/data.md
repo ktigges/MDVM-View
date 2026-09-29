@@ -642,11 +642,15 @@ stateDiagram-v2
     Open --> Open: Key appears again
     Open --> PendingConfirmation: First qualified absence
     PendingConfirmation --> Fixed: Second qualified absence
+    Open --> PendingVerification: All device findings disappear
+    PendingVerification --> PendingVerification: Wholesale absence continues
+    PendingVerification --> Open: Finding returns
     PendingConfirmation --> Open: Finding returns before confirmation
     Open --> StaleDevice: Absent but device evidence is stale
     Open --> Unknown: Absent and device inventory is missing
     Open --> OutOfScope: Device is offboarded or unsupported
     Fixed --> Fixed: Key remains absent
+    Fixed --> PendingVerification: Absence-derived fix is invalidated by wholesale disappearance
     Fixed --> Reopened: Same key appears again
     Reopened --> Reopened: Key remains present
     Reopened --> Fixed: Key becomes absent
@@ -664,8 +668,10 @@ A key present in both the current and previous data remains open, or remains reo
 
 A previous key absent from the current finding list is evaluated against the current device inventory.
 
-- Active device seen within 48 hours, first absence: `PendingConfirmation`
-- Active and fresh device, second consecutive absence: `Fixed`
+- Active device seen within 48 hours, first partial absence: `PendingConfirmation`
+- Active and fresh device, second consecutive partial absence: `Fixed`
+- Active and fresh device with all findings absent: `PendingVerification`; a
+  complete device-level disappearance cannot confirm remediation by itself
 - Stale or inactive device: `StaleDevice`
 - Offboarded or unsupported device: `OutOfScope`
 - Device missing from inventory: `Unknown`
@@ -821,7 +827,9 @@ flowchart TD
 2. Local instance files are temporary staging and current presentation copies, not reliable long-term storage.
 3. The raw archive is the source evidence for each daily run.
 4. Dashboard and CSV files are published views, not immutable daily snapshots.
-5. A missing key requires two consecutive absences while the device remains active and fresh before it is fixed.
+5. A missing key requires two consecutive partial absences while the device
+   remains active and fresh before it is fixed. If all findings disappear for
+   the device together, they remain `PendingVerification` until corroborated.
 6. Stale, offboarded, or missing device evidence is reported separately rather than counted as fixed.
 7. A returned fixed key is interpreted as reopened.
 8. SLA history is reconstructed from lifecycle timestamps and dated snapshots, not a separate event stream.
@@ -844,7 +852,7 @@ The dataset dropdown selects which curated evidence to inspect:
 |---|---|---|
 | Findings | One normalized device, CVE, product, and observation relationship, including status, SLA, ownership, subscription, and priority fields | Why a vulnerability appears in workload, priority, or SLA results |
 | Finding events | Timestamped lifecycle changes such as new, fixed, reopened, stale, or out of scope | What changed over time and which events support a trend |
-| Devices | Normalized Defender device inventory, health, onboarding, risk, exposure, asset class, and Azure resource identity | Why a device appears in a workstation, health, subscription, or ownership scope |
+| Devices | Normalized Defender device inventory, health, onboarding, risk, exposure, asset class, and Azure resource identity | Why a device appears in asset inventory, reporting-health, subscription, or ownership scope even when it has no current finding rows |
 | Vulnerabilities | CVE-level details, severity, CVSS, exploit evidence, description, and affected-machine counts | What is known about a CVE independently of an individual device finding |
 | Recommendations | Defender recommendation details, exposed-machine counts, remediation state, and estimated score impact | Why a recommendation is prioritized and what action it represents |
 | Recommendation machines | Recommendation-to-device relationships | Which devices are expected to benefit from a recommendation |

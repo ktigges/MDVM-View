@@ -9,7 +9,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
-  <link rel="stylesheet" href="styles.css?v=20260928-1553">
+  <link rel="stylesheet" href="styles.css?v=20260928-2316">
 </head>
 <body>
   <header class="topbar">
@@ -43,7 +43,7 @@
     <span class="nav-heading">Workspace</span>
     <button class="active" data-view="executive"><span>Executive</span></button>
     <button data-view="overview"><span>Vulnerabilities</span></button>
-    <button data-view="workstations"><span>Workstations</span></button>
+    <button data-view="workstations"><span>Assets</span></button>
     <button data-view="recommendations"><span>Recommendations</span></button>
     <button data-view="priority"><span>Prioritize</span></button>
     <button data-view="sla"><span>Remediate</span></button>
@@ -66,6 +66,7 @@
     <fieldset class="type-filter"><legend>Recommendation type</legend><div class="filter-check-options"><label><input type="checkbox" name="recommendationType" value="Vulnerability" checked>Vulnerability</label><label><input type="checkbox" name="recommendationType" value="Misconfiguration">Misconfiguration</label></div></fieldset>
     <label class="classification-filter">Asset classification<select id="assetClassFilter"><option value="All">All classifications</option><option value="AzureCloud">Azure / Cloud</option><option value="TraditionalIT">Traditional IT</option><option value="Unknown">Unknown</option></select><span>Azure resource metadata → Defender machine tag → inventory fallback</span></label>
     <label class="subscription-filter">Subscription<select id="subscriptionFilter"><option value="All">All subscriptions</option><option value="NoSubscription">No subscription</option></select><span>Derived from Defender machine resource metadata</span></label>
+    <fieldset class="reporting-filter"><legend>Device reporting</legend><label><input id="hideNonReporting" type="checkbox">Hide non-reporting devices</label><select id="reportingDays" aria-label="Device reporting timeframe"><option value="7">Last reported within 7 days</option><option value="14">Last reported within 14 days</option><option value="30">Last reported within 30 days</option><option value="60">Last reported within 60 days</option><option value="90">Last reported within 90 days</option></select><span>Uses LastSeenUtc from the current dataset; retained evidence is not deleted</span></fieldset>
     <label class="queue-filter">Operating queue (derived)<select id="teamFilter"><option>All</option></select><span>Inferred from asset evidence, not a Defender assignment</span></label>
     <label class="search-filter">Find items<input id="searchFilter" type="search" placeholder="CVE, recommendation, machine..."></label>
     <fieldset class="domain-filter"><legend>Asset domains</legend><div class="filter-check-options"><label><input type="checkbox" name="assetDomain" value="Devices" checked>Devices</label><label><input type="checkbox" name="assetDomain" value="Cloud" checked>Cloud</label><label><input type="checkbox" name="assetDomain" value="SaaS Apps">SaaS Apps</label><label><input type="checkbox" name="assetDomain" value="Identities">Identities</label><label><input type="checkbox" name="assetDomain" value="Data">Data</label></div></fieldset>
@@ -130,9 +131,10 @@
     </section>
 
     <section id="workstations" class="story">
-      <div class="section-heading"><div><h2>Workstation remediation impact</h2></div></div>
+      <div class="section-heading"><div><h2>Asset inventory</h2></div><p>Onboarded devices in scope, including assets with no current vulnerability rows. Discovery-only assets are optional.</p></div>
+      <div class="asset-inventory-controls"><label><input id="includeDiscoveredAssets" type="checkbox">Include discovered-only assets</label><span>Non-onboarded devices are inventory evidence only; vulnerability coverage is not available.</span></div>
       <div id="workstationCards" class="metric-grid"></div>
-      <article class="panel"><div class="panel-title"><h3>Workstation vulnerability movement</h3><span>Before → current reconciles new, reopened, and fixed findings in the latest refresh</span></div><div class="table-wrap"><table id="workstationTable"></table></div></article>
+      <article class="panel"><div class="panel-title"><h3>Devices and grouped scale-out workloads</h3><span>Current reporting state with open findings from the selected vulnerability scope</span></div><div class="table-wrap"><table id="workstationTable"></table></div></article>
     </section>
 
     <section id="recommendations" class="story">
@@ -142,8 +144,8 @@
     </section>
 
     <section id="priority" class="story">
-      <div class="section-heading"><div><h2>Prioritized recommendations</h2></div><p>Risk-ranked work queue ordered by Defender severity score, then current open impact. Open a recommendation to review and update its dashboard work status.</p></div>
-      <div class="formula">Defender recommendation severity score with current affected machines, CVE evidence, and subscription exposure</div>
+      <div class="section-heading"><div><h2>Prioritized recommendations</h2></div><p>Risk-ranked work queue ordered by effective severity, then current open impact. Open a recommendation to review and update its dashboard work status.</p></div>
+      <div class="formula">Highest linked open-finding severity combined with Defender recommendation score, affected machines, CVE evidence, and subscription exposure</div>
       <article class="panel"><div class="panel-title"><h3>Priority workbench</h3><span>Click a recommendation to inspect affected machines and CVEs</span></div><div class="table-wrap"><table id="priorityTable"></table></div></article>
     </section>
 
@@ -152,7 +154,7 @@
       <div id="slaCards" class="metric-grid"></div>
       <div class="subsection-heading"><div><span>RECOMMENDATION OUTCOMES</span><h3>Things to fix: before, fixed, and current</h3></div><p>Finding-instance outcomes grouped by recommendation</p></div>
       <div id="remediationOutcomeCards" class="metric-grid compact"></div>
-      <div class="panel recommendation-outcomes"><div class="panel-title"><h3>Priority remediation outcomes</h3><span>Highest Defender severity score, then current things to fix</span></div><div class="table-wrap"><table id="remediationOutcomeTable"></table></div></div>
+      <div class="panel recommendation-outcomes"><div class="panel-title"><h3>Priority remediation outcomes</h3><span>Highest effective severity, then current things to fix</span></div><div class="table-wrap"><table id="remediationOutcomeTable"></table></div></div>
       <div class="sla-graph-grid">
         <article class="panel sla-graph-panel"><div class="panel-title"><h3 id="findingSlaGraphTitle">Finding outcomes by severity</h3><span>Open and Defender-confirmed fixed, within vs outside policy SLA</span></div><div id="findingSlaGraph" class="sla-bar-chart" role="region" aria-labelledby="findingSlaGraphTitle"></div></article>
         <article class="panel sla-graph-panel"><div class="panel-title"><h3 id="recommendationSlaGraphTitle">Recommendation outcomes by severity</h3><span>Distinct recommendations represented in each finding outcome</span></div><div id="recommendationSlaGraph" class="sla-bar-chart recommendation-sla-chart" role="region" aria-labelledby="recommendationSlaGraphTitle"></div></article>
@@ -233,7 +235,7 @@
   <aside id="recommendationPreview" class="recommendation-preview" role="status" hidden></aside>
   <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
   <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
-  <script src="config.js?v=20260928-1553"></script>
-  <script src="app.js?v=20260928-1553"></script>
+  <script src="config.js?v=20260928-2246"></script>
+  <script src="app.js?v=20260928-2316"></script>
 </body>
 </html>

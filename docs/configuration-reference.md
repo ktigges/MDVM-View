@@ -219,6 +219,9 @@ File: `dashboard/config.js`
 | `navigation.hidden` | Section IDs hidden from navigation |
 | `filters.expandedByDefault` | Initial filter-panel state |
 | `filters.defaultSeverity` | Initial severity selection |
+| `filters.defaultHideNonReporting` | Whether devices outside the reporting-age window are hidden initially; defaults to `false` so retained evidence remains visible |
+| `filters.defaultReportingDays` | Initial reporting-age window; supported values are `7`, `14`, `30`, `60`, and `90` |
+| `filters.defaultIncludeDiscoveredOnly` | Whether non-onboarded discovery-only devices appear in Assets initially; defaults to `false` |
 | `filters.defaultRecommendationTypes` | Initial recommendation-type selections |
 | `filters.defaultDomains` | Initial asset-domain selections |
 | `diagnostics.showExperimentalEndpoints` | Whether experimental endpoint diagnostics are shown |

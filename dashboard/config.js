@@ -5,7 +5,7 @@
  */
 
 window.VULNERABILITY_VIEW_CONFIG = {
-  revision: "2026-09-28T15:53:02Z",
+  revision: "2026-09-28T23:16:21Z",
   branding: {
     eyebrow: "VULNERABILITY VIEW",
     title: "Microsoft Vulnerability Management",
@@ -22,6 +22,9 @@ window.VULNERABILITY_VIEW_CONFIG = {
   filters: {
     expandedByDefault: false,
     defaultSeverity: "All",
+    defaultHideNonReporting: false,
+    defaultReportingDays: 30,
+    defaultIncludeDiscoveredOnly: false,
     defaultRecommendationTypes: ["Vulnerability"],
     defaultDomains: ["Devices", "Cloud"],
   },

@@ -273,6 +273,49 @@ def test_live_reconciliation_requires_two_fresh_absences_to_confirm_fixed():
     assert fixed["ConsecutiveAbsentCount"] == 2
 
 
+def test_live_reconciliation_does_not_fix_wholesale_device_disappearance():
+    snapshot = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    previous = [{
+        "FindingKey": "finding-1", "DeviceId": "device-1", "DataOrigin": "Live", "FindingStatus": "Open",
+        "Severity": "Critical", "PublicExploitAvailable": False, "VerifiedExploitAvailable": False,
+        "ExploitKitAvailable": False, "FirstSeenUtc": "2026-09-01T00:00:00Z", "FirstObservedUtc": "2026-09-10T00:00:00Z",
+        "FixedUtc": "", "ReopenedUtc": "", "FirstAbsentUtc": "", "FixedConfirmedUtc": "",
+        "ConsecutiveAbsentCount": 0, "SnapshotTimeUtc": "2026-09-19T00:00:00Z", "CollectionRunId": "previous",
+    }]
+    devices = [{"DeviceId": "device-1", "LastSeenUtc": "2026-09-20T00:00:00Z", "HealthStatus": "Active", "OnboardingStatus": "Onboarded"}]
+
+    first = reconcile_live_findings([], previous, snapshot, "live-20260920T000000Z", devices)
+    second = reconcile_live_findings([], first, datetime(2026, 9, 21, tzinfo=timezone.utc), "live-20260921T000000Z", devices)
+
+    assert first[0]["FindingStatus"] == "PendingVerification"
+    assert second[0]["FindingStatus"] == "PendingVerification"
+    assert second[0]["FixedUtc"] == ""
+    assert second[0]["FixedConfirmedUtc"] == ""
+    assert second[0]["ConsecutiveAbsentCount"] == 2
+    assert "corroborating evidence is required" in second[0]["LifecycleReason"]
+
+
+def test_live_reconciliation_repairs_absence_derived_false_fix_after_wholesale_disappearance():
+    snapshot = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    previous = [{
+        "FindingKey": "finding-1", "DeviceId": "device-1", "DataOrigin": "Live", "FindingStatus": "Fixed",
+        "Severity": "Critical", "PublicExploitAvailable": False, "VerifiedExploitAvailable": False,
+        "ExploitKitAvailable": False, "FirstSeenUtc": "2026-09-01T00:00:00Z", "FirstObservedUtc": "2026-09-10T00:00:00Z",
+        "FixedUtc": "2026-09-18T00:00:00Z", "ReopenedUtc": "", "FirstAbsentUtc": "2026-09-18T00:00:00Z",
+        "FixedConfirmedUtc": "2026-09-19T00:00:00Z", "ConsecutiveAbsentCount": 2,
+        "LifecycleReason": "Absent from 2 complete snapshots while device remained active and fresh",
+        "SnapshotTimeUtc": "2026-09-19T00:00:00Z", "CollectionRunId": "previous",
+    }]
+    devices = [{"DeviceId": "device-1", "LastSeenUtc": "2026-09-20T00:00:00Z", "HealthStatus": "Active", "OnboardingStatus": "Onboarded"}]
+
+    reconciled = reconcile_live_findings([], previous, snapshot, "live-20260920T000000Z", devices)
+
+    assert reconciled[0]["FindingStatus"] == "PendingVerification"
+    assert reconciled[0]["FixedUtc"] == ""
+    assert reconciled[0]["FixedConfirmedUtc"] == ""
+    assert reconciled[0]["SlaStatus"].startswith("Open")
+
+
 def test_live_reconciliation_does_not_fix_stale_device():
     snapshot = datetime(2026, 9, 20, tzinfo=timezone.utc)
     previous = [{

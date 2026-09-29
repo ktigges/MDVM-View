@@ -35,6 +35,8 @@ Interpret the sources separately:
 | Local tracking resets | Expected. Local tracking is an in-memory preview and resets when the process stops. |
 | Dashboard data is unavailable | Check `http://127.0.0.1:8000/api/status`, `DASHBOARD_DATA_SOURCE`, and either local files or Azure read access. |
 | SLA is `Unknown` | Confirm the exact finding has a collector observation and matches a versioned SLA policy. |
+| A subscription appears to have no vulnerabilities | Reset the dashboard filters, select the subscription, and confirm **Vulnerability** is selected. If **Hide non-reporting devices** is enabled, widen **Last reported within** or turn the switch off. The dashboard retains fixed findings even when Defender no longer presents them as current. |
+| Defender and the dashboard show different device totals | Confirm the dashboard snapshot time and the device `LastSeenUtc` values. The optional reporting-age filter is evaluated relative to the immutable dataset snapshot, not the current browser time. It hides presentation rows only and does not delete retained evidence. |
 
 ## 3. Defender and Microsoft Graph authentication
 

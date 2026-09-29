@@ -87,14 +87,37 @@ at 100 and is the sum of:
 `PriorityExplanation` retains the component calculation.
 
 All recommendation-oriented dashboard surfaces use the same primary order:
-Defender recommendation `SeverityScore`, `ExposureImpact`, current open impact,
-`ConfigScoreImpact`, then recommendation name. This includes executive impact,
-recommendation inventory, priority workbench, remediation outcomes, SLA
-recommendation lists, related recommendations, and recommendation-detail
-navigation. Remediation outcome tables then use new/reopened and confirmed-fix
+effective severity, Defender recommendation `SeverityScore`, `ExposureImpact`,
+current open impact, `ConfigScoreImpact`, then recommendation name. Effective
+severity is the higher of the Defender recommendation score band and the
+highest linked open finding severity in the current filtered scope. This
+includes executive impact, recommendation inventory, priority workbench,
+remediation outcomes, SLA recommendation lists, related recommendations, and
+recommendation-detail navigation. Remediation outcome tables then use
+new/reopened and confirmed-fix
 counts as additional ties. Remediation task tables place active tasks before
 completed tasks, then order by task priority, overdue state, earliest task due
 date, and most recently modified.
+
+The optional **Hide non-reporting devices** filter compares `LastSeenUtc` with
+the latest `SnapshotTimeUtc` in the loaded dataset. Supported windows are 7,
+14, 30, 60, and 90 days. Missing or invalid last-seen values are considered
+non-reporting while the filter is enabled. The filter is off by default and
+changes presentation scope only: retained raw, curated, and historical
+evidence is never removed. Findings, recommendations, remediation scope,
+asset inventory, SLA calculations, trends, and detail views use the same
+reporting-age scope.
+
+The **Assets** view starts from the normalized `devices` dataset rather than
+deriving inventory from vulnerability findings. Active Azure/Cloud and
+traditional devices therefore remain visible even when they have no current
+finding rows. Finding counts are joined onto the inventory, and configured
+scale-out workloads remain grouped. Onboarded assets are shown by default.
+The optional **Include discovered-only assets** control adds non-onboarded
+inventory records, which display `Not assessed` instead of a zero vulnerability
+count because passive discovery does not establish complete CVE coverage. If
+Defender supplies a device-CVE relationship for a non-onboarded asset, the
+dashboard displays the finding and labels its coverage `Limited evidence`.
 
 ## 5. SLA targeting
 
@@ -144,19 +167,26 @@ The collector compares current finding keys with the prior live state.
 |---|---|
 | Present in both snapshots | Preserve first observation and remain open |
 | Previously fixed key appears again | `Reopened`; set `ReopenedUtc` |
-| First qualified absence | `PendingConfirmation`; set `FirstAbsentUtc` |
-| Second qualified absence | `Fixed`; use first absence as `FixedUtc` and current snapshot as `FixedConfirmedUtc` |
+| First qualified partial absence | `PendingConfirmation`; set `FirstAbsentUtc` |
+| Second qualified partial absence | `Fixed`; use first absence as `FixedUtc` and current snapshot as `FixedConfirmedUtc` |
+| All findings disappear for an active, fresh device | `PendingVerification`; never infer a fix without corroborating evidence |
 | Device is stale or not fresh | `StaleDevice`, not fixed |
 | Device is offboarded or unsupported | `OutOfScope`, not fixed |
 | Device is missing from inventory | `Unknown`, not fixed |
 
 An absence is qualified only when the device remains active and its last-seen
 time is within the configured 48-hour freshness window. The required number of
-qualified absences is configured as two runs.
+qualified absences is configured as two runs. If every finding for an active,
+fresh device disappears from the API together, the collector treats the
+device-level result as potentially incomplete. Those findings remain
+unresolved as `PendingVerification`, including previously inferred fixes from
+the same wholesale-disappearance pattern, until corroborating evidence is
+available or individual findings reappear.
 
 Therefore, **fixed** means the exact finding key was absent from two consecutive
-complete snapshots while the device remained active and fresh. A Defender task
-being completed does not by itself mark findings fixed.
+complete snapshots while other vulnerability evidence for that active, fresh
+device remained available. A Defender task being completed does not by itself
+mark findings fixed.
 
 ## 7. Remediation outcome
 
