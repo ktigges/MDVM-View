@@ -54,13 +54,21 @@ if [[ -z "$SHOW_EXPERIMENTAL" && -f "$ROOT_DIR/.env" ]]; then
     fi
   done < "$ROOT_DIR/.env"
 fi
-if [[ "${SHOW_EXPERIMENTAL,,}" == "true" ]]; then
-  INCLUDE_EXPERIMENTAL=true
-else
-  INCLUDE_EXPERIMENTAL=false
-fi
+case "$SHOW_EXPERIMENTAL" in
+  [Tt][Rr][Uu][Ee])
+    INCLUDE_EXPERIMENTAL=true
+    ;;
+  *)
+    INCLUDE_EXPERIMENTAL=false
+    ;;
+esac
 
-mapfile -t manifests < <(
+manifests=()
+while IFS= read -r manifest; do
+  if [[ -n "$manifest" ]]; then
+    manifests+=("$manifest")
+  fi
+done < <(
   az storage blob list \
     --account-name "$ACCOUNT_NAME" \
     --container-name "$CONTAINER_NAME" \

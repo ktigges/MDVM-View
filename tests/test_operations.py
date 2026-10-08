@@ -66,6 +66,15 @@ def test_function_schedule_is_setting_driven_and_client_secret_is_locally_guarde
     assert "exclude_environment_credential=True" in application_source
 
 
+def test_run_status_script_supports_macos_system_bash():
+    script = Path("infra/check-runs.sh").read_text()
+
+    assert '${SHOW_EXPERIMENTAL,,}' not in script
+    assert "mapfile" not in script
+    assert 'case "$SHOW_EXPERIMENTAL" in' in script
+    assert "while IFS= read -r manifest" in script
+
+
 def test_validate_outputs_checks_data_quality(tmp_path: Path):
     data = tmp_path / "dashboard/data"
     curated = tmp_path / "output/curated"

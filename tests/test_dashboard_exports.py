@@ -263,6 +263,18 @@ def test_dashboard_severity_sla_drilldown_contract():
     assert "sla-severity-link" in javascript
     assert "Policy SLA fixed within" in javascript
     assert "Policy SLA fixed outside" in javascript
+    assert "FixedFindings:0,OpenFindings:0" in javascript
+    assert "fixed on ${fmt(item.fixedMachines.size)} machine" in javascript
+    assert "remain open on ${fmt(item.openMachines.size)} machine" in javascript
+    assert "View machines and CVEs" in javascript
+    assert "recommendationMachineEvidence" in javascript
+    assert "Remediated UTC" in javascript
+    assert "Latest remediated UTC" in javascript
+    assert "machine-evidence-header" in javascript
+    assert "Currently open machines" in javascript
+    assert "select one to see its CVEs" in javascript
+    assert "Machines with fixes" in javascript
+    assert "Machines still exposed" in javascript
 
 
 def test_dashboard_treats_remediation_activity_as_supporting_context():
@@ -320,11 +332,11 @@ def test_dashboard_exposes_workstation_and_recommendation_outcomes():
     assert 'id="remediationOutcomeTable"' in html
     assert "renderWorkstations" in javascript
     assert "renderRemediationOutcomes" in javascript
-    assert "Things to fix · before latest refresh" in javascript
-    assert "Confirmed fixed · latest refresh" in javascript
+    assert "Open findings · before latest refresh" in javascript
+    assert "Findings fixed · latest refresh" in javascript
     assert "BeforeToCurrent" in javascript
     assert "showRecommendationOutcome" in javascript
-    assert "View remediation outcome" in javascript
+    assert "View machines and CVEs" in javascript
     assert "FixedDevicesToday" in javascript
     assert "FindingsFixedToday" in javascript
     assert "Remaining exposed machines" in javascript

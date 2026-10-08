@@ -20,6 +20,9 @@ The first command checks Function invocation state. The second combines current
 progress with completed immutable runs. Do not invoke manually while status is
 `ACTIVE` or `INDETERMINATE`.
 
+The scripts support the macOS system Bash 3.2 and Linux Bash. They can be
+launched directly from zsh; no Homebrew Bash installation is required.
+
 ### Run one intentional collection
 
 ```bash
