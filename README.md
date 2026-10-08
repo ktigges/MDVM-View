@@ -154,10 +154,60 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-Then run the same commands on either platform:
+Install the project:
 
 ```bash
 python -m pip install -e '.[dev]'
+```
+
+Before signing in, planning, or deploying, copy `.env.example` to `.env` and
+set:
+
+```dotenv
+AUTH_MODE=auto
+DASHBOARD_DATA_SOURCE=azure
+STORAGE_ACCOUNT_NAME=<history-storage-account>
+STORAGE_CONTAINER_NAME=dvm-history
+STORAGE_CURRENT_CONTAINER_NAME=dvm-current
+APP_MODE=live
+DASHBOARD_AUTH_ENABLED=false
+DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=false
+```
+
+Leave `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` empty for this normal path.
+Microsoft Entra uses “client ID” and “application ID” for the same application
+identifier, but neither value is needed here. Terraform configures the deployed
+managed identities, and the local Web App uses the current `az login` identity.
+
+Use these values and sources:
+
+| `.env` setting | Value to use |
+|---|---|
+| `AUTH_MODE` | Literal value `auto` |
+| `AZURE_TENANT_ID` | Leave empty; the local Web App uses the tenant from `az login` |
+| `AZURE_CLIENT_ID` | Leave empty |
+| `AZURE_CLIENT_SECRET` | Leave empty |
+| `AZURE_SUBSCRIPTION_ID` | Leave empty for the local Web App; Terraform reads `subscription_id` from `main.tfvars.json` |
+| `AZURE_MANAGEMENT_GROUP_ID` | Leave empty for the local Web App; Terraform sets it on the deployed collector from `collector_management_group_id` |
+| `AZURE_RESOURCE_GROUP` | Leave empty for the local Web App; deployment commands read `resource_group_name` from Terraform |
+| `STORAGE_ACCOUNT_NAME` | Copy `history_storage_account_name` from `main.tfvars.json` |
+| `STORAGE_CONTAINER_NAME` | Copy `history_container_name`; normally `dvm-history` |
+| `STORAGE_CURRENT_CONTAINER_NAME` | Copy `current_container_name`; normally `dvm-current` |
+| `APP_MODE` | Literal value `live` |
+| `DASHBOARD_DATA_SOURCE` | Literal value `azure` |
+| `DASHBOARD_AUTH_ENABLED` | Literal value `false` for local hosting |
+| `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | Literal value `false` unless the optional feature is specifically required |
+
+Recommendation tracking records dashboard-local work status; it does not create
+or update remediation tasks in Defender. Leave it off unless shared tracking is
+specifically required.
+
+See the [complete runtime setting reference](docs/configuration-reference.md#4-collector-and-dashboard-runtime-settings)
+for every optional `.env` value.
+
+After the Terraform values and `.env` are complete, sign in:
+
+```bash
 az login --tenant "<tenant-id>"
 az account set --subscription "<subscription-id>"
 az account show --query "{name:name,id:id,tenantId:tenantId}" --output table
@@ -185,37 +235,31 @@ identity Storage Blob Data Contributor on the history account. A different
 developer needs a separate Blob data-role assignment; subscription access by
 itself is not enough.
 
-Copy `.env.example` to `.env` and set these environment variables:
+After Terraform apply, the three Storage values can also be confirmed with:
 
-```dotenv
-AUTH_MODE=auto
-DASHBOARD_DATA_SOURCE=azure
-STORAGE_ACCOUNT_NAME=<history-storage-account>
-STORAGE_CONTAINER_NAME=dvm-history
-STORAGE_CURRENT_CONTAINER_NAME=dvm-current
-APP_MODE=live
-DASHBOARD_AUTH_ENABLED=false
-DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=false
+```bash
+terraform -chdir=infra/terraform output -raw history_storage_account_name
+terraform -chdir=infra/terraform output -raw history_container_name
+terraform -chdir=infra/terraform output -raw current_container_name
 ```
 
-Leave `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` empty for this normal path.
-Microsoft Entra uses “client ID” and “application ID” for the same application
-identifier, but neither value is needed here. Terraform configures the deployed
-managed identities, and the local Web App uses the current `az login` identity.
+Publish the first live dataset by waiting for the configured schedule or
+invoking the collector:
 
-The normal values mean:
+```bash
+vulnerability-view-ops invoke function --confirm
+vulnerability-view-ops check-runs --limit 5 --progress
+```
 
-| Setting | Normal value | Meaning |
-|---|---|---|
-| `AUTH_MODE` | `auto` | Uses Azure CLI authentication locally and managed identity in Azure |
-| `APP_MODE` | `live` | Publishes live Defender data; synthetic data is an explicit evaluation option |
-| `DASHBOARD_DATA_SOURCE` | `azure` | Local Web App reads the collector's current Azure bundle |
-| `DASHBOARD_AUTH_ENABLED` | `false` | Required for local hosting; the hosted Web App enables App Service Authentication |
-| `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | `false` | Optional dashboard collaboration feature; not required for collection or reporting |
+The confirmation is required because the invocation creates a new immutable
+run and advances `current/manifest.json` after validation.
 
-Recommendation tracking records dashboard-local work status; it does not create
-or update remediation tasks in Defender. Leave it off unless shared tracking is
-specifically required.
+At this point, the shared foundation and collector Function used by both
+options 1 and 2 are complete:
+
+- To run the Web App locally, continue with the local startup command below.
+- To host the Web App in Azure instead, skip the local startup and continue to
+  [option 2](#2-deploy-the-collector-and-web-app-in-azure).
 
 Start the local Web App with the same command on Windows, macOS, or Linux:
 
@@ -238,18 +282,6 @@ python -m uvicorn vulnerability_view.dashboard_server:app --app-dir src --host 1
 Open <http://127.0.0.1:8000>. With `AUTH_MODE=auto`, the local application uses
 the current Azure CLI credential. The deployed Function does not use that
 developer login; it uses its own managed identity for Defender and Storage.
-
-The local Web App displays data after the Function publishes its first
-successful run. You can wait for the configured schedule or explicitly create
-a run:
-
-```bash
-vulnerability-view-ops invoke function --confirm
-vulnerability-view-ops check-runs --limit 5 --progress
-```
-
-The confirmation is required because the invocation creates a new immutable
-run and advances `current/manifest.json` after validation.
 
 Web App and server changes reload locally and do not require an Azure
 deployment. Redeploy the Function only when collector code or its Azure runtime

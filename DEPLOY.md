@@ -54,43 +54,8 @@ the collector's current live dataset from Azure Storage.
    `collector_management_group_id` contain the same GUID. Do not enter the
    display name `Tenant Root Group`.
 
-4. Confirm that the deployment identity has the
-   [required operator permissions](#required-operator-permissions), then sign
-   in:
-
-   ```bash
-   az login --tenant "<tenant-id>"
-   az account set --subscription "<subscription-id>"
-   az account show --query "{name:name,id:id,tenantId:tenantId}" --output table
-   ```
-
-5. Create the protected storage foundation:
-
-   ```bash
-   vulnerability-view-ops plan foundation
-   terraform -chdir=infra/terraform show foundation.tfplan
-   vulnerability-view-ops apply foundation
-   vulnerability-view-ops verify foundation
-   ```
-
-6. Create and publish the collector:
-
-   ```bash
-   vulnerability-view-ops plan function
-   terraform -chdir=infra/terraform show function.tfplan
-   vulnerability-view-ops apply function
-   vulnerability-view-ops deploy function
-   vulnerability-view-ops verify function
-   ```
-
-7. Wait for the configured schedule, or create the first immutable run now:
-
-   ```bash
-   vulnerability-view-ops invoke function --confirm
-   vulnerability-view-ops check-runs --limit 5 --progress
-   ```
-
-8. Copy `.env.example` to `.env` and set these environment variables:
+4. Before signing in, planning, or deploying, copy `.env.example` to `.env`
+   and set these environment variables:
 
    ```dotenv
    AUTH_MODE=auto
@@ -115,6 +80,78 @@ the collector's current live dataset from Azure Storage.
    Terraform enables App Service Authentication for the hosted Web App.
    Recommendation tracking is optional dashboard-only collaboration state and
    should remain false unless explicitly required.
+
+   Use these value sources:
+
+   | `.env` setting | Value to use |
+   |---|---|
+   | `AUTH_MODE` | `auto` |
+   | `AZURE_TENANT_ID` | Leave empty; use the tenant from `az login` |
+   | `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | Leave both empty |
+   | `AZURE_SUBSCRIPTION_ID` | Leave empty; Terraform reads `subscription_id` from `main.tfvars.json` |
+   | `AZURE_MANAGEMENT_GROUP_ID` | Leave empty; Terraform sets it on the collector from `collector_management_group_id` |
+   | `AZURE_RESOURCE_GROUP` | Leave empty; deployment commands use the Terraform value |
+   | `STORAGE_ACCOUNT_NAME` | `history_storage_account_name` from `main.tfvars.json` |
+   | `STORAGE_CONTAINER_NAME` | `history_container_name`, normally `dvm-history` |
+   | `STORAGE_CURRENT_CONTAINER_NAME` | `current_container_name`, normally `dvm-current` |
+   | `APP_MODE` | `live` |
+   | `DASHBOARD_DATA_SOURCE` | `azure` |
+   | `DASHBOARD_AUTH_ENABLED` | `false` locally |
+   | `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | `false` unless explicitly required |
+
+   After Terraform apply, confirm the Storage values with:
+
+   ```bash
+   terraform -chdir=infra/terraform output -raw history_storage_account_name
+   terraform -chdir=infra/terraform output -raw history_container_name
+   terraform -chdir=infra/terraform output -raw current_container_name
+   ```
+
+   See the [complete runtime setting reference](docs/configuration-reference.md#4-collector-and-dashboard-runtime-settings)
+   for all optional `.env` values.
+
+5. Confirm that the deployment identity has the
+   [required operator permissions](#required-operator-permissions), then sign
+   in:
+
+   ```bash
+   az login --tenant "<tenant-id>"
+   az account set --subscription "<subscription-id>"
+   az account show --query "{name:name,id:id,tenantId:tenantId}" --output table
+   ```
+
+6. Create the protected storage foundation:
+
+   ```bash
+   vulnerability-view-ops plan foundation
+   terraform -chdir=infra/terraform show foundation.tfplan
+   vulnerability-view-ops apply foundation
+   vulnerability-view-ops verify foundation
+   ```
+
+7. Create and publish the collector:
+
+   ```bash
+   vulnerability-view-ops plan function
+   terraform -chdir=infra/terraform show function.tfplan
+   vulnerability-view-ops apply function
+   vulnerability-view-ops deploy function
+   vulnerability-view-ops verify function
+   ```
+
+   The shared foundation and collector are now complete. Step 8 publishes the
+   first dataset for either Web App path.
+
+8. Wait for the configured schedule, or create the first immutable run now:
+
+   ```bash
+   vulnerability-view-ops invoke function --confirm
+   vulnerability-view-ops check-runs --limit 5 --progress
+   ```
+
+   To use the local Web App, continue with step 9. To host the Web App in Azure,
+   skip step 9 and continue with the
+   [Web App stage](#deploy-the-authenticated-dashboard-web-app).
 
 9. Run the Web App locally:
 
