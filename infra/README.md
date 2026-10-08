@@ -11,9 +11,8 @@ permissions model.
 
 ## Cross-platform operations CLI
 
-The same subcommands work in Windows PowerShell, macOS, and Linux. The examples
-below use an activated macOS/Linux environment. On Windows, replace the leading
-`python` with `.\.venv-win\Scripts\python.exe`:
+The same commands work in Windows PowerShell, macOS, and Linux after activating
+the platform's virtual environment:
 
 ```text
 python -m vulnerability_view.operations_cli plan foundation
@@ -40,20 +39,25 @@ Activate the environment on macOS/Linux:
 source .venv/bin/activate
 ```
 
-On Windows PowerShell, create a separate environment and always invoke its
-interpreter directly:
+On Windows PowerShell, create and activate a separate environment:
 
 ```powershell
-py -3.14 --version
-py -3.14 -m venv .venv-win
-.\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv-win\Scripts\python.exe -c "import sys, vulnerability_view; print(sys.executable)"
+python3 --version
+python3 -m venv .venv-win
+.\.venv-win\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+python -c "import sys, vulnerability_view; print(sys.executable)"
 ```
 
-The verification output must end in `.venv-win\Scripts\python.exe`. Run
-operations on Windows as
-`.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli <command>`.
-Do not rely on an activated prompt or a global `python` command.
+If `python3` is not available on Windows, use `py -3.14` for the first two
+commands.
+
+The verification output must end in `.venv-win\Scripts\python.exe`. After
+activation, run operations as
+`python -m vulnerability_view.operations_cli <command>`. If activation is
+blocked, use
+`.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli <command>`
+as a fallback.
 
 The Python CLI replaces platform-sensitive Bash, `date`, `jq`, `curl`, and
 external ZIP operations with Python implementations. Azure CLI, Terraform, and

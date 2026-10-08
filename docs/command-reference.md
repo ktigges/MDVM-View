@@ -31,7 +31,7 @@ Never manually invoke while the status checker reports `ACTIVE` or
 macOS or Linux:
 
 ```bash
-python3.14 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
 cp .env.example .env
@@ -40,24 +40,28 @@ cp .env.example .env
 Windows PowerShell:
 
 ```powershell
-py -3.14 --version
-py -3.14 -m venv .venv-win
-.\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv-win\Scripts\python.exe -c "import sys, vulnerability_view; print(sys.executable)"
+python3 --version
+python3 -m venv .venv-win
+.\.venv-win\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+python -c "import sys, vulnerability_view; print(sys.executable)"
 Copy-Item .env.example .env
 ```
 
+If `python3` is not available on Windows, use `py -3.14` for the first two
+commands.
+
 The Windows verification command must print a path ending in
-`.venv-win\Scripts\python.exe`. Use that exact interpreter for every Windows
-Python command.
+`.venv-win\Scripts\python.exe`. After activation, use `python -m ...` normally.
+Use the exact `.venv-win` interpreter path only if activation is blocked.
 
 | Command | Use |
 |---|---|
-| `python3.14 -m venv .venv` | Create the tested Python 3.14 project environment |
-| `py -3.14 -m venv .venv-win` | Create the tested Python 3.14 Windows environment |
+| `python3 -m venv .venv` | Create the tested Python 3.14 project environment |
+| `python3 -m venv .venv-win` | Create the tested Python 3.14 Windows environment |
 | `source .venv/bin/activate` | Activate it in the current shell |
+| `.\.venv-win\Scripts\Activate.ps1` | Activate the Windows environment in PowerShell |
 | `python -m pip install -e '.[dev]'` | Install runtime dependencies, CLI, and tests |
-| `.\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"` | Install into the exact Windows environment |
 | `cp .env.example .env` | Create local runtime environment variables; never commit secrets |
 
 Azure CLI sign-in:
@@ -388,9 +392,8 @@ Run the invocation only if the first command does not report `ACTIVE` or
 `INDETERMINATE`.
 ## Cross-platform Azure operations
 
-After installation, these subcommands are identical across platforms. The
-examples use an activated macOS/Linux environment. On Windows, replace the
-leading `python` with `.\.venv-win\Scripts\python.exe`:
+After installation and virtual-environment activation, these commands are
+identical across platforms:
 
 ```text
 python -m vulnerability_view.operations_cli deploy function

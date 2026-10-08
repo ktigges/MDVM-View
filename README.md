@@ -150,32 +150,33 @@ Copy-Item infra/terraform/main.tfvars.example.json infra/terraform/main.tfvars.j
 Create, activate, install, and verify the project on macOS or Linux:
 
 ```bash
-python3.14 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
 python -c "import sys, vulnerability_view; print(sys.executable)"
 ```
 
-On Windows PowerShell, use a separate `.venv-win` environment and its exact
-interpreter path. Do not rely on the prompt prefix or the global `python`
-command:
+On Windows PowerShell, create and activate a separate `.venv-win` environment:
 
 ```powershell
-py -3.14 --version
-py -3.14 -m venv .venv-win
-.\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv-win\Scripts\python.exe -c "import sys, vulnerability_view; print(sys.executable)"
+python3 --version
+python3 -m venv .venv-win
+.\.venv-win\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+python -c "import sys, vulnerability_view; print(sys.executable)"
 ```
+
+If `python3` is not available on Windows, try `py -3.14` in its place.
+The verification output must end in `.venv-win\Scripts\python.exe`.
 
 Run deployment operations as
 `python -m vulnerability_view.operations_cli <command>`. This form works on
 Windows, macOS, and Linux and does not depend on the shell finding a generated
 `vulnerability-view-ops.exe` launcher.
 
-On Windows, always use
-`.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli <command>`.
-The remaining command examples use `python` for readability; replace that
-leading `python` with `.\.venv-win\Scripts\python.exe` in PowerShell.
+After `.venv-win` is activated, Windows uses the same `python -m ...` commands.
+If PowerShell cannot activate the environment, use
+`.\.venv-win\Scripts\python.exe -m ...` as a fallback.
 
 Before signing in, planning, or deploying, copy `.env.example` to `.env` and
 set:

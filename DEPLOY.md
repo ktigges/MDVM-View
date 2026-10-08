@@ -36,25 +36,29 @@ the collector's current live dataset from Azure Storage.
    ```
 
 2. Install the [workstation requirements](#workstation-requirements), create a
-   virtual environment, and install the project. On Windows, use the exact
-   `.venv-win` interpreter for installation and verification:
+   virtual environment, and install the project. On Windows, create and
+   activate `.venv-win`:
 
    ```powershell
-   py -3.14 --version
-   py -3.14 -m venv .venv-win
-   .\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"
-   .\.venv-win\Scripts\python.exe -c "import sys, vulnerability_view; print(sys.executable)"
+   python3 --version
+   python3 -m venv .venv-win
+   .\.venv-win\Scripts\Activate.ps1
+   python -m pip install -e ".[dev]"
+   python -c "import sys, vulnerability_view; print(sys.executable)"
    ```
+
+   If `python3` is not available on Windows, try `py -3.14` in its place.
+   The verification output must end in `.venv-win\Scripts\python.exe`.
 
    Run deployment operations as
    `python -m vulnerability_view.operations_cli <command>`. This form works on
    Windows, macOS, and Linux and does not depend on the shell finding a
    generated `vulnerability-view-ops.exe` launcher.
 
-   On Windows, always use
-   `.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli <command>`.
-   For command examples below, replace the leading `python` with
-   `.\.venv-win\Scripts\python.exe`.
+   After activation, Windows uses the same
+   `python -m vulnerability_view.operations_cli <command>` form. If PowerShell
+   cannot activate the environment, use the exact `.venv-win` interpreter path
+   as a fallback.
 
 3. Copy `infra/terraform/main.tfvars.example.json` to the environment-specific
    `infra/terraform/main.tfvars.json` and replace every example value. Set
@@ -233,7 +237,7 @@ Install the application dependencies:
 macOS or Linux:
 
 ```bash
-python3.14 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
 ```
@@ -241,19 +245,24 @@ python -m pip install -e '.[dev]'
 Windows PowerShell:
 
 ```powershell
-py -3.14 --version
-py -3.14 -m venv .venv-win
-.\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv-win\Scripts\python.exe -c "import sys, vulnerability_view; print(sys.executable)"
+python3 --version
+python3 -m venv .venv-win
+.\.venv-win\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+python -c "import sys, vulnerability_view; print(sys.executable)"
 ```
+
+If `python3` is not available on Windows, use `py -3.14` for the first two
+commands.
 
 The last command must print a path ending in
 `.venv-win\Scripts\python.exe`. If the import fails or it prints a global
-Python path, stop before deployment and repeat the installation with the exact
-`.venv-win` interpreter. Windows operations use
-`.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli`;
-macOS and Linux use `python -m vulnerability_view.operations_cli`. Both forms
-are documented in [Infrastructure operations](infra/README.md).
+Python path, stop before deployment and reactivate `.venv-win`. Once activated,
+Windows, macOS, and Linux all use
+`python -m vulnerability_view.operations_cli`. If activation is blocked, use
+`.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli` as a
+fallback. Both forms are documented in
+[Infrastructure operations](infra/README.md).
 
 Python 3.14.7 has been tested successfully for local installation, deployment
 operations, and the full project test suite. The test run produces dependency
