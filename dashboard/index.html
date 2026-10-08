@@ -1,7 +1,7 @@
 <!--
   Author: Kevin Tigges
-  Last modified: 2026-09-27
-  Purpose: Define the vulnerability dashboard page structure and controls.
+  Last modified: 2026-10-08
+  Purpose: Define the versioned vulnerability dashboard page structure and readable controls.
 -->
 <!doctype html>
 <html lang="en">
@@ -9,7 +9,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
-  <link rel="stylesheet" href="styles.css?v=20261007-1728">
+  <link rel="stylesheet" href="styles.css?v=20261008-0857">
 </head>
 <body>
   <header class="topbar">
@@ -21,7 +21,7 @@
       </div>
     </div>
     <div class="topbar-meta">
-      <div class="freshness"><span id="healthDot"></span><strong id="freshnessText">Loading data</strong><small>Live snapshot</small><small id="revisionText" class="revision-text">UI revision loading</small><small id="authStatus" class="auth-status">Checking access mode</small></div>
+      <div class="freshness"><span id="healthDot"></span><strong id="freshnessText">Loading data</strong><small>Data refreshed · Live snapshot</small><small id="revisionText" class="revision-text">UI revision loading</small><small id="authStatus" class="auth-status">Checking access mode</small></div>
       <div id="availabilityItems" class="header-statuses" aria-label="Snapshot status" aria-live="polite">
         <span class="header-status-item pending"><i aria-hidden="true"></i><strong>Loading status</strong><span class="status-info" aria-hidden="true">i</span></span>
       </div>
@@ -47,7 +47,7 @@
     <button data-view="recommendations"><span>Recommendations</span></button>
     <button data-view="priority"><span>Prioritize</span></button>
     <button data-view="sla"><span>Remediate</span></button>
-    <button data-view="trend"><span>Statistics</span></button>
+    <button data-view="trend"><span>Reporting</span></button>
     <button data-view="data-browser" data-feature="data-browser" hidden><span>Data evidence</span></button>
   </nav>
   <div class="workspace">
@@ -105,8 +105,8 @@
       <div class="executive-heading"><div><span>EXECUTIVE POSTURE</span><h2>Current security posture</h2></div><p>Filtered remediation posture, Microsoft Secure Score, and policy SLA outcomes</p></div>
       <div class="executive-decision-grid">
         <article id="secureScoreCard" class="secure-score-card"></article>
-        <article class="decision-panel"><div class="decision-panel-title"><span>WORK TO DO NOW</span><h3>Current posture based on filters</h3></div><div id="executiveWorkload" class="decision-metrics"></div></article>
-        <article class="decision-panel"><div class="decision-panel-title"><span>SLA PERFORMANCE</span><h3>How remediation is performing</h3></div><div id="executiveSlaPerformance" class="decision-metrics"></div></article>
+        <article class="decision-panel"><div class="decision-panel-title"><span>WORK TO DO NOW</span><h3>Current posture and latest-run change</h3><small id="executiveDeltaContext">Loading comparable runs</small></div><div id="executiveWorkload" class="decision-metrics"></div></article>
+        <article class="decision-panel"><div class="decision-panel-title"><span>FINDING SLA PERFORMANCE</span><h3>How finding remediation is performing</h3></div><div id="executiveSlaPerformance" class="decision-metrics"></div></article>
       </div>
     </section>
       <div class="subsection-heading"><div><span>RECOMMENDATION IMPACT</span><h3>Highest-impact actions</h3></div><p class="impact-warning">One recommendation can address many findings, devices, and CVEs. Select an action to inspect exactly what it can fix.</p></div>
@@ -118,7 +118,7 @@
       </div>
       <div class="subsection-heading"><div><span>CURRENT EXPOSURE MIX</span><h3>Severity and subscription coverage</h3></div></div>
       <div id="severityCards" class="metric-grid compact"></div>
-      <div class="subsection-heading"><div><span>GLOBAL VULNERABILITY SLA · FINDING CLOCK</span><h3>Defender-confirmed fixes against severity SLA windows</h3></div></div>
+      <div class="subsection-heading"><div><span>GLOBAL VULNERABILITY SLA · FINDING-LEVEL RESULTS</span><h3>Defender-confirmed finding fixes against severity SLA windows</h3></div><p>Every value below counts finding instances: one CVE detected on one machine.</p></div>
       <div class="panel sla-severity-panel"><div class="table-wrap"><table id="executiveSlaBreakdown"></table></div></div>
       <div id="overviewSlaCards" class="metric-grid compact sla-summary"></div>
     </section>
@@ -165,7 +165,7 @@
     </section>
 
     <section id="trend" class="story">
-      <div class="section-heading"><div><h2>Workload and SLA statistics</h2></div></div>
+      <div class="section-heading"><div><span>REPORTING</span><h2>Vulnerability reporting and change over time</h2></div><p>Compare finding workload, affected machines, remediation outcomes, and SLA performance across runs or date ranges.</p></div>
       <section class="statistics-period-panel" aria-labelledby="statisticsPeriodTitle">
         <div>
           <span>COMPARISON WINDOW</span>
@@ -187,16 +187,22 @@
           <button id="applyStatisticsPeriod" type="button">Apply range</button>
         </div>
       </section>
+      <section class="panel lifecycle-reporting" aria-labelledby="lifecycleReportingTitle">
+        <div class="panel-title"><div><h3 id="lifecycleReportingTitle">Lifecycle reporting by entity</h3><span>Counts are explicitly separated into findings, machines, CVEs, and recommendations</span></div><div class="reporting-actions"><label>Entity<select id="reportingEntity"><option value="findings">Findings</option><option value="machines">Machines</option><option value="cves">CVEs</option><option value="recommendations">Recommendations</option></select></label><button id="exportReportingCsv" type="button">Export filtered CSV</button></div></div>
+        <p id="lifecycleCoverage" class="coverage-note"></p>
+        <div id="lifecycleCards" class="metric-grid statistics-period-cards"></div>
+        <div class="table-wrap"><table id="lifecycleHistoryTable"></table></div>
+      </section>
       <div class="statistics-definitions">
-        <span><strong>New</strong> First reported during the period</span>
-        <span><strong>Fixed</strong> Defender stopped reporting during the period</span>
-        <span><strong>Net change</strong> New minus fixed</span>
-        <span><strong>Ending open</strong> Unresolved at period end</span>
+        <span><strong>New findings</strong> Finding instances first reported during the period</span>
+        <span><strong>Fixed findings</strong> Finding instances Defender stopped reporting during the period</span>
+        <span><strong>Net finding change</strong> New findings minus fixed findings</span>
+        <span><strong>Ending open findings</strong> Finding instances unresolved at period end</span>
       </div>
       <div id="statisticsPeriodCards" class="metric-grid statistics-period-cards"></div>
       <article class="panel period-comparison-panel"><div class="panel-title"><h3>Selected period comparison</h3><span>Finding instances in the current global filter scope</span></div><div class="table-wrap"><table id="statisticsPeriodTable"></table></div></article>
 
-      <div class="subsection-heading"><div><h3>Selected-period results against severity-based SLA targets</h3></div><p id="slaPolicySummary">Loading the SLA policy retained with this dataset.</p></div>
+      <div class="subsection-heading"><div><span>FINDING-LEVEL SLA RESULTS</span><h3>Selected-period finding results against severity-based SLA targets</h3></div><p id="slaPolicySummary">Loading the SLA policy retained with this dataset.</p></div>
       <div id="statisticsSlaCards" class="metric-grid compact statistics-sla-cards"></div>
       <div class="panel sla-severity-panel"><div class="table-wrap"><table id="statisticsSlaBreakdown"></table></div></div>
 
@@ -235,7 +241,7 @@
   <aside id="recommendationPreview" class="recommendation-preview" role="status" hidden></aside>
   <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
   <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
-  <script src="config.js?v=20260928-2246"></script>
-  <script src="app.js?v=20261007-1728"></script>
+  <script src="config.js?v=20261008-0857"></script>
+  <script src="app.js?v=20261008-0857"></script>
 </body>
 </html>

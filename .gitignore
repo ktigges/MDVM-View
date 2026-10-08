@@ -1,3 +1,6 @@
+# Last modified: 2026-10-08
+# Purpose: Exclude generated, environment-specific, sensitive, and local operator files.
+
 .venv/
 .env
 .env.*
@@ -9,9 +12,11 @@ __pycache__/
 htmlcov/
 .vscode/
 .idea/
+.azure/
 .DS_Store
 local.settings.json
 LOCAL-NOTES.txt
+Function-App.txt
 AGENTS.md
 config/vulnerability-view.json
 dashboard/data/
@@ -31,6 +36,7 @@ override.tf.json
 crash.log
 crash.*.log
 *.zip
+build-version.json
 *.pem
 *.key
 *.pfx

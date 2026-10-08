@@ -1,3 +1,7 @@
+"""Last modified: 2026-10-08.
+Purpose: Verify configuration, local status, operational scripts, and macOS portability.
+"""
+
 import json
 from pathlib import Path
 
@@ -73,6 +77,15 @@ def test_run_status_script_supports_macos_system_bash():
     assert "mapfile" not in script
     assert 'case "$SHOW_EXPERIMENTAL" in' in script
     assert "while IFS= read -r manifest" in script
+
+
+def test_function_log_check_supports_linux_and_macos_date():
+    script = Path("infra/check-function-logs.sh").read_text()
+
+    assert "utc_to_epoch()" in script
+    assert 'date -u -d "$value"' in script
+    assert 'date -j -u -f "%Y-%m-%dT%H:%M:%S"' in script
+    assert 'date -u -d "$LATEST_PROGRESS_UTC"' not in script
 
 
 def test_validate_outputs_checks_data_quality(tmp_path: Path):

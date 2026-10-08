@@ -1,7 +1,7 @@
 # Greenfield Azure deployment
 
-> **Last modified:** 2026-09-28
-> **Purpose:** Create and validate a new protected Azure environment in three reviewed Terraform stages.
+> **Last modified:** 2026-10-08
+> **Purpose:** Create and validate a new protected Azure environment from Windows PowerShell, macOS, or Linux in three reviewed Terraform stages.
 
 This workflow creates a new environment without changing or deleting any
 existing DVM history. It does not manage or remove storage accounts,
@@ -98,10 +98,10 @@ window. WORM expiration does not delete history, and this deployment does not
 configure a lifecycle deletion rule.
 
 ```bash
-./infra/deploy.sh tfplan foundation
+vulnerability-view-ops plan foundation
 terraform -chdir=infra/terraform show foundation.tfplan
-./infra/deploy.sh tfapply foundation
-./infra/deploy.sh tfverify foundation
+vulnerability-view-ops apply foundation
+vulnerability-view-ops verify foundation
 ```
 
 Review the plan before applying. It should contain creates only.
@@ -114,11 +114,11 @@ assignment propagation can take several minutes.
 Change `deploy_function` to `true`, then run:
 
 ```bash
-./infra/deploy.sh tfplan function
+vulnerability-view-ops plan function
 terraform -chdir=infra/terraform show function.tfplan
-./infra/deploy.sh tfapply function
-./infra/deploy.sh tfdeploy function
-./infra/deploy.sh tfverify function
+vulnerability-view-ops apply function
+vulnerability-view-ops deploy function
+vulnerability-view-ops verify function
 ```
 
 This creates the Flex Consumption plan, separate runtime storage, collector
@@ -141,7 +141,7 @@ label.
 | Option | Use | Operation |
 |---|---|---|
 | Scheduled timer | Normal unattended collection | The Function runs at the UTC `collection_schedule`; the default is daily at 05:00 UTC. |
-| Guarded one-shot run | Initial validation, recovery from a missed schedule, or an intentional out-of-band snapshot | Run `CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function`. |
+| Guarded one-shot run | Initial validation, recovery from a missed schedule, or an intentional out-of-band snapshot | Run `vulnerability-view-ops invoke function --confirm`. |
 | Schedule change | Change the recurring cadence | Update `collection_schedule`, run and review `tfplan function`, then run `tfapply function`. A code-package deployment is not required for only an application-setting change. |
 
 The one-shot helper invokes the existing timer function through the Azure
@@ -177,11 +177,11 @@ Microsoft Entra ID licensing. If it is unavailable, assign individual users
 the `Dashboard.Viewer` role.
 
 ```bash
-./infra/deploy.sh tfplan webapp
+vulnerability-view-ops plan webapp
 terraform -chdir=infra/terraform show webapp.tfplan
-./infra/deploy.sh tfapply webapp
-./infra/deploy.sh tfdeploy webapp
-./infra/deploy.sh tfverify webapp
+vulnerability-view-ops apply webapp
+vulnerability-view-ops deploy webapp
+vulnerability-view-ops verify webapp
 ```
 
 After apply, Terraform outputs
@@ -210,15 +210,15 @@ App setting together, leaving a one-year renewal margin.
 Check Defender access locally before invoking a collection:
 
 ```bash
-./infra/deploy.sh tfpreflight
+vulnerability-view-ops preflight
 ```
 
 This tests the signed-in developer identity. The deployed managed identity is
 tested by invoking the timer workload:
 
 ```bash
-CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
-./infra/deploy.sh tfverify function
+vulnerability-view-ops invoke function --confirm
+vulnerability-view-ops verify function
 ```
 
 The confirmation is required because invocation writes a new immutable live
@@ -246,7 +246,7 @@ The helper can remove only the Function stage. It cannot target protected
 history storage or the foundation resource group.
 
 ```bash
-CONFIRM_TF_DESTROY_FUNCTION=yes ./infra/deploy.sh tfdestroy function
+vulnerability-view-ops destroy function --confirm
 ```
 
 Review the displayed destroy plan before Terraform asks for final approval.

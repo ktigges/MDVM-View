@@ -1,7 +1,7 @@
 <!--
   Author: Kevin Tigges
-  Last modified: 2026-09-28
-  Purpose: Provide a local-only interactive cost model for the complete Azure design.
+  Last modified: 2026-10-08
+  Purpose: Provide a local-only interactive cost model for the complete Azure design, including lifecycle reporting datasets.
 -->
 <!doctype html>
 <html lang="en">
@@ -78,18 +78,18 @@
             <label>Modeled retention when bounded (days)<input id="modeledRetentionDays" type="number" min="1" step="1" value="365"></label>
             <label>Configured minimum immutability (days)<input id="immutabilityDays" type="number" min="1" step="1" value="365"></label>
             <label>Existing retained history (GiB)<input id="existingHistoryGib" type="number" min="0" step=".1" value="1"></label>
-            <label>Compressed immutable data per run (GiB)<input id="runSizeGib" type="number" min="0" step=".001" value=".159"></label>
+            <label>Compressed immutable data per run (GiB)<input id="runSizeGib" type="number" min="0" step=".001" value=".160"></label>
             <label>Replication<select id="historyReplication"><option value=".0184">LRS</option><option value=".023">ZRS</option><option value=".0368">GRS</option><option value=".046">GZRS</option><option value="custom">Custom</option></select></label>
             <label>History capacity rate ($/GiB-month)<input id="historyCapacityRate" type="number" min="0" step=".0001" value=".0184"></label>
             <label>Soft-deleted retained data (GiB)<input id="softDeletedGib" type="number" min="0" step=".1" value="0"></label>
-            <label>Write/create operations per run<input id="writesPerRun" type="number" min="0" step="1" value="935"></label>
+            <label>Write/create operations per run<input id="writesPerRun" type="number" min="0" step="1" value="937"></label>
             <label>Other reads/list operations per month<input id="historyReadsMonth" type="number" min="0" step="100" value="5000"></label>
             <label>Write price per 10,000 operations ($)<input id="writeRate" type="number" min="0" step=".001" value=".05"></label>
             <label>Read/list price per 10,000 operations ($)<input id="readRate" type="number" min="0" step=".001" value=".004"></label>
             <label>Workflow events per month<input id="workflowEvents" type="number" min="0" step="100" value="1000"></label>
             <label>Average workflow event size (KiB)<input id="workflowEventKib" type="number" min="0" step=".1" value="2"></label>
           </div>
-          <span class="hint">Includes raw pages, curated datasets, manifests, retained SLA policy, current-pointer writes, and append-only recommendation workflow events. The bounded option changes estimates only; it does not configure deletion. The deployed application and Terraform do not purge retained history.</span>
+          <span class="hint">Includes raw pages, curated datasets, recommendation lifecycle events, compact run history, manifests, retained SLA policy, current-pointer writes, and append-only recommendation workflow events. The two lifecycle files add two writes per run and a conservatively modeled 0.001 GiB; replace the run-size input with measured bundle size after the first upgraded run. The bounded option changes estimates only; it does not configure deletion.</span>
         </section>
 
         <section class="panel">
@@ -113,7 +113,7 @@
             <label>Chargeable retained telemetry (GiB-month)<input id="chargeableLogRetentionGib" type="number" min="0" step=".1" value="0"></label>
             <label>Retention rate ($/GiB-month)<input id="logRetentionRate" type="number" min="0" step=".01" value=".12"></label>
           </div>
-          <span class="hint">Terraform uses workspace-based Application Insights, Log Analytics PerGB2018, 30-day retention, diagnostics, traces, requests, exceptions, and Function metrics. Refresh rates for Central US before purchase.</span>
+          <span class="hint">Terraform uses workspace-based Application Insights, Log Analytics PerGB2018, 30-day retention, diagnostics, traces, requests, exceptions, and Function metrics. The reporting upgrade adds only two short version messages per collection; existing progress telemetry remains the dominant run-specific log volume. Refresh rates for Central US before purchase.</span>
         </section>
 
         <section class="panel">
@@ -173,7 +173,7 @@
       </aside>
     </div>
   </main>
-  <footer>Last updated 2026-09-28 14:45 UTC. Currency: USD. All rates are editable assumptions and must be refreshed before purchase.</footer>
+  <footer>Last updated 2026-10-08 14:35 UTC. Currency: USD. All rates are editable assumptions and must be refreshed before purchase.</footer>
   <script>
     const ids=["functionMemory","collectionMinutes","collectionsPerDay","daysPerMonth","executionsPerCollection","freeExecutions","executionMillionRate","freeGbSeconds","executionRate","alwaysReadyCost","appServiceTier","customAppRate","appInstances","standbyCost","horizonMonths","retentionModel","modeledRetentionDays","immutabilityDays","existingHistoryGib","runSizeGib","historyReplication","historyCapacityRate","softDeletedGib","writesPerRun","historyReadsMonth","writeRate","readRate","workflowEvents","workflowEventKib","runtimeStorageGib","runtimeCapacityRate","runtimeOperations","runtimeOperationRate","logsPerCollectionGib","otherLogsGib","freeLogsGib","logIngestionRate","chargeableLogRetentionGib","logRetentionRate","egressGib","egressRate","frontDoorCost","networkCost","licenseCost","supportCost","otherCost","contingencyPercent"];
     const value=id=>Math.max(0,Number(document.getElementById(id).value)||0);

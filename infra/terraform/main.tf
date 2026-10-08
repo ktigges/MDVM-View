@@ -1,3 +1,6 @@
+# Last modified: 2026-10-08
+# Purpose: Provision protected Azure infrastructure for the collector and authenticated dashboard.
+
 terraform {
   required_version = ">= 1.10.0"
 
@@ -349,6 +352,7 @@ resource "azurerm_function_app_flex_consumption" "collector" {
     "AUTH_MODE"                        = "managed_identity"
     "AZURE_CLIENT_ID"                  = azurerm_user_assigned_identity.collector[each.key].client_id
     "AzureWebJobsFeatureFlags"         = "EnableWorkerIndexing"
+    "COLLECTOR_VERSION"                = var.function_version
     "AzureWebJobsStorage__accountName" = azurerm_storage_account.function_runtime[each.key].name
     "AzureWebJobsStorage__clientId"    = azurerm_user_assigned_identity.collector[each.key].client_id
     "AzureWebJobsStorage__credential"  = "managedidentity"
@@ -360,6 +364,10 @@ resource "azurerm_function_app_flex_consumption" "collector" {
     "STORAGE_ACCOUNT_NAME"             = azurerm_storage_account.history.name
     "STORAGE_CONTAINER_NAME"           = azurerm_storage_container.history.name
     "STORAGE_CURRENT_CONTAINER_NAME"   = azurerm_storage_container.current.name
+  }
+
+  lifecycle {
+    ignore_changes = [app_settings["COLLECTOR_VERSION"]]
   }
 
   tags = merge(var.tags, {
@@ -603,6 +611,7 @@ resource "azurerm_linux_web_app" "dashboard" {
     "AZURE_CLIENT_ID"                             = azurerm_user_assigned_identity.dashboard[each.key].client_id
     "DASHBOARD_AUTH_ENABLED"                      = "true"
     "DASHBOARD_CACHE_SECONDS"                     = tostring(var.dashboard_cache_seconds)
+    "DASHBOARD_VERSION"                           = var.dashboard_version
     "DASHBOARD_DATA_BROWSER_ENABLED"              = tostring(var.dashboard_data_browser_enabled)
     "DASHBOARD_DATA_BROWSER_ROLE"                 = var.dashboard_data_browser_enabled ? "Data.Evidence.Reader" : ""
     "DASHBOARD_DATA_SOURCE"                       = "azure"
@@ -615,6 +624,10 @@ resource "azurerm_linux_web_app" "dashboard" {
     "STORAGE_ACCOUNT_NAME"                        = azurerm_storage_account.history.name
     "STORAGE_CONTAINER_NAME"                      = azurerm_storage_container.history.name
     "STORAGE_CURRENT_CONTAINER_NAME"              = azurerm_storage_container.current.name
+  }
+
+  lifecycle {
+    ignore_changes = [app_settings["DASHBOARD_VERSION"]]
   }
 
   tags = var.tags

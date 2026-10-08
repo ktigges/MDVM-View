@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Author: Kevin Tigges
-# Last modified: 2026-09-28
-# Purpose: Inspect collector Function invocations, failures, exceptions, and memory without modifying Azure.
+# Last modified: 2026-10-08
+# Purpose: Inspect collector Function invocations, failures, exceptions, progress, and memory portably without modifying Azure.
 
 set -euo pipefail
 
@@ -24,6 +24,18 @@ for command in az jq; do
     exit 1
   fi
 done
+
+utc_to_epoch() {
+  # Converts Azure UTC timestamps with GNU date on Linux or BSD date on macOS.
+  local value="$1" normalized
+  if date -u -d "$value" +%s >/dev/null 2>&1; then
+    date -u -d "$value" +%s
+    return
+  fi
+  normalized="${value%%.*}"
+  normalized="${normalized%Z}"
+  date -j -u -f "%Y-%m-%dT%H:%M:%S" "$normalized" +%s
+}
 
 if [[ ! -f "$TFVARS" ]]; then
   echo "Terraform variables file not found: $TFVARS" >&2
@@ -116,8 +128,13 @@ else
   )"
   LATEST_PROGRESS_UTC="$(jq -r '.[0].TimeGenerated // empty' <<<"$PROGRESS_JSON")"
   LATEST_PROGRESS_MESSAGE="$(jq -r '.[0].Message // empty' <<<"$PROGRESS_JSON")"
+  LATEST_PROGRESS_EPOCH=""
+  if [[ -n "$LATEST_PROGRESS_UTC" ]]; then
+    LATEST_PROGRESS_EPOCH="$(utc_to_epoch "$LATEST_PROGRESS_UTC")"
+  fi
   if [[ -n "$LATEST_PROGRESS_UTC" ]] \
-    && (( $(date -u +%s) - $(date -u -d "$LATEST_PROGRESS_UTC" +%s) <= 600 )); then
+    && [[ "$LATEST_PROGRESS_EPOCH" =~ ^[0-9]+$ ]] \
+    && (( $(date -u +%s) - LATEST_PROGRESS_EPOCH <= 600 )); then
     echo "  ACTIVE - DO NOT INVOKE ANOTHER RUN."
     echo "  Invocation:      $LATEST_INVOCATION_ID"
     echo "  Started UTC:     $LATEST_STARTED_UTC"

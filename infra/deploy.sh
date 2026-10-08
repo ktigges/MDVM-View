@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Author: Kevin Tigges
-# Last modified: 2026-09-27
-# Purpose: Plan, deploy, verify, and invoke the protected Azure collector and dashboard stages.
+# Last modified: 2026-10-08
+# Purpose: Plan, version, deploy, verify, and invoke the protected Azure collector and dashboard stages.
 
 set -euo pipefail
 
@@ -167,20 +167,31 @@ tf_deploy() {
   case "$stage" in
     function)
       require_command jq
-      local function_app
+      require_command git
+      local configured_function_version function_app function_version version_file
       function_app="$(tf_output function_app_name 2>/dev/null || true)"
+      configured_function_version="$(jq -r '.function_version // empty' "$TF_VARS")"
+      function_version="${FUNCTION_VERSION:-${configured_function_version:-$(git -C "$ROOT_DIR" describe --tags --always --dirty)}}"
+      function_version="${function_version//[^A-Za-z0-9._+-]/-}"
+      version_file="$ROOT_DIR/build-version.json"
       package="$ROOT_DIR/function-source.zip"
       if [[ -z "$function_app" ]]; then
         echo "Function infrastructure is not present. Run tfplan function and tfapply function first." >&2
         exit 1
       fi
 
-      rm -f "$package"
+      rm -f "$package" "$version_file"
+      jq -n \
+        --arg version "$function_version" \
+        --arg deployedUtc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg commit "$(git -C "$ROOT_DIR" rev-parse HEAD)" \
+        '{version:$version,deployedUtc:$deployedUtc,commit:$commit}' > "$version_file"
       (
         cd "$ROOT_DIR"
-        zip -q -r "$package" function_app.py host.json requirements.txt pyproject.toml src config/sla-policies.json \
+        zip -q -r "$package" function_app.py host.json requirements.txt pyproject.toml build-version.json src config/sla-policies.json \
           -x '*/__pycache__/*' '*.pyc'
       )
+      rm -f "$version_file"
 
       # AzureRM currently injects a legacy setting that overrides identity-based host storage.
       az functionapp config appsettings delete \
@@ -203,14 +214,23 @@ tf_deploy() {
         --timeout 600 \
         --output none
 
+      az functionapp config appsettings set \
+        --resource-group "$resource_group" \
+        --name "$function_app" \
+        --settings "COLLECTOR_VERSION=$function_version" \
+        --output none
+
       az rest \
         --method post \
         --url "https://management.azure.com/subscriptions/$(jq -r .subscription_id "$TF_VARS")/resourceGroups/$resource_group/providers/Microsoft.Web/sites/$function_app/syncfunctiontriggers?api-version=2024-04-01" \
         --output none
+      echo "Function collector version deployed: $function_version"
       ;;
     webapp)
-      local web_app
+      local dashboard_version web_app
       web_app="$(tf_output web_app_name 2>/dev/null || true)"
+      dashboard_version="${DASHBOARD_VERSION:-$(jq -r '.dashboard_version // "unversioned"' "$TF_VARS")}"
+      dashboard_version="${dashboard_version//[^A-Za-z0-9._+-]/-}"
       package="$ROOT_DIR/webapp-source.zip"
       if [[ -z "$web_app" ]]; then
         echo "Web App infrastructure is not present. Run tfplan webapp and tfapply webapp first." >&2
@@ -229,25 +249,31 @@ tf_deploy() {
       ui_revision="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
       asset_version="${ui_revision//[-:TZ]/}"
       revised_package="$package.revised"
-      python3 - "$package" "$revised_package" "$ui_revision" "$asset_version" <<'PY'
+      python3 - "$package" "$revised_package" "$dashboard_version" "$ui_revision" "$asset_version" <<'PY'
 import re
 import sys
 import zipfile
 
-source_path, destination_path, revision, asset_version = sys.argv[1:]
+source_path, destination_path, version, revision, asset_version = sys.argv[1:]
 with zipfile.ZipFile(source_path, "r") as source, zipfile.ZipFile(destination_path, "w") as destination:
     for entry in source.infolist():
         content = source.read(entry.filename)
         if entry.filename == "dashboard/config.js":
             text = content.decode("utf-8")
-            text, replacements = re.subn(
+            text, version_replacements = re.subn(
+                r'version: "[^"]+"',
+                f'version: "{version}"',
+                text,
+                count=1,
+            )
+            text, revision_replacements = re.subn(
                 r'revision: "[^"]+"',
                 f'revision: "{revision}"',
                 text,
                 count=1,
             )
-            if replacements != 1:
-                raise RuntimeError("Could not stamp dashboard/config.js with the deployment revision")
+            if version_replacements != 1 or revision_replacements != 1:
+                raise RuntimeError("Could not stamp dashboard/config.js with the deployment version and revision")
             content = text.encode("utf-8")
         elif entry.filename == "dashboard/index.html":
             text = content.decode("utf-8")
@@ -262,7 +288,7 @@ with zipfile.ZipFile(source_path, "r") as source, zipfile.ZipFile(destination_pa
         destination.writestr(entry, content)
 PY
       mv "$revised_package" "$package"
-      echo "Packaged Web App UI revision $ui_revision"
+      echo "Packaged dashboard version $dashboard_version, UI revision $ui_revision"
 
       local previous_deployment_id deploy_exit latest_deployment deployment_id deployment_status
       previous_deployment_id="$(
@@ -308,6 +334,12 @@ PY
               break
             fi
           fi
+          az webapp config appsettings set \
+            --resource-group "$resource_group" \
+            --name "$web_app" \
+            --settings "DASHBOARD_VERSION=$dashboard_version" \
+            --output none
+          echo "Dashboard version deployed: $dashboard_version"
           sleep 15
         done
         if (( deploy_exit != 0 )); then
@@ -342,6 +374,13 @@ tf_verify() {
       ;;
     function)
       function_app="$(tf_output function_app_name)"
+      local collector_version
+      collector_version="$(az functionapp config appsettings list \
+        --resource-group "$resource_group" \
+        --name "$function_app" \
+        --query "[?name=='COLLECTOR_VERSION'].value | [0]" \
+        --output tsv)"
+      echo "Function collector version: ${collector_version:-not stamped}"
       az functionapp keys list \
         --resource-group "$resource_group" \
         --name "$function_app" \
@@ -364,6 +403,13 @@ tf_verify() {
       local web_app web_url
       web_app="$(tf_output web_app_name)"
       web_url="$(tf_output dashboard_url)"
+      local dashboard_version
+      dashboard_version="$(az webapp config appsettings list \
+        --resource-group "$resource_group" \
+        --name "$web_app" \
+        --query "[?name=='DASHBOARD_VERSION'].value | [0]" \
+        --output tsv)"
+      echo "Dashboard version: ${dashboard_version:-not stamped}"
       az webapp show \
         --resource-group "$resource_group" \
         --name "$web_app" \
@@ -433,6 +479,9 @@ Terraform workflow:
     refresh the plan automatically.
   - tfdeploy publishes application code to infrastructure that already exists.
     It does not run terraform init, plan, or apply.
+  - Function deployments stamp COLLECTOR_VERSION. The normal value comes from
+    function_version in main.tfvars.json. FUNCTION_VERSION can override it once;
+    otherwise deploy.sh falls back to the Git tag/commit and dirty-worktree marker.
 
 For an existing Web App infrastructure change, run in this order:
   ./infra/deploy.sh tfplan webapp

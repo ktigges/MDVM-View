@@ -1,3 +1,6 @@
+# Last modified: 2026-10-08
+# Purpose: Define and validate environment, deployment, collector, dashboard, and release-version inputs.
+
 variable "subscription_id" {
   description = "Azure subscription for the greenfield deployment."
   type        = string
@@ -15,6 +18,28 @@ variable "tenant_id" {
   validation {
     condition     = can(regex("^[0-9a-fA-F-]{36}$", var.tenant_id))
     error_message = "tenant_id must be a Microsoft Entra tenant GUID."
+  }
+}
+
+variable "function_version" {
+  description = "Operator-managed release number stamped on Function code deployments."
+  type        = string
+  default     = "unversioned"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._+-]*$", var.function_version))
+    error_message = "function_version must start with a letter or number and contain only letters, numbers, periods, underscores, plus signs, and hyphens."
+  }
+}
+
+variable "dashboard_version" {
+  description = "Operator-managed release number stamped on Web App dashboard deployments."
+  type        = string
+  default     = "unversioned"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._+-]*$", var.dashboard_version))
+    error_message = "dashboard_version must start with a letter or number and contain only letters, numbers, periods, underscores, plus signs, and hyphens."
   }
 }
 

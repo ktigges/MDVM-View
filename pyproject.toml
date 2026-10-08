@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 vulnerability-view = "vulnerability_view.dataprep_cli:main"
+vulnerability-view-ops = "vulnerability_view.operations_cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest==8.3.4"]

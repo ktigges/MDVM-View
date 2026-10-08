@@ -1,7 +1,7 @@
 # Command reference
 
-> **Last modified:** 2026-09-28
-> **Purpose:** Explain supported project commands, what they change, and when operators should use them.
+> **Last modified:** 2026-10-08
+> **Purpose:** Explain cross-platform and legacy project commands, what they change, and when operators should use them.
 
 Run commands from the repository root unless a section says otherwise.
 
@@ -9,16 +9,15 @@ Run commands from the repository root unless a section says otherwise.
 
 | Need | Command |
 |---|---|
-| See whether the collector is active | `./infra/check-function-logs.sh 1 3 --status-only` |
-| Continuously watch collector status | `watch -n 20 './infra/check-function-logs.sh 1 1 --status-only'` |
-| Show active progress plus published runs | `./infra/check-runs.sh 5 --progress` |
-| Inspect detailed failures and memory | `./infra/check-function-logs.sh 24 10` |
-| List completed immutable runs | `./infra/check-runs.sh 10` |
-| Deploy Function code only | `./infra/deploy.sh tfdeploy function` |
-| Deploy Web App code only | `./infra/deploy.sh tfdeploy webapp` |
-| Verify deployed Function | `./infra/deploy.sh tfverify function` |
-| Verify deployed Web App | `./infra/deploy.sh tfverify webapp` |
-| Manually start a collection | `CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function` |
+| See whether the collector is active | `vulnerability-view-ops check-function-logs --hours 1 --limit 3 --status-only` |
+| Show active progress plus published runs | `vulnerability-view-ops check-runs --limit 5 --progress` |
+| Inspect recent invocation requests | `vulnerability-view-ops check-function-logs --hours 24 --limit 10` |
+| List completed immutable runs | `vulnerability-view-ops check-runs --limit 10` |
+| Deploy Function code only | `vulnerability-view-ops deploy function` |
+| Deploy Web App code only | `vulnerability-view-ops deploy webapp` |
+| Verify deployed Function | `vulnerability-view-ops verify function` |
+| Verify deployed Web App | `vulnerability-view-ops verify webapp` |
+| Manually start a collection | `vulnerability-view-ops invoke function --confirm` |
 | Start the local dashboard | `./start-app.sh` |
 | Check effective non-secret application configuration | `vulnerability-view show-config` |
 | Validate local generated datasets | `vulnerability-view validate` |
@@ -369,3 +368,20 @@ watch -n 20 './infra/check-function-logs.sh 1 1 --status-only'
 
 Run the invocation only if the first command does not report `ACTIVE` or
 `INDETERMINATE`.
+## Cross-platform Azure operations
+
+After `python -m pip install -e ".[dev]"`, these commands use identical syntax in
+Windows PowerShell, macOS, and Linux:
+
+```text
+vulnerability-view-ops deploy function
+vulnerability-view-ops verify function
+vulnerability-view-ops deploy webapp
+vulnerability-view-ops verify webapp
+vulnerability-view-ops check-runs --limit 10 --progress
+vulnerability-view-ops check-function-logs --hours 1 --limit 10 --status-only
+vulnerability-view-ops invoke function --confirm
+```
+
+See [Infrastructure operations](../infra/README.md) for command internals,
+identity dependencies, Terraform boundaries, and legacy Bash equivalents.

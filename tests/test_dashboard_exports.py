@@ -1,3 +1,7 @@
+"""Last modified: 2026-10-08.
+Purpose: Verify dashboard exports, presentation contracts, versioning, and local-only tools.
+"""
+
 import csv
 import json
 import re
@@ -155,7 +159,7 @@ def test_dashboard_distinguishes_sla_targets_and_task_due_dates():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
 
-    assert "Selected-period results against severity-based SLA targets" in html
+    assert "Selected-period finding results against severity-based SLA targets" in html
     assert 'id="slaPolicySummary"' in html
     assert 'fetch("/api/sla-policy")' in javascript
     assert "Current dataset policy" in javascript
@@ -227,6 +231,20 @@ def test_dashboard_executive_subtiles_have_visible_contrast():
     assert "box-shadow:0 3px 7px" in stylesheet
 
 
+def test_dashboard_header_and_scope_are_readable():
+    html = Path("dashboard/index.html").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert "Data refreshed · Live snapshot" in html
+    assert ".freshness strong{font-size:16px!important" in stylesheet
+    assert ".header-status-item{padding:9px 11px!important;font-size:12px!important}" in stylesheet
+    assert ".app-shell{grid-template-columns:220px minmax(0,1fr)!important}" in stylesheet
+    assert ".story-nav button span{font-size:15px!important" in stylesheet
+    assert ".scope-bar strong{font-size:17px!important}" in stylesheet
+    assert ".scope-bar p{font-size:14px!important" in stylesheet
+    assert ".filter-toolbar #filterCount{font-size:13px!important}" in stylesheet
+
+
 def test_dashboard_resets_scroll_to_top_on_refresh():
     javascript = Path("dashboard/app.js").read_text()
 
@@ -261,8 +279,8 @@ def test_dashboard_severity_sla_drilldown_contract():
     )
     assert "showSlaSeverityDetail" in javascript
     assert "sla-severity-link" in javascript
-    assert "Policy SLA fixed within" in javascript
-    assert "Policy SLA fixed outside" in javascript
+    assert "Findings fixed within policy SLA" in javascript
+    assert "Findings fixed outside policy SLA" in javascript
     assert "FixedFindings:0,OpenFindings:0" in javascript
     assert "fixed on ${fmt(item.fixedMachines.size)} machine" in javascript
     assert "remain open on ${fmt(item.openMachines.size)} machine" in javascript
@@ -281,7 +299,7 @@ def test_dashboard_treats_remediation_activity_as_supporting_context():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
 
-    assert "GLOBAL VULNERABILITY SLA · FINDING CLOCK" in html
+    assert "GLOBAL VULNERABILITY SLA · FINDING-LEVEL RESULTS" in html
     assert 'id="weeklyTaskDueTable"' in html
     assert "Remediation history" in html
     assert "Remediation activity context" in html
@@ -431,13 +449,14 @@ def test_dashboard_uses_statistics_tab_without_ownership_story():
     javascript = Path("dashboard/app.js").read_text()
 
     assert 'data-view="trend"' in html
-    assert "<h2>Workload and SLA statistics</h2>" in html
+    assert '<button data-view="trend"><span>Reporting</span></button>' in html
+    assert "<h2>Vulnerability reporting and change over time</h2>" in html
     assert 'id="statisticsPeriod"' in html
     assert "This week vs previous week" in html
     assert "Latest run vs previous run" in html
     assert "Custom range vs preceding equal range" in html
     assert 'id="statisticsSlaBreakdown"' in html
-    assert "Selected-period results against severity-based SLA targets" in html
+    assert "Selected-period finding results against severity-based SLA targets" in html
     assert 'data-view="ownership"' not in html
     assert 'id="ownership"' not in html
     assert 'id="assignmentTable"' not in html
@@ -511,7 +530,7 @@ def test_dashboard_carries_remediation_outcomes_into_weekly_history():
     assert 'id="statisticsPeriodCards"' in html
     assert 'id="statisticsPeriodTable"' in html
     assert '["Week","Days","New","Fixed","AssetsRemediated","FindingsResolved","RemediationResult"' in javascript
-    assert "Net workload change" in javascript
+    assert "Net finding change" in javascript
     assert "Ending open findings" in javascript
 
 
@@ -570,15 +589,43 @@ def test_dashboard_has_severity_based_finding_and_recommendation_sla_graphs():
     assert 'id="statisticsSlaCards"' in html
     assert 'id="statisticsSlaBreakdown"' in html
     assert "Finding outcomes by severity" in html
-    assert "Selected-period results against severity-based SLA targets" in html
+    assert "Selected-period finding results against severity-based SLA targets" in html
     assert "Recommendation outcomes by severity" in html
     assert "findingSlaSeverityRows" in javascript
     assert "recommendationSlaSeverityRows" in javascript
     assert 'row.SlaStatus==="OpenWithinSla"' in javascript
-    assert "Open within SLA" in javascript
-    assert "Open outside SLA" in javascript
-    assert "Fixed within SLA" in javascript
-    assert "Fixed outside SLA" in javascript
+    assert "Open findings within SLA" in javascript
+    assert "Open findings overdue" in javascript
+    assert "Findings fixed within SLA" in javascript
+    assert "Findings fixed outside SLA" in javascript
+    assert "Recommendations with overdue findings" in javascript
+
+
+def test_dashboard_reports_latest_run_executive_deltas():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert 'id="executiveDeltaContext"' in html
+    assert '{name:"finding-events",key:"findingEvents",label:"finding history",required:false}' in javascript
+    assert "comparableRunSnapshots" in javascript
+    assert "since previous run" in javascript
+    assert "New findings since previous run" in javascript
+    assert "Findings fixed since previous run" in javascript
+    assert 'label:"Open recommendations"' in javascript
+    assert "metric-delta" in javascript
+    assert ".metric-delta.good" in stylesheet
+    assert ".metric-delta.bad" in stylesheet
+
+
+def test_statistics_view_is_presented_as_reporting():
+    html = Path("dashboard/index.html").read_text()
+
+    assert '<button data-view="trend"><span>Reporting</span></button>' in html
+    assert "Vulnerability reporting and change over time" in html
+    assert "Workload and SLA statistics" not in html
+    assert "New findings" in html
+    assert "Ending open findings" in html
 
 
 def test_dashboard_shows_severity_and_subscription_coverage_panel():
@@ -649,9 +696,10 @@ def test_dashboard_shows_ui_revision_below_live_snapshot():
     assert "formatUtc" in javascript
     assert "UI revision ${presentation.revision?formatUtc(presentation.revision)" in javascript
     assert "latest?formatUtc(latest.SnapshotTimeUtc)" in javascript
+    assert re.search(r'version: "\d{4}\.\d{2}\.\d{2}\.\d+"', configuration)
     assert re.search(r'revision: "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"', configuration)
     assert 'ui_revision="$(date -u' in deployment
-    assert "Packaged Web App UI revision $ui_revision" in deployment
+    assert "Packaged dashboard version $dashboard_version, UI revision $ui_revision" in deployment
     assert "Could not stamp all dashboard asset versions" in deployment
 
 

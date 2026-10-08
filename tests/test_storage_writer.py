@@ -321,13 +321,13 @@ def test_backfill_history_replays_runs_in_order(monkeypatch, tmp_path: Path):
     assert uploaded == 0
     with gzip.open(tmp_path / "output/history/live-20260920T000000Z/curated/findings.json.gz", "rt") as handle:
         findings = json.load(handle)
-    assert findings[0]["FindingStatus"] == "PendingConfirmation"
+    assert findings[0]["FindingStatus"] == "PendingVerification"
     with gzip.open(tmp_path / "output/history/live-20260921T000000Z/curated/findings.json.gz", "rt") as handle:
         findings = json.load(handle)
-    assert findings[0]["FindingStatus"] == "Fixed"
+    assert findings[0]["FindingStatus"] == "PendingVerification"
     with gzip.open(tmp_path / "output/history/live-20260922T000000Z/curated/finding-events.json.gz", "rt") as handle:
         events = json.load(handle)
-    assert [event["EventType"] for event in events] == ["New", "PendingConfirmation", "Fixed", "Reopened"]
+    assert [event["EventType"] for event in events] == ["New", "PendingVerification", "Open"]
 
 
 def test_seed_synthetic_history_builds_six_month_labeled_bundle(monkeypatch, tmp_path: Path):

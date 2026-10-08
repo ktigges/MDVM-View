@@ -1,10 +1,53 @@
+"""Last modified: 2026-10-08.
+Purpose: Verify finding, recommendation, run-history, summary, and reconciliation behavior.
+"""
+
 from datetime import datetime, timedelta, timezone
 
-from vulnerability_view.summary_builder import build_daily_summary, build_reconciliation
+from vulnerability_view.summary_builder import build_daily_summary, build_recommendation_events, build_reconciliation, build_run_history
 from vulnerability_view.synthetic_generator import generate_synthetic
 
 
 REAL_CVE_CATALOG = [{"CveId": "CVE-2025-1234", "Severity": "High", "CvssScore": 8.8}]
+
+
+def test_recommendation_events_are_persistent_and_idempotent():
+    first = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    recommendation = {
+        "RecommendationId": "rec-1", "RecommendationName": "Update software",
+        "DataOrigin": "Live", "ScenarioId": "LIVE", "SnapshotTimeUtc": first.isoformat(),
+    }
+    events = build_recommendation_events([recommendation], [], [], first, "run-1")
+    events = build_recommendation_events([], [recommendation], events, first + timedelta(days=1), "run-2")
+    events = build_recommendation_events([recommendation], [], events, first + timedelta(days=2), "run-3")
+    repeated = build_recommendation_events([recommendation], [], events, first + timedelta(days=2), "run-3")
+
+    assert [row["EventType"] for row in events] == ["Baseline", "Inactive", "Reopened"]
+    assert repeated == events
+
+
+def test_run_history_separates_entity_units():
+    snapshot = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    finding = {
+        "FindingKey": "device-1|CVE-2026-0001|software", "DeviceId": "device-1",
+        "CveId": "CVE-2026-0001", "FindingStatus": "Open", "SlaStatus": "OpenOutsideSla",
+    }
+    event = {**finding, "EventId": "event-1", "EventType": "New", "EffectiveTimeUtc": snapshot.isoformat(), "CollectionRunId": "run-1"}
+    recommendation = {"RecommendationId": "rec-1"}
+    recommendation_event = {
+        "EventId": "rec-event-1", "RecommendationId": "rec-1", "EventType": "New",
+        "EffectiveTimeUtc": snapshot.isoformat(), "CollectionRunId": "run-1",
+    }
+    history = build_run_history(
+        [finding], [], [event], [recommendation], [], [recommendation_event], [],
+        [{"RunStatus": "Success"}], snapshot, "run-1",
+    )
+
+    assert history[0]["OpenFindings"] == 1
+    assert history[0]["AffectedMachines"] == 1
+    assert history[0]["ActiveCves"] == 1
+    assert history[0]["ActiveRecommendations"] == 1
+    assert history[0]["OpenOutsideSla"] == 1
 
 
 def test_summary_and_reconciliation_are_nonnegative():

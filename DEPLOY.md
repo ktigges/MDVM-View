@@ -1,7 +1,7 @@
 # Azure deployment guide
 
-> **Last modified:** 2026-09-28
-> **Purpose:** Deploy and validate protected storage, the collector Function, and the authenticated dashboard Web App.
+> **Last modified:** 2026-10-08
+> **Purpose:** Deploy and validate protected storage, the collector Function, and the authenticated dashboard Web App, with explicit operator and runtime identity boundaries.
 
 The deployment is staged so retained DVM history stays independent of
 replaceable application infrastructure.
@@ -18,6 +18,74 @@ and script overrides, see
 For all supported local, collection, deployment, validation, and diagnostic
 commands, including when each is safe to use, see
 [Command reference](docs/command-reference.md).
+For the command-by-command internals, tool dependencies, Azure CLI identity
+behavior, Terraform boundaries, and package contents of `infra/deploy.sh`, see
+[Infrastructure and deploy.sh reference](infra/README.md).
+
+## Collector-only customer quick start
+
+This installs protected history storage and the collection Function. It does
+not deploy the dashboard Web App.
+
+1. Clone the repository and enter its directory:
+
+   ```bash
+   git clone "<repository-url>"
+   cd MDVM-View
+   ```
+
+2. Install the [workstation requirements](#workstation-requirements), create a
+   virtual environment, and activate it using the command for the workstation.
+   Then install the project:
+
+   ```bash
+   python -m pip install -e '.[dev]'
+   ```
+
+3. Copy `infra/terraform/main.tfvars.example.json` to the ignored
+   `infra/terraform/main.tfvars.json` and replace every example value.
+
+4. Confirm that the deployment identity has the
+   [required operator permissions](#required-operator-permissions), then sign
+   in:
+
+   ```bash
+   az login --tenant "<tenant-id>"
+   az account set --subscription "<subscription-id>"
+   az account show --query "{name:name,id:id,tenantId:tenantId}" --output table
+   ```
+
+5. Create the protected storage foundation:
+
+   ```bash
+   vulnerability-view-ops plan foundation
+   terraform -chdir=infra/terraform show foundation.tfplan
+   vulnerability-view-ops apply foundation
+   vulnerability-view-ops verify foundation
+   ```
+
+6. Create and publish the collector:
+
+   ```bash
+   vulnerability-view-ops plan function
+   terraform -chdir=infra/terraform show function.tfplan
+   vulnerability-view-ops apply function
+   vulnerability-view-ops deploy function
+   vulnerability-view-ops verify function
+   ```
+
+7. Wait for the configured schedule, or create the first immutable run now:
+
+   ```bash
+   vulnerability-view-ops invoke function --confirm
+   vulnerability-view-ops check-runs --limit 5 --progress
+   ```
+
+Stop here for a collector-only installation. Do not run the `webapp` stage.
+The operator supplies the Terraform values and an authorized Azure CLI login;
+the deployment commands create the Azure resources, collector managed identity,
+RBAC assignments, Defender/Graph application permissions, monitoring, Function
+settings, and collector package.
 
 ## Deployment path
 
@@ -46,12 +114,14 @@ The deployment workstation needs:
 - Terraform 1.10 or newer;
 - Azure CLI authenticated to the target tenant and subscription;
 - Python 3.12 and the project virtual environment;
-- Bash, `zip`, `jq`, and `curl`;
+- Git;
 - access to a secured Terraform state backend for production;
 - outbound access required by Terraform providers, Azure CLI, package restore,
   and code deployment.
 
 Install the application dependencies:
+
+macOS or Linux:
 
 ```bash
 python3.12 -m venv .venv
@@ -59,51 +129,58 @@ source .venv/bin/activate
 python -m pip install -e '.[dev]'
 ```
 
-Windows operators should use WSL or another Bash environment for
-`infra/deploy.sh`.
+Windows PowerShell:
 
-## What `infra/deploy.sh` automates
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e '.[dev]'
+```
 
-You do **not** need to run `terraform init` manually before a `tfplan` command.
-Every `./infra/deploy.sh tfplan <stage>` invocation automatically runs:
+Windows PowerShell, macOS, and Linux use the same `vulnerability-view-ops`
+commands documented in [Infrastructure operations](infra/README.md).
+
+## What the deployment commands do
+
+`vulnerability-view-ops` runs the Terraform, Azure CLI, packaging, and
+verification steps for you. The deployment remains separated into operations
+so you can review infrastructure changes before applying them:
+
+```text
+plan infrastructure -> review saved Terraform plan -> apply reviewed plan
+                    -> publish application code -> verify deployed resource
+```
+
+You do **not** need to run `terraform init` manually before a `plan` command.
+Every `vulnerability-view-ops plan <stage>` invocation automatically runs:
 
 1. `terraform init -input=false`
 2. `terraform validate`
 3. `terraform plan`, saved as `infra/terraform/<stage>.tfplan`
 
-Planning and applying remain deliberately separate. `tfplan` never applies
-infrastructure, and `tfapply` never creates or refreshes a plan. Review and
+Planning and applying remain deliberately separate. `plan` never applies
+infrastructure, and `apply` never creates or refreshes a plan. Review and
 apply the exact saved plan:
 
 ```bash
-./infra/deploy.sh tfplan webapp
+vulnerability-view-ops plan webapp
 terraform -chdir=infra/terraform show webapp.tfplan
-./infra/deploy.sh tfapply webapp
+vulnerability-view-ops apply webapp
 ```
 
-`tfdeploy` is a code-package operation. It does not run Terraform `init`,
-`plan`, or `apply`; it expects the selected Function or Web App infrastructure
-and Terraform outputs to already exist. For a dashboard code-only update to an
+`deploy` is a code-package operation. It does not run Terraform `init`, `plan`,
+or `apply`. It expects the selected Function or Web App infrastructure and
+Terraform outputs to already exist. For a dashboard code-only update to an
 existing Web App, use:
 
 ```bash
-./infra/deploy.sh tfdeploy webapp
-./infra/deploy.sh tfverify webapp
+vulnerability-view-ops deploy webapp
+vulnerability-view-ops verify webapp
 ```
 
-Linux ZipDeploy can return HTTP 504 while Kudu continues an Oryx build. The
-deployment helper treats a nonzero client result as provisional and polls for
-a new Kudu deployment record. Kudu status `4` is successful and status `3` is
-failed. Before manually retrying an interrupted deployment, inspect its final
-state:
-
-```bash
-az webapp log deployment list \
-  --resource-group RG-DVMVIEWER \
-  --name app-dvmviewer-test \
-  --query 'sort_by(@,&start_time)[-1].{id:id,status:status,active:active,start:start_time,end:end_time}' \
-  --output table
-```
+Use `deploy function` and `deploy webapp` independently. Updating one application
+does not publish, restart, or invoke the other. Publishing Function code also
+does not start a collection.
 
 ## Consolidated deployment runbook
 
@@ -111,13 +188,16 @@ Use this table to choose the smallest operation that matches the change:
 
 | Situation | Commands | Run a collection? |
 |---|---|---|
-| First deployment | `tfplan foundation`, review, `tfapply foundation`, `tfverify foundation`; then repeat for `function`; then repeat for `webapp` | Run `tfinvoke function` only if data is needed immediately |
-| Collector infrastructure or permissions changed | `tfplan function`, review, `tfapply function`, `tfdeploy function`, `tfverify function` | Only when an immediate fresh snapshot is needed |
-| Collector Python changed, infrastructure did not | `tfdeploy function`, then `tfverify function` | No; wait for the schedule unless fresh data is needed |
-| Web App infrastructure, Easy Auth, roles, or settings changed | `tfplan webapp`, review, `tfapply webapp`, `tfdeploy webapp`, `tfverify webapp` | No |
-| Dashboard or dashboard-server code changed | `tfdeploy webapp`, then `tfverify webapp` | No |
-| Recommendation tracking enabled persistently | Set `dashboard_recommendation_tracking_enabled=true` in `main.tfvars.json`; `tfplan webapp`, review, `tfapply webapp`, `tfdeploy webapp`, `tfverify webapp` | No |
-| A fresh Defender snapshot is needed immediately | `CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function`, then `tfverify function` | This is the collection |
+| First deployment | Run `plan`, review, `apply`, and `verify` for `foundation`; repeat with `deploy` added for `function` and `webapp` | Run `invoke function --confirm` only if data is needed immediately |
+| Collector infrastructure or permissions changed | `plan function`, review, `apply function`, `deploy function`, `verify function` | Only when an immediate fresh snapshot is needed |
+| Collector Python changed, infrastructure did not | `deploy function`, then `verify function` | No; wait for the schedule unless fresh data is needed |
+| Web App infrastructure, Easy Auth, roles, or settings changed | `plan webapp`, review, `apply webapp`, `deploy webapp`, `verify webapp` | No |
+| Dashboard or dashboard-server code changed | `deploy webapp`, then `verify webapp` | No |
+| Recommendation tracking enabled persistently | Set `dashboard_recommendation_tracking_enabled=true`; `plan webapp`, review, `apply webapp`, `deploy webapp`, `verify webapp` | No |
+| A fresh Defender snapshot is needed immediately | `invoke function --confirm`, then `verify function` | This is the collection |
+
+All abbreviated commands in this table are subcommands of
+`vulnerability-view-ops`.
 
 All Terraform stages are cumulative. Once the Web App exists, use the `webapp`
 stage for later infrastructure plans so Terraform preserves the foundation,
@@ -132,30 +212,8 @@ DVM Viewer > Users and groups**:
 - Assign **Data Evidence Reader** only to users or groups that may use the
   hidden Data evidence browser.
 
-The legacy **Recommendation Tracker** app role remains for compatibility but is
-not evaluated by the current workflow API. Any authenticated Dashboard Viewer
-can use shared recommendation status when the feature is enabled.
-
 Terraform does not create an access group and does not manage these
 assignments.
-
-### Remove a group created by an earlier release
-
-An earlier Terraform configuration created `DVM Viewer Users` and assigned all
-three application roles to it. Before applying the cleanup plan:
-
-1. Assign the intended existing user or group to **Dashboard Viewer** in the
-   `DVM Viewer` Enterprise Application.
-2. Assign **Data Evidence Reader** only where the evidence browser is required.
-3. Run `./infra/deploy.sh tfplan webapp` and review the saved plan.
-4. Confirm that the plan removes only the generated group, its membership, and
-   its three app-role assignments. It must retain the Enterprise Application,
-   Web App, identities, storage accounts, containers, and stored data.
-5. Run `./infra/deploy.sh tfapply webapp`.
-6. Run `./infra/deploy.sh tfverify webapp`.
-
-Assigning the intended access first avoids a period where the
-assignment-required Enterprise Application has no authorized users.
 
 ## Storage-account separation
 
@@ -195,11 +253,11 @@ The deployment helper requires
 files are ignored by Git. Store Terraform state in a secured backend that is
 separate from the protected DVM history account before production deployment.
 
-The deployment-stage values in the file are informational when using the helper:
+The wrapper supplies the cumulative deployment-stage values:
 
-- `tfplan foundation` disables the Function and Web App.
-- `tfplan function` enables the Function and keeps the Web App disabled.
-- `tfplan webapp` enables both the Function and Web App as the cumulative stage.
+- `plan foundation` disables the Function and Web App.
+- `plan function` enables the Function and keeps the Web App disabled.
+- `plan webapp` enables both the Function and Web App as the cumulative stage.
 
 `grant_deployer_history_access=true` grants the identity executing Terraform
 Storage Blob Data Contributor on the new history account. With interactive
@@ -214,15 +272,37 @@ application settings.
 
 ## Required operator permissions
 
-The person running Terraform needs permission to:
+For a collector-only installation, the identity running Terraform needs:
 
-- Create resources in the target subscription or resource group.
-- Create Azure role assignments.
-- Create a user-assigned managed identity.
-- Read the Microsoft Defender for Endpoint and Microsoft Graph enterprise
-  applications.
-- Create application-role assignments for the collector identity.
-- Create an Entra application and Enterprise Application for the dashboard.
+- **Azure RBAC:** Owner on the target subscription. The supported split is
+  Contributor plus Role Based Access Control Administrator or User Access
+  Administrator.
+- **Additional subscription scopes:** permission to create role assignments on
+  every subscription listed in `collector_subscription_reader_ids`, because
+  Terraform grants the collector Reader on those subscriptions.
+- **Microsoft Entra:** an active **Privileged Role Administrator** assignment
+  when applying the Function stage. Microsoft requires this role when granting
+  Microsoft Graph or other Microsoft first-party application permissions to a
+  managed identity.
+- Permission to read the Microsoft Defender for Endpoint and Microsoft Graph
+  enterprise applications.
+
+The same signed-in identity is used by the AzureRM and AzureAD Terraform
+providers, so it must have both the Azure RBAC and Microsoft Entra permissions
+while `apply function` runs. If Privileged Identity Management is used,
+activate the required role before planning and applying the Function stage.
+
+Terraform then grants the collector managed identity:
+
+- Microsoft Defender for Endpoint `Machine.Read.All`;
+- Microsoft Defender for Endpoint `Vulnerability.Read.All`;
+- Microsoft Defender for Endpoint `SecurityRecommendation.Read.All`;
+- Microsoft Graph `SecurityEvents.Read.All`;
+- Reader on each configured inventory subscription;
+- the Storage and monitoring roles listed under
+  [Runtime identities and permissions](#runtime-identities-and-permissions).
+
+No collector client secret, customer username, or password is created or stored.
 
 Uploading existing local history requires Storage Blob Data Contributor on the
 history account. The foundation assigns this automatically to the Terraform
@@ -231,15 +311,12 @@ Owner or Contributor alone does not automatically provide Blob data-plane
 access.
 
 The hosted collector uses its user-assigned managed identity and has no client
-secret. App Service Easy Auth requires a dashboard application credential;
-Terraform creates it and stores the sensitive value in the secured Terraform
-state and Web App application settings.
+secret.
 
-For this deployment, subscription Owner is sufficient for Azure resource and
-role-assignment operations. An equivalent split is Contributor plus User
-Access Administrator or Role Based Access Control Administrator at every scope
-where Terraform creates role assignments. That person also needs Microsoft
-Entra directory authority to create applications and service principals.
+The later Web App stage additionally requires permission to create an Entra
+application and Enterprise Application. App Service Easy Auth requires a
+dashboard application credential; Terraform creates it and stores the sensitive
+value in the secured Terraform state and Web App application settings.
 Whoever assigns dashboard users or groups needs permission to manage the
 Enterprise Application. Global Administrator is sufficient; use narrower
 authorized roles when organizational policy requires them.
@@ -269,17 +346,24 @@ that container while recommendation tracking is disabled.
 
 ## Deployment packages
 
-Terraform creates infrastructure but does not publish the Python source.
-`tfdeploy function` creates `function-source.zip` and uploads it to the existing
-Function App. `tfdeploy webapp` creates `webapp-source.zip` and uploads it to the
-existing Web App. Both packages are local build artifacts covered by
-`.gitignore`; they should not be committed or uploaded to GitHub.
+Terraform creates infrastructure but does not publish application source.
+
+`vulnerability-view-ops deploy function` builds `function-source.zip`, uploads
+it to the existing Function App with Azure CLI remote build, stamps the
+configured collector version, and synchronizes the Function triggers.
+
+`vulnerability-view-ops deploy webapp` builds `webapp-source.zip`, stamps the
+operator-managed `dashboard_version` and deployment time, uploads the package,
+and waits for Azure to report the final deployment result. The dashboard header
+shows both the release version and deployment time.
+
+Both ZIP files are ignored local build artifacts. They must not be committed.
 
 ## Resource inventory
 
 ### Stage 1: protected foundation
 
-`tfplan foundation` and `tfapply foundation` create:
+`plan foundation` and `apply foundation` create:
 
 1. One resource group.
 2. One ADLS Gen2 history storage account:
@@ -319,7 +403,7 @@ or Function runtime account.
 
 ### Stage 2: collector Function
 
-`tfplan function` and `tfapply function` retain the foundation and add:
+`plan function` and `apply function` retain the foundation and add:
 
 1. One Flex Consumption service plan using SKU `FC1`.
 2. One Linux Flex Consumption Function App:
@@ -380,7 +464,7 @@ paths are append-only. Only `current/manifest.json` is replaceable.
 
 ### Stage 3: authenticated dashboard Web App
 
-`tfplan webapp` and `tfapply webapp` retain the foundation and Function and add:
+`plan webapp` and `apply webapp` retain the foundation and Function and add:
 
 1. One Linux B1 App Service plan and Web App.
 2. One dedicated user-assigned managed identity.
@@ -389,9 +473,9 @@ paths are append-only. Only `current/manifest.json` is replaceable.
    Contributor for the dashboard identity on that container only.
 5. One single-tenant Entra app registration and Enterprise Application named
    `DVM Viewer`.
-6. `Dashboard.Viewer`, `Data.Evidence.Reader`, and the legacy
-   `Recommendation.Tracker` app roles for manual assignment. Shared local
-   workflow updates require only normal dashboard access.
+6. `Dashboard.Viewer` and `Data.Evidence.Reader` app roles for manual
+   assignment. `Recommendation.Tracker` remains defined for existing
+   assignments, but the current workflow does not require it.
 7. Assignment-required Enterprise Application access.
 8. App Service Easy Auth with unauthenticated requests redirected to Entra.
 9. Azure-backed FastAPI settings, a 300-second current-manifest refresh interval,
@@ -403,8 +487,8 @@ uses the same name. After apply, Terraform outputs
 `dashboard_entra_client_id` identify it. Manage assignments at **Microsoft
 Entra ID > Enterprise applications > DVM Viewer > Users and groups**.
 
-The proposed `app-dvmviewer-test` name was available when checked on
-2026-09-27, but global availability must be confirmed again at apply time.
+The configured Web App name must be globally available when the Web App stage
+is applied.
 Group-based Enterprise Application assignment requires the applicable
 Microsoft Entra ID licensing. If it is unavailable, assign individual users
 at the same **Users and groups** page. Terraform intentionally leaves all
@@ -416,11 +500,11 @@ expiration.
 Plan, review, apply, publish, and verify:
 
 ```bash
-./infra/deploy.sh tfplan webapp
+vulnerability-view-ops plan webapp
 terraform -chdir=infra/terraform show webapp.tfplan
-./infra/deploy.sh tfapply webapp
-./infra/deploy.sh tfdeploy webapp
-./infra/deploy.sh tfverify webapp
+vulnerability-view-ops apply webapp
+vulnerability-view-ops deploy webapp
+vulnerability-view-ops verify webapp
 ```
 
 The reviewed plan must show no deletion of the protected history account,
@@ -456,17 +540,17 @@ Confirm that the displayed subscription and tenant match
 ## Deploy the protected foundation
 
 ```bash
-./infra/deploy.sh tfplan foundation
+vulnerability-view-ops plan foundation
 terraform -chdir=infra/terraform show foundation.tfplan
-./infra/deploy.sh tfapply foundation
-./infra/deploy.sh tfverify foundation
+vulnerability-view-ops apply foundation
+vulnerability-view-ops verify foundation
 ```
 
 Review the saved plan before applying. It should create the resource group,
 history account, two protected containers, and the deployer data-role
 assignment. It must not delete or import an existing populated storage account.
 
-Azure RBAC can take several minutes to propagate. If `tfverify foundation`
+Azure RBAC can take several minutes to propagate. If `verify foundation`
 returns authorization failure immediately after apply, wait and rerun it before
 seeding or backfilling data.
 
@@ -525,10 +609,10 @@ To switch the deployed collector to live-only mode, set:
 Then apply only the Function configuration and run or await a collection:
 
 ```bash
-./infra/deploy.sh tfplan function
+vulnerability-view-ops plan function
 terraform -chdir=infra/terraform show function.tfplan
-./infra/deploy.sh tfapply function
-CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
+vulnerability-view-ops apply function
+vulnerability-view-ops invoke function --confirm
 ./infra/check-runs.sh
 ```
 
@@ -593,11 +677,11 @@ retained but is no longer referenced by the current manifest.
 ## Deploy the collector Function
 
 ```bash
-./infra/deploy.sh tfplan function
+vulnerability-view-ops plan function
 terraform -chdir=infra/terraform show function.tfplan
-./infra/deploy.sh tfapply function
-./infra/deploy.sh tfdeploy function
-./infra/deploy.sh tfverify function
+vulnerability-view-ops apply function
+vulnerability-view-ops deploy function
+vulnerability-view-ops verify function
 ```
 
 The code deployment packages `function_app.py`, `host.json`,
@@ -614,8 +698,8 @@ The timer runs automatically at the UTC `collection_schedule`. To start one
 intentional run immediately:
 
 ```bash
-CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
-./infra/deploy.sh tfverify function
+vulnerability-view-ops invoke function --confirm
+vulnerability-view-ops verify function
 ```
 
 Each scheduled or manual invocation calls `collect-live`, creates a new
@@ -640,10 +724,10 @@ This runs at minute 30 of every even UTC hour. Apply the Function
 infrastructure/settings, then launch one current run:
 
 ```bash
-./infra/deploy.sh tfplan function
+vulnerability-view-ops plan function
 terraform -chdir=infra/terraform show function.tfplan
-./infra/deploy.sh tfapply function
-CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
+vulnerability-view-ops apply function
+vulnerability-view-ops invoke function --confirm
 ```
 
 Do not invoke manually if a scheduled invocation is already running or is due
@@ -667,7 +751,7 @@ If repeated live-only runs remain comfortably below 2 GB, also restore:
 "function_instance_memory_in_mb": 2048
 ```
 
-Run `tfplan function`, review it, and run `tfapply function` again after
+Run `plan function`, review it, and run `apply function` again after
 restoring those values. Changing the schedule or instance memory does not
 delete or overwrite immutable run history.
 
@@ -704,7 +788,7 @@ Log Analytics workspace:
 
 ```bash
 az monitor log-analytics query \
-  --subscription c1f464b9-639a-4495-8118-0c6916a3ba3e \
+  --subscription "<subscription-id>" \
   --workspace "<workspace-guid>" \
   --analytics-query "AppRequests
     | where Name == 'dataprep_snapshot'
@@ -723,11 +807,11 @@ Deploy stage 3 only after the foundation, Function, and at least one verified
 current run exist:
 
 ```bash
-./infra/deploy.sh tfplan webapp
+vulnerability-view-ops plan webapp
 terraform -chdir=infra/terraform show webapp.tfplan
-./infra/deploy.sh tfapply webapp
-./infra/deploy.sh tfdeploy webapp
-./infra/deploy.sh tfverify webapp
+vulnerability-view-ops apply webapp
+vulnerability-view-ops deploy webapp
+vulnerability-view-ops verify webapp
 ```
 
 Review the cumulative plan before applying it. It must preserve:
@@ -738,10 +822,10 @@ Review the cumulative plan before applying it. It must preserve:
 - existing immutable runs;
 - the current manifest pointer.
 
-`tfapply webapp` creates or updates Web App infrastructure, managed identity,
+`apply webapp` creates or updates Web App infrastructure, managed identity,
 Microsoft Entra application objects, App Service Authentication, settings, and
 role assignments. It does not publish the Python/dashboard source.
-`tfdeploy webapp` publishes the code package and stamps a UTC UI revision.
+`deploy webapp` publishes the code package and stamps a UTC UI revision.
 
 After apply, assign authorized users or groups at:
 
@@ -754,9 +838,8 @@ Assign:
 - **Data Evidence Reader** only to users allowed to use the optional evidence
   browser.
 
-The legacy **Recommendation Tracker** role is not evaluated by the current
-workflow API. Shared recommendation status is available to authenticated
-Dashboard Viewers when tracking is enabled.
+Shared recommendation status is available to authenticated Dashboard Viewers
+when tracking is enabled.
 
 Terraform does not create an access group or decide organization membership.
 Group-based assignment requires applicable Microsoft Entra licensing; assign
@@ -764,7 +847,7 @@ individual users when group assignment is unavailable.
 
 Verify:
 
-1. `tfverify webapp` reports the expected running app and authentication
+1. `verify webapp` reports the expected running app and authentication
    redirect.
 2. An assigned user can sign in.
 3. An unassigned user cannot access the app.
@@ -795,7 +878,7 @@ The Function stage is replaceable. The helper permits removal only when the
 operator explicitly confirms it:
 
 ```bash
-CONFIRM_TF_DESTROY_FUNCTION=yes ./infra/deploy.sh tfdestroy function
+vulnerability-view-ops destroy function --confirm
 ```
 
 This removes only resources controlled by `deploy_function`. It must not remove

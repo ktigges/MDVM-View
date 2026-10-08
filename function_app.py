@@ -1,6 +1,6 @@
 """Author: Kevin Tigges
-Last modified: 2026-09-27
-Purpose: Run scheduled vulnerability data preparation as an Azure Function.
+Last modified: 2026-10-08
+Purpose: Run and identify scheduled vulnerability data preparation as an Azure Function.
 """
 
 import logging
@@ -15,6 +15,7 @@ from vulnerability_view.dataprep_cli import main
 
 
 app = func.FunctionApp()
+COLLECTOR_VERSION = os.getenv("COLLECTOR_VERSION", "not-stamped")
 
 
 def _run_dataprep() -> int:
@@ -41,7 +42,8 @@ def _run_dataprep() -> int:
 def dataprep_snapshot(timer: func.TimerRequest) -> None:
     """Handle the scheduled timer invocation for a data snapshot."""
     del timer
+    logging.info("Starting vulnerability dataprep collector version %s", COLLECTOR_VERSION)
     exit_code = _run_dataprep()
     if exit_code:
         raise RuntimeError(f"Scheduled vulnerability dataprep failed with exit code {exit_code}")
-    logging.info("Scheduled vulnerability dataprep completed")
+    logging.info("Scheduled vulnerability dataprep collector version %s completed", COLLECTOR_VERSION)
