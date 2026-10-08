@@ -196,6 +196,11 @@ STORAGE_CURRENT_CONTAINER_NAME=dvm-current
 DASHBOARD_AUTH_ENABLED=false
 ```
 
+Leave `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` empty for this normal path.
+Microsoft Entra uses “client ID” and “application ID” for the same application
+identifier, but neither value is needed here. Terraform configures the deployed
+managed identities, and the local Web App uses the current `az login` identity.
+
 Start the local Web App with the same command on Windows, macOS, or Linux:
 
 ```bash

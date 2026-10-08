@@ -114,7 +114,7 @@ These can be environment variables or keys in
 |---|---|---|---|
 | `AUTH_MODE` | `authMode` | `auto` | `auto`, `local`, `client_secret`, or `managed_identity` credential selection |
 | `AZURE_TENANT_ID` | `azureTenantId` | Empty | Entra tenant for local or explicit credentials |
-| `AZURE_CLIENT_ID` | `azureClientId` | Empty | User-assigned managed identity or local service-principal client ID |
+| `AZURE_CLIENT_ID` | `azureClientId` | Empty | Leave empty for normal deployment/local Web App use; client ID and application ID are the same Entra identifier and are needed only for explicit local client-secret mode |
 | `AZURE_CLIENT_SECRET` | None | Empty | Local-only service-principal secret; never place in tracked JSON |
 | `ALLOW_LOCAL_CLIENT_SECRET` | None | `false` | Explicit acknowledgement required for local client-secret auth |
 | `DEFENDER_API_BASE_URL` | `defenderApiBaseUrl` | `https://api.security.microsoft.com` | Defender for Endpoint API root |
@@ -125,7 +125,7 @@ These can be environment variables or keys in
 | `STORAGE_ACCOUNT_NAME` | `storageAccountName` | Empty | History storage account |
 | `STORAGE_CONTAINER_NAME` | `storageContainerName` | `dvm-history` | Immutable history container |
 | `STORAGE_CURRENT_CONTAINER_NAME` | `storageCurrentContainerName` | `dvm-current` | Current-pointer container |
-| `APP_MODE` | `appMode` | `synthetic` locally | `synthetic`, `live`, or `combined`; deployed Terraform permits live/combined |
+| `APP_MODE` | `appMode` | `live` | `live` is the default; `combined` and `synthetic` are explicit test/evaluation options, and deployed Terraform permits only live/combined |
 | `SYNTHETIC_SEED` | `syntheticSeed` | `24017` | Deterministic synthetic generator seed |
 | `SYNTHETIC_MONTHS` | `syntheticMonths` | `6` | Number of synthetic history months |
 | `SYNTHETIC_DEVICE_COUNT` | `syntheticDeviceCount` | `2500`; 1-100000 | Number of generated synthetic devices |

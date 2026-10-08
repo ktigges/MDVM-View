@@ -101,6 +101,12 @@ the collector's current live dataset from Azure Storage.
    DASHBOARD_AUTH_ENABLED=false
    ```
 
+   Leave `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` empty. “Client ID” and
+   “Application ID” refer to the same Entra application identifier, and neither
+   is required for the normal deployment/local Web App path. Terraform
+   configures the Azure managed identities, while the local Web App uses the
+   current `az login` identity.
+
 9. Run the Web App locally:
 
    ```bash

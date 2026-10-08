@@ -42,6 +42,7 @@ def test_exported_environment_overrides_dotenv(monkeypatch, tmp_path: Path):
 def test_enrichment_defaults_to_daily_targeted_with_weekly_full():
     settings = Settings()
 
+    assert settings.app_mode == "live"
     assert settings.storage_container_name == "dvm-history"
     assert settings.recommendation_enrichment_mode == "auto"
     assert settings.enable_experimental_endpoints is False
