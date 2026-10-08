@@ -509,6 +509,9 @@ Both ZIP files are local build artifacts and must not be committed.
    - HTTPS-only and TLS 1.2 minimum.
    - Shared-key access disabled.
    - Public blob access disabled.
+   - Public network endpoint enabled for the local Web App and operator
+     verification; every request still requires Microsoft Entra authentication
+     and Storage data-plane RBAC.
    - Configurable LRS, ZRS, GRS, or GZRS replication.
    - Blob and container soft delete, 30 days by default.
    - Terraform `prevent_destroy`.
@@ -555,6 +558,8 @@ or Function runtime account.
    - Used for host state and deployment packages only.
    - Shared-key access disabled.
    - Public blob access disabled.
+   - Public network endpoint enabled for Function hosting and code deployment;
+     anonymous blob access remains disabled.
    - Seven-day blob and container soft delete.
 4. One private `function-releases` container in the runtime account.
 5. One user-assigned collector managed identity attached to the Function App.

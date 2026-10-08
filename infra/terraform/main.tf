@@ -69,6 +69,7 @@ resource "azurerm_storage_account" "history" {
   access_tier                     = "Hot"
   is_hns_enabled                  = true
   allow_nested_items_to_be_public = false
+  public_network_access_enabled   = true
   shared_access_key_enabled       = false
   min_tls_version                 = "TLS1_2"
   https_traffic_only_enabled      = true
@@ -186,6 +187,7 @@ resource "azurerm_storage_account" "function_runtime" {
   account_kind                    = "StorageV2"
   access_tier                     = "Hot"
   allow_nested_items_to_be_public = false
+  public_network_access_enabled   = true
   shared_access_key_enabled       = false
   min_tls_version                 = "TLS1_2"
   https_traffic_only_enabled      = true
