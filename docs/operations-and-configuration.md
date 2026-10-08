@@ -306,19 +306,21 @@ ADLS manifests are the authoritative application-level run history. They contain
 
 The current manifest points to current findings, devices, lifecycle events, recommendations, summaries, collection status, Secure Score, and the Azure subscription inventory accessible to the collector identity. The subscription inventory includes accessible subscriptions with zero current findings so the dashboard can prove collection scope separately from vulnerability workload.
 
-Set `collector_subscription_reader_ids` to every subscription that should appear by name in the selector. During the Function Terraform stage, Terraform grants the collector managed identity **Reader** at each listed subscription scope and retains those assignments in state. A subscription not accessible to that identity cannot be listed, even when stale Defender device metadata still contains its subscription ID.
+Set `collector_management_group_id` to the management group ID. During the
+Function Terraform stage, Terraform grants the collector managed identity
+**Reader** once at that scope. The collector uses the management-group
+descendants API to inventory subscriptions in that group and nested groups,
+including subscriptions added later.
 
 ```json
-"collector_subscription_reader_ids": [
-  "00000000-0000-0000-0000-000000000001",
-  "00000000-0000-0000-0000-000000000002"
-]
+"collector_management_group_id": "customer-management-group-id"
 ```
 
 The identity running Terraform must have permission to create role assignments
-at every listed subscription scope, such as Owner or User Access Administrator.
-If organizational policy requires out-of-band RBAC management, leave the list
-empty and have an authorized operator grant each assignment explicitly:
+at the management-group scope, such as Owner, Role Based Access Control
+Administrator, or User Access Administrator. If organizational policy requires
+out-of-band RBAC management, leave the value empty and have an authorized
+operator grant the assignment explicitly:
 
 ```bash
 COLLECTOR_PRINCIPAL_ID="$(cd infra/terraform && terraform output -raw collector_identity_principal_id)"
@@ -326,10 +328,13 @@ az role assignment create \
   --assignee-object-id "$COLLECTOR_PRINCIPAL_ID" \
   --assignee-principal-type ServicePrincipal \
   --role Reader \
-  --scope /subscriptions/<subscription-id>
+  --scope /providers/Microsoft.Management/managementGroups/<management-group-id>
 ```
 
-With either method, deploy the updated collector and run a new collection. Historical bundles remain unchanged; the new run publishes `subscriptions.json.gz` and updates `current/manifest.json` only after successful validation.
+With either method, set `AZURE_MANAGEMENT_GROUP_ID` for the Function, deploy the
+updated collector, and run a new collection. Historical bundles remain
+unchanged; the new run publishes `subscriptions.json.gz` and updates
+`current/manifest.json` only after successful validation.
 
 ### Function platform telemetry
 

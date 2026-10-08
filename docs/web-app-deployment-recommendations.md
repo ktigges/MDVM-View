@@ -709,9 +709,9 @@ For every scenario, enter:
 
 1. Keep the protected storage account and retained history unchanged.
 2. Deploy the updated collector package.
-3. Set `collector_subscription_reader_ids` and let the Function Terraform stage
-   grant the collector identity Reader on every subscription that should
-   appear in the named subscription inventory.
+3. Set `collector_management_group_id` and let the Function Terraform stage
+   grant the collector identity Reader once on the management group whose
+   nested subscriptions should appear in the inventory.
 4. Run and validate a new immutable collection.
 5. Confirm `subscriptions.json.gz` and the other curated datasets are present
    in the completed manifest.

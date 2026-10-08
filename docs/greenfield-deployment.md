@@ -33,6 +33,7 @@ Only example files belong in the source repository.
 |---|---|
 | `subscription_id` | Azure subscription GUID that will own the environment |
 | `tenant_id` | Microsoft Entra tenant GUID containing Defender |
+| `collector_management_group_id` | Management group ID containing the subscriptions to inventory; use the ID, not the display name or full resource path |
 | `resource_group_name` | New resource group name |
 | `location` | Region supported by Azure Functions Flex Consumption |
 | `history_storage_account_name` | Globally unique name for protected ADLS Gen2 history |
@@ -53,11 +54,18 @@ characters. The Function App name must be globally unique.
 
 All supplied example resource names use `dvmviewer` as the product prefix.
 
+For **Tenant Root Group**, use the Microsoft Entra tenant GUID as
+`collector_management_group_id`. The matching values for `tenant_id` and
+`collector_management_group_id` are expected because Azure uses the tenant GUID
+as the root management-group ID.
+
 ## Required operator permissions
 
 The person running Terraform needs permission to:
 
 - Create resources and Azure role assignments in the subscription.
+- Create the collector Reader assignment at the configured management-group
+  scope.
 - Create Microsoft Entra application-role assignments.
 - Read the WindowsDefenderATP and Microsoft Graph enterprise applications.
 - Grant the managed identity these application permissions:

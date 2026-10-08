@@ -220,9 +220,19 @@ resource "azurerm_user_assigned_identity" "collector" {
 }
 
 resource "azurerm_role_assignment" "collector_subscription_reader" {
-  for_each = var.deploy_function ? var.collector_subscription_reader_ids : toset([])
+  for_each = var.deploy_function && var.collector_management_group_id == "" ? var.collector_subscription_reader_ids : toset([])
 
   scope                            = "/subscriptions/${each.value}"
+  role_definition_name             = "Reader"
+  principal_id                     = azurerm_user_assigned_identity.collector["collector"].principal_id
+  principal_type                   = "ServicePrincipal"
+  skip_service_principal_aad_check = true
+}
+
+resource "azurerm_role_assignment" "collector_management_group_reader" {
+  count = var.deploy_function && var.collector_management_group_id != "" ? 1 : 0
+
+  scope                            = "/providers/Microsoft.Management/managementGroups/${var.collector_management_group_id}"
   role_definition_name             = "Reader"
   principal_id                     = azurerm_user_assigned_identity.collector["collector"].principal_id
   principal_type                   = "ServicePrincipal"
@@ -351,6 +361,7 @@ resource "azurerm_function_app_flex_consumption" "collector" {
     "APP_MODE"                         = var.app_mode
     "AUTH_MODE"                        = "managed_identity"
     "AZURE_CLIENT_ID"                  = azurerm_user_assigned_identity.collector[each.key].client_id
+    "AZURE_MANAGEMENT_GROUP_ID"        = var.collector_management_group_id
     "AzureWebJobsFeatureFlags"         = "EnableWorkerIndexing"
     "COLLECTOR_VERSION"                = var.function_version
     "AzureWebJobsStorage__accountName" = azurerm_storage_account.function_runtime[each.key].name
@@ -384,6 +395,8 @@ resource "azurerm_function_app_flex_consumption" "collector" {
     azurerm_role_assignment.runtime_queue_contributor,
     azurerm_role_assignment.runtime_table_contributor,
     azurerm_role_assignment.history_blob_contributor,
+    azurerm_role_assignment.collector_subscription_reader,
+    azurerm_role_assignment.collector_management_group_reader,
   ]
 }
 

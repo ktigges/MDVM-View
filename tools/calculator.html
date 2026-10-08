@@ -260,7 +260,7 @@
           if(tierOption)document.getElementById("appServiceTier").value=tierOption.value;
           messages.push(`Region ${profile.location||"not set"}`,`${profile.function_instance_memory_in_mb||"?"} MiB Function`,profile.collection_schedule||"schedule not set",`${replication||"?"} history`,`${sku||"?"} Web App`);
           messages.push(`APP_MODE=${profile.app_mode||"?"}`,`immutability ${profile.history_immutability_days??"?"} days`,`soft delete ${profile.storage_soft_delete_days??"?"} days`);
-          messages.push(`tracking ${profile.dashboard_recommendation_tracking_enabled?"enabled":"disabled"}`,`${(profile.collector_subscription_reader_ids||[]).length} subscription Reader scope(s)`);
+          messages.push(`tracking ${profile.dashboard_recommendation_tracking_enabled?"enabled":"disabled"}`,profile.collector_management_group_id?`management group ${profile.collector_management_group_id}`:`${(profile.collector_subscription_reader_ids||[]).length} compatibility subscription Reader scope(s)`);
           document.getElementById("profileStatus").textContent=`Loaded ${file.name}: ${messages.join(" · ")}. Stage flags are helper defaults overridden by tfplan; choose instance counts for the deployed stage. Naming, tags, identities, RBAC, auth registration, containers, cache, and feature switches have no separate meter.`;
           calculate();
         }catch(error){

@@ -127,7 +127,7 @@ Until then the dashboard correctly continues serving the prior complete run.
 |---|---|
 | Upload returns 403 | Grant Storage Blob Data Contributor to the collector or authorized local publisher at the history-account scope. |
 | Dashboard Azure mode returns 503 | Confirm the current manifest exists and the reader identity has Storage Blob Data Reader. |
-| Subscription selector omits a subscription | Add its ID to `collector_subscription_reader_ids` and grant the collector Reader at that subscription scope. |
+| Subscription selector omits a subscription | Confirm it is nested under `collector_management_group_id`, the collector has inherited Reader, and the next collection completed after the subscription was added. |
 | Old history remains after switching to live mode | Expected. The current pointer changes; immutable prior synthetic or combined runs remain retained. |
 | 365-day immutability did not purge data | Expected. Immutability is a minimum no-change period, not expiration or automatic deletion. |
 
@@ -248,7 +248,7 @@ The collector uses these source endpoints:
 | Defender | `GET https://api.security.microsoft.com/api/recommendations` | Required; `SecurityRecommendation.Read.All` |
 | Defender | `GET https://api.security.microsoft.com/api/recommendations/<recommendation-id>/machineReferences` | Optional relationship enrichment; `SecurityRecommendation.Read.All` |
 | Microsoft Graph | `GET https://graph.microsoft.com/v1.0/security/secureScores?$top=1` | Optional; `SecurityEvents.Read.All` |
-| Azure Resource Manager | `GET https://management.azure.com/subscriptions?api-version=2022-12-01` | Optional; Reader on each subscription that should appear |
+| Azure Resource Manager | `GET .../providers/Microsoft.Management/managementGroups/<id>/descendants?api-version=2020-05-01` | Optional; Reader on the configured management group |
 | Defender compatibility probe | `GET https://api.security.microsoft.com/api/remediationTasks` | Experimental, disabled by default |
 | Defender compatibility probe | `GET https://api.security.microsoft.com/api/machines/SoftwareVulnerabilityChangesByMachine` | Experimental, disabled by default |
 

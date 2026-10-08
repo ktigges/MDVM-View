@@ -265,11 +265,13 @@ The person running Terraform needs permission to create applications and
 service principals, in addition to Azure permission to create the Web App and
 its storage role assignments.
 
-Populate `collector_subscription_reader_ids` with every Azure subscription
-that should appear in the dashboard selector. The Function Terraform stage
-then grants its managed identity Reader at those subscription scopes. This is
-separate from the Web App's storage-reader role. The Terraform deployer needs
-role-assignment permission in every listed subscription.
+Set `collector_management_group_id` to the management group ID, not its display
+name or full resource path. The Function Terraform stage grants its managed
+identity Reader once at that management-group scope. The collector then
+inventories every nested subscription, including subscriptions added below the
+management group later. This is separate from the Web App's storage-reader
+role. The Terraform deployer needs permission to create role assignments at the
+management-group scope.
 
 The browser must not receive storage account keys, SAS tokens, or direct access to the private history container.
 

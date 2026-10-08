@@ -3,6 +3,7 @@ import json
 import requests
 
 from vulnerability_view.azure_subscription_client import (
+    ARM_MANAGEMENT_GROUP_DESCENDANTS_URL,
     ARM_SCOPE,
     ARM_SUBSCRIPTIONS_URL,
     collect_azure_subscriptions,
@@ -69,3 +70,38 @@ def test_collect_azure_subscriptions_follows_next_link(monkeypatch):
 
     assert [row["subscriptionId"] for row in rows] == ["subscription-1", "subscription-2"]
     assert status["PageCount"] == 2
+
+
+def test_collect_azure_subscriptions_uses_management_group_descendants(monkeypatch):
+    response = requests.Response()
+    response.status_code = 200
+    response._content = json.dumps({
+        "value": [
+            {
+                "type": "Microsoft.Management/managementGroups",
+                "name": "nested-group",
+                "properties": {"displayName": "Nested"},
+            },
+            {
+                "type": "Microsoft.Management/managementGroups/subscriptions",
+                "name": "subscription-1",
+                "properties": {"displayName": "Production"},
+            },
+        ],
+    }).encode()
+
+    def fake_get(url, headers, timeout):
+        assert url == ARM_MANAGEMENT_GROUP_DESCENDANTS_URL.format(management_group_id="customer-group")
+        return response
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    rows, status = collect_azure_subscriptions(Credential(), management_group_id="customer-group")
+
+    assert rows == [{
+        "subscriptionId": "subscription-1",
+        "displayName": "Production",
+        "state": "",
+        "tenantId": "",
+    }]
+    assert status["RowCount"] == 1

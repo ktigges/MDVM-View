@@ -83,10 +83,25 @@ history storage and scheduled collection Function. The Web App runs on the
 developer workstation and reads the latest successfully published live dataset
 from Azure Storage.
 
+Option 1 deploys the same protected foundation and the same collector Function
+used by option 2. These are not temporary or separate resources. Moving from
+option 1 to option 2 later only adds the hosted Web App stage.
+
 The local Web App does not call Defender directly. The deployed Function calls
 Defender and Graph using its managed identity, publishes an immutable run, and
 updates `current/manifest.json`. The local Web App reads that manifest and the
 curated files it references.
+
+Set `collector_management_group_id` to the management group ID. Terraform
+grants the collector Reader once at that scope, and the collector inventories
+subscriptions under that group and its nested groups. Subscriptions added below
+the management group are included by later collections without updating a
+subscription list. The separate `subscription_id` value still identifies the
+subscription where the Vulnerability View Azure resources are deployed.
+
+When the scope is **Tenant Root Group**, use the Microsoft Entra tenant GUID as
+`collector_management_group_id`. Azure uses the tenant GUID as the root
+management-group ID. Do not use the display name `Tenant Root Group`.
 
 The workstation requires:
 
@@ -95,6 +110,7 @@ The workstation requires:
 - Python 3.12 and a separate virtual environment on each workstation;
 - Git;
 - globally unique Azure resource names;
+- the management group ID containing the subscriptions to inventory;
 - Azure and Microsoft Entra permissions described in
   [Required operator permissions](DEPLOY.md#required-operator-permissions).
 

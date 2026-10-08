@@ -74,7 +74,7 @@ az account show \
 ```
 
 The tenant and subscription must match `tenant_id` and `subscription_id` in the
-ignored `terraform/main.tfvars.json`.
+environment-specific `terraform/main.tfvars.json`.
 
 `az account set --subscription ...` selects a subscription for the current login.
 It does not change the signed-in user or tenant.
@@ -154,6 +154,10 @@ The Terraform stages are cumulative:
    runtime storage, schedule, and monitoring;
 3. `webapp` — foundation and Function plus the authenticated dashboard.
 
+The Function stage grants its managed identity Reader once at
+`collector_management_group_id`. The collector then inventories subscriptions
+under that management group and nested management groups.
+
 Once the Web App exists, use `tfplan webapp` for later infrastructure changes so
 the saved plan preserves all deployed stages. The helper blocks lower-stage plans
 when they would omit a known higher stage.
@@ -195,8 +199,8 @@ It does not apply the plan. Review it:
 terraform -chdir=infra/terraform show function.tfplan
 ```
 
-Saved plans can contain environment-specific information. They are ignored and
-must not be committed.
+Saved plans can contain environment-specific information and must not be
+committed.
 
 ## `tfapply`
 
@@ -223,7 +227,7 @@ Terraform outputs for the resource group and Function App.
 
 The command:
 
-1. Reads `function_version` from the ignored `main.tfvars.json`.
+1. Reads `function_version` from `main.tfvars.json`.
 2. Uses `FUNCTION_VERSION` as a one-command override when supplied.
 3. Falls back to the Git tag/commit when no configured version exists.
 4. Creates temporary build metadata with version, UTC time, and Git commit.

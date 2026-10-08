@@ -5,7 +5,7 @@ from vulnerability_view.config import Settings
 
 ENVIRONMENT_KEYS = (
     "AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "DEFENDER_API_BASE_URL",
-    "AZURE_SUBSCRIPTION_ID", "AZURE_RESOURCE_GROUP", "AZURE_LOCATION", "STORAGE_ACCOUNT_NAME",
+    "AZURE_SUBSCRIPTION_ID", "AZURE_MANAGEMENT_GROUP_ID", "AZURE_RESOURCE_GROUP", "AZURE_LOCATION", "STORAGE_ACCOUNT_NAME",
     "STORAGE_CONTAINER_NAME", "STORAGE_CURRENT_CONTAINER_NAME", "APP_MODE", "SYNTHETIC_SEED", "SYNTHETIC_MONTHS", "SYNTHETIC_DEVICE_COUNT",
     "RECOMMENDATION_ENRICHMENT_MODE", "ENABLE_EXPERIMENTAL_ENDPOINTS", "FULL_ENRICHMENT_WEEKDAY", "DASHBOARD_DATA_SOURCE", "DASHBOARD_STATIC_DIR", "DASHBOARD_CACHE_SECONDS",
     "DASHBOARD_AUTH_ENABLED",
@@ -64,6 +64,14 @@ def test_synthetic_device_count_can_be_configured(monkeypatch, tmp_path: Path):
     settings = Settings.load(env_path=tmp_path / ".env")
 
     assert settings.synthetic_device_count == 3200
+
+
+def test_management_group_id_can_be_configured(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("AZURE_MANAGEMENT_GROUP_ID", "customer-group")
+
+    settings = Settings.load(env_path=tmp_path / ".env")
+
+    assert settings.management_group_id == "customer-group"
 
 
 def test_experimental_endpoints_require_explicit_opt_in(monkeypatch, tmp_path: Path):

@@ -44,7 +44,15 @@ the collector's current live dataset from Azure Storage.
    ```
 
 3. Copy `infra/terraform/main.tfvars.example.json` to the environment-specific
-   `infra/terraform/main.tfvars.json` and replace every example value.
+   `infra/terraform/main.tfvars.json` and replace every example value. Set
+   `collector_management_group_id` to the management group ID, not its display
+   name or full resource path. `subscription_id` still identifies the
+   subscription where Terraform creates the application resources.
+
+   For **Tenant Root Group**, the management-group ID is the Microsoft Entra
+   tenant GUID. In that case, `tenant_id` and
+   `collector_management_group_id` contain the same GUID. Do not enter the
+   display name `Tenant Root Group`.
 
 4. Confirm that the deployment identity has the
    [required operator permissions](#required-operator-permissions), then sign
@@ -316,9 +324,10 @@ For a collector-only installation, the identity running Terraform needs:
 - **Azure RBAC:** Owner on the target subscription. The supported split is
   Contributor plus Role Based Access Control Administrator or User Access
   Administrator.
-- **Additional subscription scopes:** permission to create role assignments on
-  every subscription listed in `collector_subscription_reader_ids`, because
-  Terraform grants the collector Reader on those subscriptions.
+- **Management group scope:** Owner, Role Based Access Control Administrator,
+  or User Access Administrator on the management group configured in
+  `collector_management_group_id`, because Terraform grants the collector
+  Reader once at that scope.
 - **Microsoft Entra:** an active **Privileged Role Administrator** assignment
   when applying the Function stage. Microsoft requires this role when granting
   Microsoft Graph or other Microsoft first-party application permissions to a
@@ -337,7 +346,8 @@ Terraform then grants the collector managed identity:
 - Microsoft Defender for Endpoint `Vulnerability.Read.All`;
 - Microsoft Defender for Endpoint `SecurityRecommendation.Read.All`;
 - Microsoft Graph `SecurityEvents.Read.All`;
-- Reader on each configured inventory subscription;
+- Reader on the configured management group, inherited by all nested
+  subscriptions;
 - the Storage and monitoring roles listed under
   [Runtime identities and permissions](#runtime-identities-and-permissions).
 
@@ -368,7 +378,7 @@ managed identities:
 
 | Identity | Permission | Scope and purpose |
 |---|---|---|
-| Collector | Reader | Each subscription in `collector_subscription_reader_ids`; reads subscription inventory only |
+| Collector | Reader | Management group in `collector_management_group_id`; inventories all nested subscriptions, including subscriptions added later |
 | Collector | `Machine.Read.All`, `Vulnerability.Read.All`, `SecurityRecommendation.Read.All` | Microsoft Defender for Endpoint application access |
 | Collector | `SecurityEvents.Read.All` | Microsoft Graph Secure Score application access |
 | Collector | Storage Blob Data Contributor | Protected history account; appends runs and advances only the current manifest pointer |

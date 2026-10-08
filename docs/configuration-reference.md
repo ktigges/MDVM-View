@@ -47,7 +47,8 @@ Environment values: `infra/terraform/main.tfvars.json`
 |---|---|---|
 | `subscription_id` | Required Azure subscription GUID | Subscription containing the deployment resource group |
 | `tenant_id` | Required Entra tenant GUID | Tenant containing Defender, managed identities, and dashboard authentication |
-| `collector_subscription_reader_ids` | `[]`; set of subscription GUIDs | Grants the collector Reader so subscription inventory includes subscriptions with zero findings |
+| `collector_management_group_id` | Empty; management group ID | Grants the collector Reader once at the management-group scope and inventories all nested subscriptions |
+| `collector_subscription_reader_ids` | `[]`; set of subscription GUIDs | Compatibility fallback used only when `collector_management_group_id` is empty |
 | `resource_group_name` | Required | Resource group containing application infrastructure |
 | `location` | Required | Azure region; must support Functions Flex Consumption |
 | `project_name` | `dvmviewer` | Naming component for monitoring and Azure resources |
@@ -81,6 +82,11 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `dashboard_cache_seconds` | `300`; zero or greater | Per-process cache lifetime for verified current Azure datasets |
 | `tags` | Application/environment/managed-by map | Tags merged onto Azure resources |
 
+For **Tenant Root Group**, set `collector_management_group_id` to the Microsoft
+Entra tenant GUID. Azure uses that GUID as the root management-group ID, so it
+is expected for `tenant_id` and `collector_management_group_id` to match. Do
+not use the display name `Tenant Root Group` or the full resource path.
+
 `tfplan webapp` is cumulative: it preserves and plans the Function and Web App.
 Terraform plan output normally displays only differences. A setting absent from
 a no-op plan may already match Azure.
@@ -113,6 +119,7 @@ These can be environment variables or keys in
 | `ALLOW_LOCAL_CLIENT_SECRET` | None | `false` | Explicit acknowledgement required for local client-secret auth |
 | `DEFENDER_API_BASE_URL` | `defenderApiBaseUrl` | `https://api.security.microsoft.com` | Defender for Endpoint API root |
 | `AZURE_SUBSCRIPTION_ID` | `azureSubscriptionId` | Empty | Local Azure subscription context and diagnostic-script override |
+| `AZURE_MANAGEMENT_GROUP_ID` | `azureManagementGroupId` | Empty | Management group whose nested subscriptions are collected |
 | `AZURE_RESOURCE_GROUP` | `azureResourceGroup` | Empty | Local Azure resource-group context and diagnostic-script override |
 | `AZURE_LOCATION` | `azureLocation` | `eastus` | Local Azure location metadata |
 | `STORAGE_ACCOUNT_NAME` | `storageAccountName` | Empty | History storage account |

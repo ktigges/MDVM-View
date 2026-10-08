@@ -44,13 +44,24 @@ variable "dashboard_version" {
 }
 
 variable "collector_subscription_reader_ids" {
-  description = "Azure subscription IDs where Terraform grants the collector managed identity Reader so the named subscription inventory includes subscriptions with zero findings."
+  description = "Compatibility fallback subscription IDs where Terraform grants Reader when collector_management_group_id is empty."
   type        = set(string)
   default     = []
 
   validation {
     condition     = alltrue([for subscription_id in var.collector_subscription_reader_ids : can(regex("^[0-9a-fA-F-]{36}$", subscription_id))])
     error_message = "Every collector_subscription_reader_ids value must be an Azure subscription GUID."
+  }
+}
+
+variable "collector_management_group_id" {
+  description = "Management group ID where Terraform grants the collector Reader so all nested subscriptions are included in inventory."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.collector_management_group_id == "" || can(regex("^[A-Za-z0-9._()-]{1,90}$", var.collector_management_group_id))
+    error_message = "collector_management_group_id must be the management group ID, not its display name or full resource path."
   }
 }
 

@@ -500,14 +500,21 @@ def test_raw_snapshot_replay(tmp_path):
             json.dump({"value": rows}, handle)
     with gzip.open(run_folder / "recommendation_machines--va-_-vendor-_-product-page-0001.json.gz", "wt", encoding="utf-8") as handle:
         json.dump({"value": [{"id": "device-1", "computerDnsName": "device", "osPlatform": "Windows11", "rbacGroupName": "Endpoints"}]}, handle)
+    with gzip.open(run_folder / "azure_subscriptions-page-0001.json.gz", "wt", encoding="utf-8") as handle:
+        json.dump({"value": [{
+            "type": "Microsoft.Management/managementGroups/subscriptions",
+            "name": "subscription-1",
+            "properties": {"displayName": "Production"},
+        }]}, handle)
     data, statuses = replay_raw_snapshot(run_folder)
     assert len(data["findings"]) == 1
     assert data["findings"][0]["Severity"] == "Unknown"
     assert data["recommendationMachines"][0]["RecommendationId"] == "va-_-vendor-_-product"
     assert data["recommendationMachines"][0]["DeviceId"] == "device-1"
+    assert data["subscriptions"][0]["SubscriptionName"] == "Production"
     statuses_by_endpoint = {status["Endpoint"]: status for status in statuses}
     assert statuses_by_endpoint["secure_scores"]["Status"] == "OptionalUnavailable"
-    assert statuses_by_endpoint["azure_subscriptions"]["Status"] == "OptionalUnavailable"
+    assert statuses_by_endpoint["azure_subscriptions"]["Status"] == "Success"
 
 
 def test_raw_snapshot_replay_can_allow_missing_required_pages(tmp_path):
