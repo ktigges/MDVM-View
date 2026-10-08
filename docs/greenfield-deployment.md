@@ -14,7 +14,7 @@ assignment, and recovery boundaries is the
 [Local evaluation and datasets](local-evaluation.md) only when they need the
 separate local-only development path.
 
-The `vulnerability-view-ops` commands keep Terraform planning, application,
+The `python -m vulnerability_view.operations_cli` commands keep Terraform planning, application,
 deployment, and verification as separate explicit operations.
 
 ## Values to set
@@ -107,10 +107,10 @@ window. WORM expiration does not delete history, and this deployment does not
 configure a lifecycle deletion rule.
 
 ```bash
-vulnerability-view-ops plan foundation
-terraform -chdir=infra/terraform show foundation.tfplan
-vulnerability-view-ops apply foundation
-vulnerability-view-ops verify foundation
+python -m vulnerability_view.operations_cli plan foundation
+python -m vulnerability_view.operations_cli show foundation
+python -m vulnerability_view.operations_cli apply foundation
+python -m vulnerability_view.operations_cli verify foundation
 ```
 
 Review the plan before applying. It should contain creates only.
@@ -123,11 +123,11 @@ assignment propagation can take several minutes.
 Change `deploy_function` to `true`, then run:
 
 ```bash
-vulnerability-view-ops plan function
-terraform -chdir=infra/terraform show function.tfplan
-vulnerability-view-ops apply function
-vulnerability-view-ops deploy function
-vulnerability-view-ops verify function
+python -m vulnerability_view.operations_cli plan function
+python -m vulnerability_view.operations_cli show function
+python -m vulnerability_view.operations_cli apply function
+python -m vulnerability_view.operations_cli deploy function
+python -m vulnerability_view.operations_cli verify function
 ```
 
 This creates the Flex Consumption plan, separate runtime storage, collector
@@ -150,7 +150,7 @@ label.
 | Option | Use | Operation |
 |---|---|---|
 | Scheduled timer | Normal unattended collection | The Function runs at the UTC `collection_schedule`; the default is daily at 05:00 UTC. |
-| Guarded one-shot run | Initial validation, recovery from a missed schedule, or an intentional out-of-band snapshot | Run `vulnerability-view-ops invoke function --confirm`. |
+| Guarded one-shot run | Initial validation, recovery from a missed schedule, or an intentional out-of-band snapshot | Run `python -m vulnerability_view.operations_cli invoke function --confirm`. |
 | Schedule change | Change the recurring cadence | Update `collection_schedule`, run and review `tfplan function`, then run `tfapply function`. A code-package deployment is not required for only an application-setting change. |
 
 The one-shot helper invokes the existing timer function through the Azure
@@ -186,11 +186,11 @@ Microsoft Entra ID licensing. If it is unavailable, assign individual users
 the `Dashboard.Viewer` role.
 
 ```bash
-vulnerability-view-ops plan webapp
-terraform -chdir=infra/terraform show webapp.tfplan
-vulnerability-view-ops apply webapp
-vulnerability-view-ops deploy webapp
-vulnerability-view-ops verify webapp
+python -m vulnerability_view.operations_cli plan webapp
+python -m vulnerability_view.operations_cli show webapp
+python -m vulnerability_view.operations_cli apply webapp
+python -m vulnerability_view.operations_cli deploy webapp
+python -m vulnerability_view.operations_cli verify webapp
 ```
 
 After apply, Terraform outputs
@@ -219,15 +219,15 @@ App setting together, leaving a one-year renewal margin.
 Check Defender access locally before invoking a collection:
 
 ```bash
-vulnerability-view-ops preflight
+python -m vulnerability_view.operations_cli preflight
 ```
 
 This tests the signed-in developer identity. The deployed managed identity is
 tested by invoking the timer workload:
 
 ```bash
-vulnerability-view-ops invoke function --confirm
-vulnerability-view-ops verify function
+python -m vulnerability_view.operations_cli invoke function --confirm
+python -m vulnerability_view.operations_cli verify function
 ```
 
 The confirmation is required because invocation writes a new immutable live
@@ -255,7 +255,7 @@ The helper can remove only the Function stage. It cannot target protected
 history storage or the foundation resource group.
 
 ```bash
-vulnerability-view-ops destroy function --confirm
+python -m vulnerability_view.operations_cli destroy function --confirm
 ```
 
 Review the displayed destroy plan before Terraform asks for final approval.

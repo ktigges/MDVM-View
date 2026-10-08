@@ -105,7 +105,8 @@ management-group ID. Do not use the display name `Tenant Root Group`.
 
 The workstation requires:
 
-- Terraform 1.10 or newer;
+- Terraform 1.10 or newer, either on `PATH` or as `terraform.exe` in the
+  repository root on Windows;
 - Azure CLI authenticated to the target tenant and subscription;
 - Python 3.12 and a separate virtual environment on each workstation;
 - Git;
@@ -113,6 +114,11 @@ The workstation requires:
 - the management group ID containing the subscriptions to inventory;
 - Azure and Microsoft Entra permissions described in
   [Required operator permissions](DEPLOY.md#required-operator-permissions).
+
+Windows customers who do not want to change `PATH` can extract the official
+Terraform Windows ZIP and place `terraform.exe` beside this `README.md`. The
+operations CLI checks that exact local file before checking `PATH`. The binary
+is excluded by `.gitignore` and must not be committed.
 
 This deployment uses local Terraform state at
 `infra/terraform/terraform.tfstate` on the deployment workstation. Protect and
@@ -159,6 +165,15 @@ Install the project:
 ```bash
 python -m pip install -e '.[dev]'
 ```
+
+Run deployment operations as
+`python -m vulnerability_view.operations_cli <command>`. This form works on
+Windows, macOS, and Linux and does not depend on the shell finding a generated
+`vulnerability-view-ops.exe` launcher.
+
+If the Windows virtual environment is not activated, use
+`.\.venv\Scripts\python.exe -m vulnerability_view.operations_cli <command>`
+instead.
 
 Before signing in, planning, or deploying, copy `.env.example` to `.env` and
 set:
@@ -216,16 +231,16 @@ az account show --query "{name:name,id:id,tenantId:tenantId}" --output table
 Deploy only the foundation and Function stages:
 
 ```bash
-vulnerability-view-ops plan foundation
-terraform -chdir=infra/terraform show foundation.tfplan
-vulnerability-view-ops apply foundation
-vulnerability-view-ops verify foundation
+python -m vulnerability_view.operations_cli plan foundation
+python -m vulnerability_view.operations_cli show foundation
+python -m vulnerability_view.operations_cli apply foundation
+python -m vulnerability_view.operations_cli verify foundation
 
-vulnerability-view-ops plan function
-terraform -chdir=infra/terraform show function.tfplan
-vulnerability-view-ops apply function
-vulnerability-view-ops deploy function
-vulnerability-view-ops verify function
+python -m vulnerability_view.operations_cli plan function
+python -m vulnerability_view.operations_cli show function
+python -m vulnerability_view.operations_cli apply function
+python -m vulnerability_view.operations_cli deploy function
+python -m vulnerability_view.operations_cli verify function
 ```
 
 Review each Terraform plan before applying it. Leave
@@ -238,17 +253,17 @@ itself is not enough.
 After Terraform apply, the three Storage values can also be confirmed with:
 
 ```bash
-terraform -chdir=infra/terraform output -raw history_storage_account_name
-terraform -chdir=infra/terraform output -raw history_container_name
-terraform -chdir=infra/terraform output -raw current_container_name
+python -m vulnerability_view.operations_cli output history_storage_account_name
+python -m vulnerability_view.operations_cli output history_container_name
+python -m vulnerability_view.operations_cli output current_container_name
 ```
 
 Publish the first live dataset by waiting for the configured schedule or
 invoking the collector:
 
 ```bash
-vulnerability-view-ops invoke function --confirm
-vulnerability-view-ops check-runs --limit 5 --progress
+python -m vulnerability_view.operations_cli invoke function --confirm
+python -m vulnerability_view.operations_cli check-runs --limit 5 --progress
 ```
 
 The confirmation is required because the invocation creates a new immutable
@@ -303,11 +318,11 @@ After completing the foundation and Function steps from option 1, add the Web
 App stage:
 
 ```bash
-vulnerability-view-ops plan webapp
-terraform -chdir=infra/terraform show webapp.tfplan
-vulnerability-view-ops apply webapp
-vulnerability-view-ops deploy webapp
-vulnerability-view-ops verify webapp
+python -m vulnerability_view.operations_cli plan webapp
+python -m vulnerability_view.operations_cli show webapp
+python -m vulnerability_view.operations_cli apply webapp
+python -m vulnerability_view.operations_cli deploy webapp
+python -m vulnerability_view.operations_cli verify webapp
 ```
 
 The `webapp` Terraform stage is cumulative: it preserves the existing

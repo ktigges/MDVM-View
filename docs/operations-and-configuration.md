@@ -52,7 +52,7 @@ Use the highest already-deployed cumulative stage:
 
 ```bash
 ./infra/deploy.sh tfplan webapp
-terraform -chdir=infra/terraform show webapp.tfplan
+python -m vulnerability_view.operations_cli show webapp
 ./infra/deploy.sh tfapply webapp
 ```
 

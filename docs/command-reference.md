@@ -9,15 +9,15 @@ Run commands from the repository root unless a section says otherwise.
 
 | Need | Command |
 |---|---|
-| See whether the collector is active | `vulnerability-view-ops check-function-logs --hours 1 --limit 3 --status-only` |
-| Show active progress plus published runs | `vulnerability-view-ops check-runs --limit 5 --progress` |
-| Inspect recent invocation requests | `vulnerability-view-ops check-function-logs --hours 24 --limit 10` |
-| List completed immutable runs | `vulnerability-view-ops check-runs --limit 10` |
-| Deploy Function code only | `vulnerability-view-ops deploy function` |
-| Deploy Web App code only | `vulnerability-view-ops deploy webapp` |
-| Verify deployed Function | `vulnerability-view-ops verify function` |
-| Verify deployed Web App | `vulnerability-view-ops verify webapp` |
-| Manually start a collection | `vulnerability-view-ops invoke function --confirm` |
+| See whether the collector is active | `python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 3 --status-only` |
+| Show active progress plus published runs | `python -m vulnerability_view.operations_cli check-runs --limit 5 --progress` |
+| Inspect recent invocation requests | `python -m vulnerability_view.operations_cli check-function-logs --hours 24 --limit 10` |
+| List completed immutable runs | `python -m vulnerability_view.operations_cli check-runs --limit 10` |
+| Deploy Function code only | `python -m vulnerability_view.operations_cli deploy function` |
+| Deploy Web App code only | `python -m vulnerability_view.operations_cli deploy webapp` |
+| Verify deployed Function | `python -m vulnerability_view.operations_cli verify function` |
+| Verify deployed Web App | `python -m vulnerability_view.operations_cli verify webapp` |
+| Manually start a collection | `python -m vulnerability_view.operations_cli invoke function --confirm` |
 | Start the local dashboard | `./start-app.sh` |
 | Check effective non-secret application configuration | `vulnerability-view show-config` |
 | Validate local generated datasets | `vulnerability-view validate` |
@@ -185,15 +185,15 @@ infrastructure setting change so Terraform preserves the cumulative deployment.
 
 ```bash
 ./infra/deploy.sh tfplan foundation
-terraform -chdir=infra/terraform show foundation.tfplan
+python -m vulnerability_view.operations_cli show foundation
 ./infra/deploy.sh tfapply foundation
 
 ./infra/deploy.sh tfplan function
-terraform -chdir=infra/terraform show function.tfplan
+python -m vulnerability_view.operations_cli show function
 ./infra/deploy.sh tfapply function
 
 ./infra/deploy.sh tfplan webapp
-terraform -chdir=infra/terraform show webapp.tfplan
+python -m vulnerability_view.operations_cli show webapp
 ./infra/deploy.sh tfapply webapp
 ```
 
@@ -301,11 +301,11 @@ All three diagnostic forms are read-only.
 
 ```bash
 terraform -chdir=infra/terraform validate
-terraform -chdir=infra/terraform output
-terraform -chdir=infra/terraform output -raw function_app_name
-terraform -chdir=infra/terraform output -raw web_app_name
-terraform -chdir=infra/terraform output -raw history_storage_account_name
-terraform -chdir=infra/terraform show webapp.tfplan
+python -m vulnerability_view.operations_cli output
+python -m vulnerability_view.operations_cli output function_app_name
+python -m vulnerability_view.operations_cli output web_app_name
+python -m vulnerability_view.operations_cli output history_storage_account_name
+python -m vulnerability_view.operations_cli show webapp
 ```
 
 Use `validate` after Terraform edits, `output` to retrieve deployed names, and
@@ -344,7 +344,7 @@ git diff --check
 
 ```bash
 ./infra/deploy.sh tfplan webapp
-terraform -chdir=infra/terraform show webapp.tfplan
+python -m vulnerability_view.operations_cli show webapp
 ./infra/deploy.sh tfapply webapp
 ./infra/deploy.sh tfdeploy function
 ./infra/deploy.sh tfverify function
@@ -374,13 +374,13 @@ After `python -m pip install -e ".[dev]"`, these commands use identical syntax i
 Windows PowerShell, macOS, and Linux:
 
 ```text
-vulnerability-view-ops deploy function
-vulnerability-view-ops verify function
-vulnerability-view-ops deploy webapp
-vulnerability-view-ops verify webapp
-vulnerability-view-ops check-runs --limit 10 --progress
-vulnerability-view-ops check-function-logs --hours 1 --limit 10 --status-only
-vulnerability-view-ops invoke function --confirm
+python -m vulnerability_view.operations_cli deploy function
+python -m vulnerability_view.operations_cli verify function
+python -m vulnerability_view.operations_cli deploy webapp
+python -m vulnerability_view.operations_cli verify webapp
+python -m vulnerability_view.operations_cli check-runs --limit 10 --progress
+python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 10 --status-only
+python -m vulnerability_view.operations_cli invoke function --confirm
 ```
 
 See [Infrastructure operations](../infra/README.md) for command internals,

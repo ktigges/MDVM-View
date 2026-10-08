@@ -3,7 +3,8 @@
 > **Last modified:** 2026-10-08
 > **Purpose:** Provide identical Windows, macOS, and Linux operations while explaining what the legacy `infra/deploy.sh` wrapper does, which tools and identities are used, and when to plan, apply, package, verify, invoke, or remove an application stage.
 
-The supported platform-neutral interface is `vulnerability-view-ops`. The Bash
+The supported platform-neutral interface is
+`python -m vulnerability_view.operations_cli`. The Bash
 scripts remain available for compatibility. Use the repository-level
 [Azure deployment guide](../DEPLOY.md) for the complete greenfield procedure and
 permissions model.
@@ -13,15 +14,15 @@ permissions model.
 The same commands work in Windows PowerShell, macOS, and Linux:
 
 ```text
-vulnerability-view-ops plan foundation
-vulnerability-view-ops apply foundation
-vulnerability-view-ops deploy function
-vulnerability-view-ops verify function
-vulnerability-view-ops deploy webapp
-vulnerability-view-ops verify webapp
-vulnerability-view-ops check-runs --limit 10 --progress
-vulnerability-view-ops check-function-logs --hours 1 --limit 10 --status-only
-vulnerability-view-ops invoke function --confirm
+python -m vulnerability_view.operations_cli plan foundation
+python -m vulnerability_view.operations_cli apply foundation
+python -m vulnerability_view.operations_cli deploy function
+python -m vulnerability_view.operations_cli verify function
+python -m vulnerability_view.operations_cli deploy webapp
+python -m vulnerability_view.operations_cli verify webapp
+python -m vulnerability_view.operations_cli check-runs --limit 10 --progress
+python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 10 --status-only
+python -m vulnerability_view.operations_cli invoke function --confirm
 ```
 
 Install or refresh the editable project once after pulling CLI changes:
@@ -55,7 +56,7 @@ The legacy equivalents remain:
 ./infra/check-function-logs.sh 1 10 --status-only
 ```
 
-On native Windows, use `vulnerability-view-ops`; the `.sh` scripts require WSL or
+On native Windows, use `python -m vulnerability_view.operations_cli`; the `.sh` scripts require WSL or
 another Bash environment.
 
 ## Identity model
@@ -112,7 +113,7 @@ Run commands from the repository root. The script expects:
 |---|---|
 | Python 3.12+ | Cross-platform orchestration, ZIP creation, HTTP, JSON, and time handling |
 | `az` | Azure package deployment, verification, keys, settings, and invocation |
-| Terraform 1.10+ | Infrastructure initialization, plan, apply, output, and validation |
+| Terraform 1.10+ | Infrastructure initialization, plan, apply, output, and validation; on Windows it may be on `PATH` or saved as repository-root `terraform.exe` |
 | `git` | Function commit metadata and fallback release version |
 | `.venv/` | Status and Defender preflight commands |
 | `terraform/main.tfvars.json` | Ignored environment names, IDs, settings, and Function version |
@@ -125,6 +126,12 @@ migration are not part of this deployment documentation.
 
 Do not commit `main.tfvars.json`, Terraform state, saved plans, packages, or local
 operator notes.
+
+On Windows, the operations CLI first checks for `terraform.exe` in the
+repository root and then checks `PATH`. This allows a customer to use an
+approved standalone Terraform executable without changing the system or user
+`PATH`. Keep the executable at the repository root, not in `infra/terraform/`;
+it is excluded from Git.
 
 ## What the script calls
 
@@ -182,7 +189,7 @@ when they would omit a known higher stage.
 Example:
 
 ```bash
-vulnerability-view-ops plan function
+python -m vulnerability_view.operations_cli plan function
 ```
 
 The command calls:
@@ -196,7 +203,7 @@ terraform plan -input=false -var-file=main.tfvars.json ... -out=function.tfplan
 It does not apply the plan. Review it:
 
 ```bash
-terraform -chdir=infra/terraform show function.tfplan
+python -m vulnerability_view.operations_cli show function
 ```
 
 Saved plans can contain environment-specific information and must not be
@@ -207,7 +214,7 @@ committed.
 Example:
 
 ```bash
-vulnerability-view-ops apply function
+python -m vulnerability_view.operations_cli apply function
 ```
 
 The command refuses to continue unless the matching saved plan exists. It applies
@@ -219,7 +226,7 @@ after planning, create and review a new plan.
 Example:
 
 ```bash
-vulnerability-view-ops deploy function
+python -m vulnerability_view.operations_cli deploy function
 ```
 
 This is a code-package update. It does not run Terraform. It requires existing
@@ -248,7 +255,7 @@ timer is due; a manual run requires `tfinvoke function`.
 Example:
 
 ```bash
-vulnerability-view-ops deploy webapp
+python -m vulnerability_view.operations_cli deploy webapp
 ```
 
 This is also a code-package update and does not run Terraform. It reads
@@ -293,13 +300,13 @@ verify the deployed Function separately.
 First confirm that no run is active:
 
 ```bash
-vulnerability-view-ops check-runs --limit 5 --progress
+python -m vulnerability_view.operations_cli check-runs --limit 5 --progress
 ```
 
 Then explicitly acknowledge that the invocation writes a new immutable run:
 
 ```bash
-vulnerability-view-ops invoke function --confirm
+python -m vulnerability_view.operations_cli invoke function --confirm
 ```
 
 The script retrieves the Function host key using the current Azure CLI identity and
@@ -313,7 +320,7 @@ Never invoke when status is `ACTIVE` or `INDETERMINATE`.
 This is not part of normal deployment or code updates. It requires:
 
 ```bash
-vulnerability-view-ops destroy function --confirm
+python -m vulnerability_view.operations_cli destroy function --confirm
 ```
 
 The command targets replaceable Function resources only, displays its destruction
@@ -326,22 +333,22 @@ to delete retained Azure Storage data.
 ### Initial deployment
 
 ```bash
-vulnerability-view-ops plan foundation
-terraform -chdir=infra/terraform show foundation.tfplan
-vulnerability-view-ops apply foundation
-vulnerability-view-ops verify foundation
+python -m vulnerability_view.operations_cli plan foundation
+python -m vulnerability_view.operations_cli show foundation
+python -m vulnerability_view.operations_cli apply foundation
+python -m vulnerability_view.operations_cli verify foundation
 
-vulnerability-view-ops plan function
-terraform -chdir=infra/terraform show function.tfplan
-vulnerability-view-ops apply function
-vulnerability-view-ops deploy function
-vulnerability-view-ops verify function
+python -m vulnerability_view.operations_cli plan function
+python -m vulnerability_view.operations_cli show function
+python -m vulnerability_view.operations_cli apply function
+python -m vulnerability_view.operations_cli deploy function
+python -m vulnerability_view.operations_cli verify function
 
-vulnerability-view-ops plan webapp
-terraform -chdir=infra/terraform show webapp.tfplan
-vulnerability-view-ops apply webapp
-vulnerability-view-ops deploy webapp
-vulnerability-view-ops verify webapp
+python -m vulnerability_view.operations_cli plan webapp
+python -m vulnerability_view.operations_cli show webapp
+python -m vulnerability_view.operations_cli apply webapp
+python -m vulnerability_view.operations_cli deploy webapp
+python -m vulnerability_view.operations_cli verify webapp
 ```
 
 ### Function code only
@@ -349,23 +356,23 @@ vulnerability-view-ops verify webapp
 Update `function_version` in `terraform/main.tfvars.json`, then:
 
 ```bash
-vulnerability-view-ops deploy function
-vulnerability-view-ops verify function
+python -m vulnerability_view.operations_cli deploy function
+python -m vulnerability_view.operations_cli verify function
 ```
 
 ### Dashboard code only
 
 ```bash
-vulnerability-view-ops deploy webapp
-vulnerability-view-ops verify webapp
+python -m vulnerability_view.operations_cli deploy webapp
+python -m vulnerability_view.operations_cli verify webapp
 ```
 
 ### Infrastructure change after the Web App exists
 
 ```bash
-vulnerability-view-ops plan webapp
-terraform -chdir=infra/terraform show webapp.tfplan
-vulnerability-view-ops apply webapp
+python -m vulnerability_view.operations_cli plan webapp
+python -m vulnerability_view.operations_cli show webapp
+python -m vulnerability_view.operations_cli apply webapp
 ```
 
 Deploy code afterward only when application code or its package changed.

@@ -43,6 +43,15 @@ the collector's current live dataset from Azure Storage.
    python -m pip install -e '.[dev]'
    ```
 
+   Run deployment operations as
+   `python -m vulnerability_view.operations_cli <command>`. This form works on
+   Windows, macOS, and Linux and does not depend on the shell finding a
+   generated `vulnerability-view-ops.exe` launcher.
+
+   If the Windows virtual environment is not activated, use
+   `.\.venv\Scripts\python.exe -m vulnerability_view.operations_cli <command>`
+   instead.
+
 3. Copy `infra/terraform/main.tfvars.example.json` to the environment-specific
    `infra/terraform/main.tfvars.json` and replace every example value. Set
    `collector_management_group_id` to the management group ID, not its display
@@ -102,9 +111,9 @@ the collector's current live dataset from Azure Storage.
    After Terraform apply, confirm the Storage values with:
 
    ```bash
-   terraform -chdir=infra/terraform output -raw history_storage_account_name
-   terraform -chdir=infra/terraform output -raw history_container_name
-   terraform -chdir=infra/terraform output -raw current_container_name
+   python -m vulnerability_view.operations_cli output history_storage_account_name
+   python -m vulnerability_view.operations_cli output history_container_name
+   python -m vulnerability_view.operations_cli output current_container_name
    ```
 
    See the [complete runtime setting reference](docs/configuration-reference.md#4-collector-and-dashboard-runtime-settings)
@@ -123,20 +132,20 @@ the collector's current live dataset from Azure Storage.
 6. Create the protected storage foundation:
 
    ```bash
-   vulnerability-view-ops plan foundation
-   terraform -chdir=infra/terraform show foundation.tfplan
-   vulnerability-view-ops apply foundation
-   vulnerability-view-ops verify foundation
+   python -m vulnerability_view.operations_cli plan foundation
+   python -m vulnerability_view.operations_cli show foundation
+   python -m vulnerability_view.operations_cli apply foundation
+   python -m vulnerability_view.operations_cli verify foundation
    ```
 
 7. Create and publish the collector:
 
    ```bash
-   vulnerability-view-ops plan function
-   terraform -chdir=infra/terraform show function.tfplan
-   vulnerability-view-ops apply function
-   vulnerability-view-ops deploy function
-   vulnerability-view-ops verify function
+   python -m vulnerability_view.operations_cli plan function
+   python -m vulnerability_view.operations_cli show function
+   python -m vulnerability_view.operations_cli apply function
+   python -m vulnerability_view.operations_cli deploy function
+   python -m vulnerability_view.operations_cli verify function
    ```
 
    The shared foundation and collector are now complete. Step 8 publishes the
@@ -145,8 +154,8 @@ the collector's current live dataset from Azure Storage.
 8. Wait for the configured schedule, or create the first immutable run now:
 
    ```bash
-   vulnerability-view-ops invoke function --confirm
-   vulnerability-view-ops check-runs --limit 5 --progress
+   python -m vulnerability_view.operations_cli invoke function --confirm
+   python -m vulnerability_view.operations_cli check-runs --limit 5 --progress
    ```
 
    To use the local Web App, continue with step 9. To host the Web App in Azure,
@@ -193,12 +202,20 @@ and Web App together.
 
 The deployment workstation needs:
 
-- Terraform 1.10 or newer;
+- Terraform 1.10 or newer, either on `PATH` or as `terraform.exe` in the
+  repository root on Windows;
 - Azure CLI authenticated to the target tenant and subscription;
 - Python 3.12 and the project virtual environment;
 - Git;
 - outbound access required by Terraform providers, Azure CLI, package restore,
   and code deployment.
+
+For Windows without a `PATH` change, download the official Terraform Windows
+ZIP, verify it according to the customer's software-installation policy, and
+extract `terraform.exe` into the repository root beside `README.md`. Do not put
+it in `infra/terraform/`. The operations CLI checks the repository-local
+executable before checking `PATH`, and `.gitignore` prevents the binary from
+being committed.
 
 Terraform stores state locally at `infra/terraform/terraform.tfstate` on the
 deployment workstation. Protect and retain that file because it records the
@@ -224,8 +241,9 @@ py -3.12 -m venv .venv
 python -m pip install -e '.[dev]'
 ```
 
-Windows PowerShell, macOS, and Linux use the same `vulnerability-view-ops`
-commands documented in [Infrastructure operations](infra/README.md).
+Windows PowerShell, macOS, and Linux use the same
+`python -m vulnerability_view.operations_cli` commands documented in
+[Infrastructure operations](infra/README.md).
 
 Use Python 3.12 for customer deployment. Terraform configures both the Azure
 Function and Linux Web App runtimes for Python 3.12. The project metadata
@@ -235,7 +253,7 @@ passes the test suite with dependency deprecation warnings.
 
 ## What the deployment commands do
 
-`vulnerability-view-ops` runs the Terraform, Azure CLI, packaging, and
+`python -m vulnerability_view.operations_cli` runs the Terraform, Azure CLI, packaging, and
 verification steps for you. The deployment remains separated into operations
 so you can review infrastructure changes before applying them:
 
@@ -245,7 +263,7 @@ plan infrastructure -> review saved Terraform plan -> apply reviewed plan
 ```
 
 You do **not** need to run `terraform init` manually before a `plan` command.
-Every `vulnerability-view-ops plan <stage>` invocation automatically runs:
+Every `python -m vulnerability_view.operations_cli plan <stage>` invocation automatically runs:
 
 1. `terraform init -input=false`
 2. `terraform validate`
@@ -256,9 +274,9 @@ infrastructure, and `apply` never creates or refreshes a plan. Review and
 apply the exact saved plan:
 
 ```bash
-vulnerability-view-ops plan webapp
-terraform -chdir=infra/terraform show webapp.tfplan
-vulnerability-view-ops apply webapp
+python -m vulnerability_view.operations_cli plan webapp
+python -m vulnerability_view.operations_cli show webapp
+python -m vulnerability_view.operations_cli apply webapp
 ```
 
 `deploy` is a code-package operation. It does not run Terraform `init`, `plan`,
@@ -267,8 +285,8 @@ Terraform outputs to already exist. For a dashboard code-only update to an
 existing Web App, use:
 
 ```bash
-vulnerability-view-ops deploy webapp
-vulnerability-view-ops verify webapp
+python -m vulnerability_view.operations_cli deploy webapp
+python -m vulnerability_view.operations_cli verify webapp
 ```
 
 Use `deploy function` and `deploy webapp` independently. Updating one application
@@ -290,7 +308,7 @@ Use this table to choose the smallest operation that matches the change:
 | A fresh Defender snapshot is needed immediately | `invoke function --confirm`, then `verify function` | This is the collection |
 
 All abbreviated commands in this table are subcommands of
-`vulnerability-view-ops`.
+`python -m vulnerability_view.operations_cli`.
 
 All Terraform stages are cumulative. Once the Web App exists, use the `webapp`
 stage for later infrastructure plans so Terraform preserves the foundation,
@@ -449,11 +467,11 @@ that container while recommendation tracking is disabled.
 
 Terraform creates infrastructure but does not publish application source.
 
-`vulnerability-view-ops deploy function` builds `function-source.zip`, uploads
+`python -m vulnerability_view.operations_cli deploy function` builds `function-source.zip`, uploads
 it to the existing Function App with Azure CLI remote build, stamps the
 configured collector version, and synchronizes the Function triggers.
 
-`vulnerability-view-ops deploy webapp` builds `webapp-source.zip`, stamps the
+`python -m vulnerability_view.operations_cli deploy webapp` builds `webapp-source.zip`, stamps the
 operator-managed `dashboard_version` and deployment time, uploads the package,
 and waits for Azure to report the final deployment result. The dashboard header
 shows both the release version and deployment time.
@@ -601,11 +619,11 @@ expiration.
 Plan, review, apply, publish, and verify:
 
 ```bash
-vulnerability-view-ops plan webapp
-terraform -chdir=infra/terraform show webapp.tfplan
-vulnerability-view-ops apply webapp
-vulnerability-view-ops deploy webapp
-vulnerability-view-ops verify webapp
+python -m vulnerability_view.operations_cli plan webapp
+python -m vulnerability_view.operations_cli show webapp
+python -m vulnerability_view.operations_cli apply webapp
+python -m vulnerability_view.operations_cli deploy webapp
+python -m vulnerability_view.operations_cli verify webapp
 ```
 
 The reviewed plan must show no deletion of the protected history account,
@@ -641,10 +659,10 @@ Confirm that the displayed subscription and tenant match
 ## Deploy the protected foundation
 
 ```bash
-vulnerability-view-ops plan foundation
-terraform -chdir=infra/terraform show foundation.tfplan
-vulnerability-view-ops apply foundation
-vulnerability-view-ops verify foundation
+python -m vulnerability_view.operations_cli plan foundation
+python -m vulnerability_view.operations_cli show foundation
+python -m vulnerability_view.operations_cli apply foundation
+python -m vulnerability_view.operations_cli verify foundation
 ```
 
 Review the saved plan before applying. It should create the resource group,
@@ -710,10 +728,10 @@ To switch the deployed collector to live-only mode, set:
 Then apply only the Function configuration and run or await a collection:
 
 ```bash
-vulnerability-view-ops plan function
-terraform -chdir=infra/terraform show function.tfplan
-vulnerability-view-ops apply function
-vulnerability-view-ops invoke function --confirm
+python -m vulnerability_view.operations_cli plan function
+python -m vulnerability_view.operations_cli show function
+python -m vulnerability_view.operations_cli apply function
+python -m vulnerability_view.operations_cli invoke function --confirm
 ./infra/check-runs.sh
 ```
 
@@ -778,11 +796,11 @@ retained but is no longer referenced by the current manifest.
 ## Deploy the collector Function
 
 ```bash
-vulnerability-view-ops plan function
-terraform -chdir=infra/terraform show function.tfplan
-vulnerability-view-ops apply function
-vulnerability-view-ops deploy function
-vulnerability-view-ops verify function
+python -m vulnerability_view.operations_cli plan function
+python -m vulnerability_view.operations_cli show function
+python -m vulnerability_view.operations_cli apply function
+python -m vulnerability_view.operations_cli deploy function
+python -m vulnerability_view.operations_cli verify function
 ```
 
 The code deployment packages `function_app.py`, `host.json`,
@@ -799,8 +817,8 @@ The timer runs automatically at the UTC `collection_schedule`. To start one
 intentional run immediately:
 
 ```bash
-vulnerability-view-ops invoke function --confirm
-vulnerability-view-ops verify function
+python -m vulnerability_view.operations_cli invoke function --confirm
+python -m vulnerability_view.operations_cli verify function
 ```
 
 Each scheduled or manual invocation calls `collect-live`, creates a new
@@ -825,10 +843,10 @@ This runs at minute 30 of every even UTC hour. Apply the Function
 infrastructure/settings, then launch one current run:
 
 ```bash
-vulnerability-view-ops plan function
-terraform -chdir=infra/terraform show function.tfplan
-vulnerability-view-ops apply function
-vulnerability-view-ops invoke function --confirm
+python -m vulnerability_view.operations_cli plan function
+python -m vulnerability_view.operations_cli show function
+python -m vulnerability_view.operations_cli apply function
+python -m vulnerability_view.operations_cli invoke function --confirm
 ```
 
 Do not invoke manually if a scheduled invocation is already running or is due
@@ -908,11 +926,11 @@ Deploy stage 3 only after the foundation, Function, and at least one verified
 current run exist:
 
 ```bash
-vulnerability-view-ops plan webapp
-terraform -chdir=infra/terraform show webapp.tfplan
-vulnerability-view-ops apply webapp
-vulnerability-view-ops deploy webapp
-vulnerability-view-ops verify webapp
+python -m vulnerability_view.operations_cli plan webapp
+python -m vulnerability_view.operations_cli show webapp
+python -m vulnerability_view.operations_cli apply webapp
+python -m vulnerability_view.operations_cli deploy webapp
+python -m vulnerability_view.operations_cli verify webapp
 ```
 
 Review the cumulative plan before applying it. It must preserve:
@@ -963,14 +981,14 @@ old, inspect Function status and run history separately.
 ## Useful Terraform outputs
 
 ```bash
-terraform -chdir=infra/terraform output
-terraform -chdir=infra/terraform output -raw history_storage_account_name
-terraform -chdir=infra/terraform output -raw function_runtime_storage_account_name
-terraform -chdir=infra/terraform output -raw function_app_name
-terraform -chdir=infra/terraform output -raw collector_identity_client_id
-terraform -chdir=infra/terraform output -raw collector_identity_principal_id
-terraform -chdir=infra/terraform output -raw dashboard_enterprise_application_object_id
-terraform -chdir=infra/terraform output -raw dashboard_entra_client_id
+python -m vulnerability_view.operations_cli output
+python -m vulnerability_view.operations_cli output history_storage_account_name
+python -m vulnerability_view.operations_cli output function_runtime_storage_account_name
+python -m vulnerability_view.operations_cli output function_app_name
+python -m vulnerability_view.operations_cli output collector_identity_client_id
+python -m vulnerability_view.operations_cli output collector_identity_principal_id
+python -m vulnerability_view.operations_cli output dashboard_enterprise_application_object_id
+python -m vulnerability_view.operations_cli output dashboard_entra_client_id
 ```
 
 ## Safe replacement and teardown boundary
@@ -979,7 +997,7 @@ The Function stage is replaceable. The helper permits removal only when the
 operator explicitly confirms it:
 
 ```bash
-vulnerability-view-ops destroy function --confirm
+python -m vulnerability_view.operations_cli destroy function --confirm
 ```
 
 This removes only resources controlled by `deploy_function`. It must not remove

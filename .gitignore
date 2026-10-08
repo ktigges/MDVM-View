@@ -13,6 +13,7 @@ htmlcov/
 .vscode/
 .idea/
 .azure/
+/terraform.exe
 .DS_Store
 local.settings.json
 LOCAL-NOTES.txt

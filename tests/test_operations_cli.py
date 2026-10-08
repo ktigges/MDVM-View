@@ -12,8 +12,23 @@ from vulnerability_view import operations_cli
 
 def test_parser_exposes_identical_cross_platform_commands():
     assert operations_cli.build_parser().parse_args(["deploy", "function"]).stage == "function"
+    assert operations_cli.build_parser().parse_args(["show", "foundation"]).stage == "foundation"
+    assert operations_cli.build_parser().parse_args(["output", "function_app_name"]).name == "function_app_name"
     assert operations_cli.build_parser().parse_args(["check-runs", "--limit", "5", "--progress"]).progress is True
     assert operations_cli.build_parser().parse_args(["invoke", "function", "--confirm"]).confirm is True
+
+
+def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):
+    terraform = tmp_path / "terraform.exe"
+    terraform.write_bytes(b"local terraform")
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        operations_cli.shutil,
+        "which",
+        lambda command: (_ for _ in ()).throw(AssertionError(f"PATH lookup should not run for {command}")),
+    )
+
+    assert operations_cli._require("terraform") == str(terraform)
 
 
 def test_function_version_prefers_override_then_values(monkeypatch):
