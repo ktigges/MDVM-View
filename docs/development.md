@@ -87,7 +87,7 @@ gh repo create <repository-name> --private --source=. --remote=origin --push
 
 Create the repository as private first unless public release has completed its
 legal, licensing, security, and organizational reviews. Do not use `git add -f`
-to override an ignored file containing deployment-specific data.
+to force environment-specific values or generated data into source control.
 
 ## Cleanup boundary
 

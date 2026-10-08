@@ -40,7 +40,7 @@ cp .env.example .env
 | `python3.12 -m venv .venv` | Create the project virtual environment |
 | `source .venv/bin/activate` | Activate it in the current shell |
 | `python -m pip install -e '.[dev]'` | Install runtime dependencies, CLI, and tests |
-| `cp .env.example .env` | Create ignored local runtime configuration; never commit secrets |
+| `cp .env.example .env` | Create local runtime environment variables; never commit secrets |
 
 Azure CLI sign-in:
 

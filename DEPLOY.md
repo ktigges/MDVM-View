@@ -6,11 +6,6 @@
 The deployment is staged so retained DVM history stays independent of
 replaceable application infrastructure.
 
-Before deploying, complete
-[Local evaluation before Azure deployment](docs/local-evaluation.md) to verify
-data access, dashboard behavior, SLA assumptions, collection duration, memory,
-and approximate run size without creating Azure resources.
-
 For the complete inventory of Terraform inputs, runtime environment variables,
 JSON keys, generated Azure App Settings, SLA controls, presentation settings,
 and script overrides, see
@@ -22,10 +17,11 @@ For the command-by-command internals, tool dependencies, Azure CLI identity
 behavior, Terraform boundaries, and package contents of `infra/deploy.sh`, see
 [Infrastructure and deploy.sh reference](infra/README.md).
 
-## Collector-only customer quick start
+## Collector and local Web App customer quick start
 
 This installs protected history storage and the collection Function. It does
-not deploy the dashboard Web App.
+not deploy the dashboard Web App to Azure. The Web App runs locally and reads
+the collector's current live dataset from Azure Storage.
 
 1. Clone the repository and enter its directory:
 
@@ -42,7 +38,7 @@ not deploy the dashboard Web App.
    python -m pip install -e '.[dev]'
    ```
 
-3. Copy `infra/terraform/main.tfvars.example.json` to the ignored
+3. Copy `infra/terraform/main.tfvars.example.json` to the environment-specific
    `infra/terraform/main.tfvars.json` and replace every example value.
 
 4. Confirm that the deployment identity has the
@@ -80,6 +76,27 @@ not deploy the dashboard Web App.
    vulnerability-view-ops invoke function --confirm
    vulnerability-view-ops check-runs --limit 5 --progress
    ```
+
+8. Copy `.env.example` to `.env` and set these environment variables:
+
+   ```dotenv
+   AUTH_MODE=auto
+   DASHBOARD_DATA_SOURCE=azure
+   STORAGE_ACCOUNT_NAME=<history-storage-account>
+   STORAGE_CONTAINER_NAME=dvm-history
+   STORAGE_CURRENT_CONTAINER_NAME=dvm-current
+   DASHBOARD_AUTH_ENABLED=false
+   ```
+
+9. Run the Web App locally:
+
+   ```bash
+   python -m uvicorn vulnerability_view.dashboard_server:app --app-dir src --host 127.0.0.1 --port 8000 --reload --reload-dir src --reload-dir dashboard
+   ```
+
+   Open <http://127.0.0.1:8000>. The local Web App uses the current Azure CLI
+   credential to read the current manifest and curated data from Azure Storage.
+   The deployed collector continues to use its own managed identity.
 
 Stop here for a collector-only installation. Do not run the `webapp` stage.
 The operator supplies the Terraform values and an authorized Azure CLI login;
@@ -249,8 +266,8 @@ cp infra/terraform/main.tfvars.example.json infra/terraform/main.tfvars.json
 ```
 
 The deployment helper requires
-`infra/terraform/main.tfvars.json`. Terraform variable files, plans, and state
-files are ignored by Git. Store Terraform state in a secured backend that is
+`infra/terraform/main.tfvars.json`. Keep environment values, plans, and state
+files out of source control. Store Terraform state in a secured backend that is
 separate from the protected DVM history account before production deployment.
 
 The wrapper supplies the cumulative deployment-stage values:
@@ -357,7 +374,7 @@ operator-managed `dashboard_version` and deployment time, uploads the package,
 and waits for Azure to report the final deployment result. The dashboard header
 shows both the release version and deployment time.
 
-Both ZIP files are ignored local build artifacts. They must not be committed.
+Both ZIP files are local build artifacts and must not be committed.
 
 ## Resource inventory
 

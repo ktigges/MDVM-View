@@ -11,10 +11,11 @@ Use this document as the concise operator checklist. The canonical explanation
 of requirements, permissions, resource behavior, package deployment, dashboard
 assignment, and recovery boundaries is the
 [Azure deployment guide](../DEPLOY.md). New evaluators should complete
-[Local evaluation](local-evaluation.md) first.
+[Local evaluation and datasets](local-evaluation.md) only when they need the
+separate local-only development path.
 
-The command names intentionally start with `tf` so Terraform infrastructure
-operations are easy to distinguish from application CLI commands.
+The `vulnerability-view-ops` commands keep Terraform planning, application,
+deployment, and verification as separate explicit operations.
 
 ## Values to set
 
@@ -25,8 +26,8 @@ local variable file from the tracked example, then replace every sample value:
 cp infra/terraform/main.tfvars.example.json infra/terraform/main.tfvars.json
 ```
 
-`main.tfvars.json`, `*.tfvars`, and `*.auto.tfvars*` are ignored. Only example
-files belong in the source repository.
+Keep `main.tfvars.json`, `*.tfvars`, and `*.auto.tfvars*` out of source control.
+Only example files belong in the source repository.
 
 | Value | What to provide |
 |---|---|
@@ -228,7 +229,7 @@ The Azure portal's timer **Test/Run** operation reaches the same administrative
 invocation surface, but the repository helper is preferred because it makes the
 write confirmation explicit and avoids manually handling the host key.
 
-For normal development, point the local dashboard at the new account:
+For normal development, point the locally running Web App at the new account:
 
 ```dotenv
 DASHBOARD_DATA_SOURCE=azure

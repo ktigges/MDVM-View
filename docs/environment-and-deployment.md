@@ -70,7 +70,7 @@ AZURE_CLIENT_ID=<local-collector-application-id>
 AZURE_CLIENT_SECRET=<local-secret>
 ```
 
-Grant that app registration the required Defender application permissions and Microsoft Graph `SecurityEvents.Read.All`, then grant tenant admin consent. Store the secret only in ignored `.env` or `local.settings.json`. Azure-hosted execution rejects this mode and uses managed identity.
+Grant that app registration the required Defender application permissions and Microsoft Graph `SecurityEvents.Read.All`, then grant tenant admin consent. Store the secret only in local environment variables such as `.env` or `local.settings.json`, and keep those values out of source control. Azure-hosted execution rejects this mode and uses managed identity.
 
 Check access before downloading a full snapshot:
 
@@ -117,7 +117,7 @@ The first command tests processing without network calls. The second uses the lo
 
 Azure Functions Core Tools v4 and Azurite are prerequisites. They are not currently installed in this development environment.
 
-1. Copy `local.settings.example.json` to the ignored `local.settings.json` file.
+1. Copy `local.settings.example.json` to `local.settings.json`.
 2. Replace the tenant and development history-account placeholders.
 3. Authenticate the developer identity in a separate terminal.
 4. Start Azurite for `AzureWebJobsStorage=UseDevelopmentStorage=true`.

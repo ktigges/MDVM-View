@@ -8,29 +8,32 @@ shortest start paths.
 
 ## Recommended reading order
 
-### 1. Evaluate locally
+### 1. Install the collector and run the Web App locally
 
-Start here before creating Azure resources:
+Use one canonical full guide and one shorter checklist:
 
-1. [Local evaluation before Azure deployment](local-evaluation.md)
+1. [Collector and local Web App customer quick start](../DEPLOY.md#collector-and-local-web-app-customer-quick-start)
+   — protected storage, collector Function, managed identity, and local Web App
+   connection
+2. [Greenfield Azure deployment](greenfield-deployment.md) — concise
+   three-stage operator checklist
+3. [Azure deployment guide](../DEPLOY.md) — complete requirements,
+   permissions, protected storage, Function, optional hosted Web App, data
+   collection, and teardown boundaries
+4. [Environment and deployment design](environment-and-deployment.md) —
+   design decisions, environment separation, and production-readiness gates
+5. [Publishing and Azure cost options](web-app-deployment-recommendations.md) —
+   hosting alternatives, scale, availability, networking, monitoring, and cost
+
+### 2. Local evaluation and local datasets
+
+Use this separate path when working without the deployed Azure collector:
+
+1. [Local evaluation and local datasets](local-evaluation.md)
 2. [Collect and replay a sample](sample-replay.md), when a snapshot must be
    reproduced in another local environment
 3. [Development, demonstration, and source control](development.md), when
    changing or presenting the UI
-
-### 2. Install in Azure
-
-Use one canonical full guide and one shorter checklist:
-
-1. [Azure deployment guide](../DEPLOY.md) — complete requirements,
-   permissions, protected storage, Function, Web App, data collection, and
-   teardown boundaries
-2. [Greenfield Azure deployment](greenfield-deployment.md) — concise
-   three-stage operator checklist
-3. [Environment and deployment design](environment-and-deployment.md) —
-   design decisions, environment separation, and production-readiness gates
-4. [Publishing and Azure cost options](web-app-deployment-recommendations.md) —
-   hosting alternatives, scale, availability, networking, monitoring, and cost
 
 ### 3. Operate
 

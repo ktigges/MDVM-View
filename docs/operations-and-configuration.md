@@ -100,7 +100,7 @@ Environment variables override values loaded from `.env`. When the Functions hos
 | `ALLOW_LOCAL_CLIENT_SECRET` | `false` | Must be `true` with client-secret mode | Must be `true` with client-secret mode | Forbidden | Explicit acknowledgement of local-only secret use |
 | `AZURE_TENANT_ID` | Empty | Required with client-secret mode | Required with client-secret mode | Optional metadata | Tenant for the local app registration |
 | `AZURE_CLIENT_ID` | Empty | Required with client-secret mode | Required with client-secret mode | Required for a user-assigned identity | Application or managed-identity client identifier; it is not a secret |
-| `AZURE_CLIENT_SECRET` | Empty | Required with client-secret mode | Required with client-secret mode | Forbidden | Local app-registration secret; store only in ignored local configuration |
+| `AZURE_CLIENT_SECRET` | Empty | Required with client-secret mode | Required with client-secret mode | Forbidden | Local app-registration secret; store only in local environment variables and keep it out of source control |
 | `DEFENDER_API_BASE_URL` | `https://api.security.microsoft.com` | Required for live collection | Required | Required | Defender API request host |
 | `STORAGE_ACCOUNT_NAME` | Empty | Empty for isolated work; account name for integration tests | Development history account | Production history account | Enables durable history reads and writes |
 | `STORAGE_CONTAINER_NAME` | `dvm-history` | Optional override | Set explicitly | Set explicitly | Immutable raw, curated, policy, and run history |
@@ -356,4 +356,4 @@ Add one low-cost Azure read of the current manifest:
 vulnerability-view status --azure
 ```
 
-The report never prints credential values. It reports whether a legacy secret is present but ignored.
+The report never prints credential values. It reports whether a legacy secret is present but not used.

@@ -1,8 +1,5 @@
 # Vulnerability View
 
-> **Last modified:** 2026-10-08
-> **Purpose:** Start in the right place and map the repository to evaluate, install, operate, troubleshoot, and understand Vulnerability View.
-
 Vulnerability View is a read-only collection and dashboard application for
 Microsoft Defender Vulnerability Management. It correlates findings,
 recommendations, devices, Secure Score, remediation activity, lifecycle state,
@@ -12,32 +9,6 @@ application-owned Azure Storage.
 It does not change Defender data, perform remediation, or send dashboard state
 back to Defender. Optional recommendation work status coordinates users in this
 dashboard only.
-
-## Start here
-
-| Goal | Start with |
-|---|---|
-| Review the dashboard locally before creating Azure resources | [Local evaluation before Azure deployment](docs/local-evaluation.md) |
-| Deploy the collector but continue developing the dashboard locally | [Collector in Azure with a local dashboard](#collector-in-azure-with-a-local-dashboard) |
-| Deploy protected storage, the collector Function, and the Web App | [Azure deployment guide](DEPLOY.md) |
-| Understand exactly what `infra/deploy.sh` calls and which identity it uses | [Infrastructure and deploy.sh reference](infra/README.md) |
-| Run identical deployment and status commands on Windows, macOS, or Linux | [Cross-platform operations CLI](infra/README.md#cross-platform-operations-cli) |
-| Use the shortest greenfield deployment checklist | [Greenfield Azure deployment](docs/greenfield-deployment.md) |
-| Operate collections, monitoring, history, and dashboard access | [Operations and monitoring](docs/operations-and-configuration.md) |
-| Diagnose a local, Function, storage, deployment, or UI problem | [Troubleshooting](docs/troubleshooting.md) |
-| Understand finding lifecycle, priority, SLA, and work status | [Dashboard and collection logic](LOGIC.md) |
-| Find a command | [Command reference](docs/command-reference.md) |
-| Find a setting | [Complete configuration reference](docs/configuration-reference.md) |
-
-The recommended adoption sequence is:
-
-1. Run a [local evaluation](docs/local-evaluation.md).
-2. Confirm the organization’s permissions, data scope, scale, SLA policy, and cost
-   assumptions.
-3. Review and apply the three cumulative Azure deployment stages.
-4. Validate one Function collection and immutable publication.
-5. Assign authorized dashboard users.
-6. Follow the operations and troubleshooting runbooks.
 
 ## Repository structure
 
@@ -50,7 +21,7 @@ Elite-MockUp/
 ├── host.json                    Azure Functions host configuration
 ├── pyproject.toml               Python package, CLI, tooling, and test configuration
 ├── requirements.txt             Azure deployment dependency list
-├── start-app.sh                 Local dashboard startup helper
+├── start-app.sh                 Local Web App startup helper
 ├── config/
 │   ├── sla-policies.json        Versioned example SLA calculation thresholds
 │   └── vulnerability-view.example.json
@@ -90,90 +61,55 @@ Elite-MockUp/
 └── tools/                       Local sample import, collection, and cost-estimation tools
 ```
 
-Ignored local paths such as `.venv/`, `output/`, `dashboard/data/`, Terraform
-state/plan/value files, `LOCAL-NOTES.txt`, and `Function-App.txt` are intentionally
-not part of the versioned repository structure. Azure retained history is separate
-from local `output/` and is never deleted by local cleanup.
-
 ## Installation paths
 
-### Local evaluation
+### Deploy the collector and run the Web App locally
 
-Local evaluation requires Python 3.12+, Bash, and Azure CLI only when collecting
-live data. It does not require Terraform or create Azure resources.
+This is the current customer installation path. Azure hosts the protected
+history storage and scheduled collection Function. The Web App runs on the
+developer workstation and reads the latest successfully published live dataset
+from Azure Storage.
 
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e '.[dev]'
-cp .env.example .env
-```
+The local Web App does not call Defender directly. The deployed Function calls
+Defender and Graph using its managed identity, publishes an immutable run, and
+updates `current/manifest.json`. The local Web App reads that manifest and the
+curated files it references.
 
-Then follow [Local evaluation before Azure deployment](docs/local-evaluation.md)
-for live collection, sample replay, synthetic history, output
-validation, and the local dashboard.
-
-### Azure deployment
-
-Azure deployment additionally requires:
+The workstation requires:
 
 - Terraform 1.10 or newer;
 - Azure CLI authenticated to the target tenant and subscription;
+- Python 3.12 and a separate virtual environment on each workstation;
 - Git;
 - globally unique Azure resource names;
 - an organization-defined Terraform state backend for production;
 - Azure and Microsoft Entra permissions described in
   [Required operator permissions](DEPLOY.md#required-operator-permissions).
 
-Create the ignored environment-specific values file:
+Create the environment-specific Terraform values file on macOS or Linux:
 
 ```bash
 cp infra/terraform/main.tfvars.example.json \
   infra/terraform/main.tfvars.json
 ```
 
-The deployment has three cumulative reviewed stages:
+On Windows PowerShell:
 
-1. Protected history foundation
-2. Collector Function and managed identity
-3. Authenticated dashboard Web App
+```powershell
+Copy-Item infra/terraform/main.tfvars.example.json infra/terraform/main.tfvars.json
+```
 
-Use [Azure deployment guide](DEPLOY.md) as the canonical full procedure. Use
-[Greenfield Azure deployment](docs/greenfield-deployment.md) as the shorter
-operator checklist.
-
-## Collector in Azure with a local dashboard
-
-You do not need to deploy the dashboard Web App while developing the
-application. You can deploy the protected storage foundation and collection
-Function, let the Function collect on its schedule, and run the dashboard from
-your workstation against the current Azure data.
-
-This setup requires:
-
-- Python 3.12 and a local `.venv`;
-- Azure CLI;
-- Terraform for the initial foundation and Function deployment;
-- an Azure CLI login to the tenant and subscription that contain the
-  deployment;
-- Storage Blob data access to the history account;
-- the environment-specific `infra/terraform/main.tfvars.json`.
-
-Install the project and sign in:
+Create and activate the virtual environment on macOS or Linux:
 
 ```bash
 python3.12 -m venv .venv
-```
-
-Activate the virtual environment on macOS or Linux:
-
-```bash
 source .venv/bin/activate
 ```
 
-Activate it in Windows PowerShell:
+On Windows PowerShell:
 
 ```powershell
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
@@ -203,12 +139,12 @@ vulnerability-view-ops verify function
 
 Review each Terraform plan before applying it. Leave
 `grant_deployer_history_access` set to `true` when the signed-in Terraform
-operator also needs to run the dashboard locally. Terraform then grants that
+operator also needs to run the Web App locally. Terraform then grants that
 identity Storage Blob Data Contributor on the history account. A different
 developer needs a separate Blob data-role assignment; subscription access by
 itself is not enough.
 
-Copy `.env.example` to the ignored `.env` file and set:
+Copy `.env.example` to `.env` and set these environment variables:
 
 ```dotenv
 AUTH_MODE=auto
@@ -219,7 +155,7 @@ STORAGE_CURRENT_CONTAINER_NAME=dvm-current
 DASHBOARD_AUTH_ENABLED=false
 ```
 
-Start the local dashboard with the same command on Windows, macOS, or Linux:
+Start the local Web App with the same command on Windows, macOS, or Linux:
 
 ```bash
 python -m uvicorn vulnerability_view.dashboard_server:app \
@@ -241,8 +177,9 @@ Open <http://127.0.0.1:8000>. With `AUTH_MODE=auto`, the local application uses
 the current Azure CLI credential. The deployed Function does not use that
 developer login; it uses its own managed identity for Defender and Storage.
 
-The dashboard displays data after the Function publishes its first successful
-run. You can wait for the configured schedule or explicitly create a run:
+The local Web App displays data after the Function publishes its first
+successful run. You can wait for the configured schedule or explicitly create
+a run:
 
 ```bash
 vulnerability-view-ops invoke function --confirm
@@ -252,10 +189,27 @@ vulnerability-view-ops check-runs --limit 5 --progress
 The confirmation is required because the invocation creates a new immutable
 run and advances `current/manifest.json` after validation.
 
-Dashboard and server changes reload locally and do not require an Azure
+Web App and server changes reload locally and do not require an Azure
 deployment. Redeploy the Function only when collector code or its Azure runtime
-configuration changes. Deploy the Web App later when other users need a hosted,
-Microsoft Entra-authenticated dashboard.
+configuration changes.
+
+Use the [collector and local Web App customer quick start](DEPLOY.md#collector-and-local-web-app-customer-quick-start)
+for the consolidated installation commands and
+[Required operator permissions](DEPLOY.md#required-operator-permissions) for the
+deployment account requirements.
+
+### Complete hosted deployment
+
+The optional third deployment stage hosts the Web App in Azure with Microsoft
+Entra authentication. Deploy it later when users need shared hosted access:
+
+1. Protected history foundation
+2. Collector Function and managed identity
+3. Authenticated dashboard Web App
+
+Use [Azure deployment guide](DEPLOY.md) for the full procedure or
+[Greenfield Azure deployment](docs/greenfield-deployment.md) for the shorter
+operator checklist.
 
 ## What gets deployed
 
@@ -295,6 +249,31 @@ verification, history restore, and dashboard user assignments, use:
 - [Operations and monitoring](docs/operations-and-configuration.md)
 - [Command reference](docs/command-reference.md)
 - [Troubleshooting](docs/troubleshooting.md)
+
+## Local evaluation and local datasets
+
+Local-only evaluation is a separate development and demonstration option. It is
+not the collector installation path above and does not require Azure
+infrastructure.
+
+Use it to collect with a developer identity, replay retained raw responses, or
+generate labeled synthetic history. Local commands write their presentation
+datasets to `dashboard/data/`, curated CSV files to `output/curated/`, and
+verified local run bundles under `output/history/`.
+
+Start the Web App against those local datasets with:
+
+```bash
+DASHBOARD_DATA_SOURCE=local ./start-app.sh
+```
+
+The local dataset does not automatically follow the Azure collector. To display
+the collector's current live Azure data, use `DASHBOARD_DATA_SOURCE=azure` and
+the Storage environment variables documented under
+[Deploy the collector and run the Web App locally](#deploy-the-collector-and-run-the-web-app-locally).
+
+See [Local evaluation and datasets](docs/local-evaluation.md) for collection,
+replay, synthetic history, validation, and local file details.
 
 ## Data and retention boundaries
 
@@ -337,9 +316,9 @@ The ordered documentation index is [docs/README.md](docs/README.md).
 
 ### Installation
 
-1. [Local evaluation before Azure deployment](docs/local-evaluation.md)
-2. [Azure deployment guide](DEPLOY.md)
-3. [Greenfield Azure deployment checklist](docs/greenfield-deployment.md)
+1. [Azure deployment guide](DEPLOY.md)
+2. [Greenfield Azure deployment checklist](docs/greenfield-deployment.md)
+3. [Local evaluation and datasets](docs/local-evaluation.md)
 4. [Environment and deployment design](docs/environment-and-deployment.md)
 5. [Publishing and Azure cost options](docs/web-app-deployment-recommendations.md)
 

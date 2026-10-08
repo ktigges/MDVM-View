@@ -17,10 +17,9 @@ both the monthly run-rate at the selected horizon and a first-year total that
 accounts for increasing storage each month.
 
 Load the environment-specific `infra/terraform/main.tfvars.json` used for the
-deployment being estimated. For the current lab, use the repository's ignored
-`infra/terraform/main.tfvars.json`; for an environment-specific estimate, first
-create the deployment-specific copy from `main.tfvars.example.json` and load
-that copy.
+deployment being estimated. For the current lab, use
+`infra/terraform/main.tfvars.json`; for another environment, first create its
+values file from `main.tfvars.example.json` and load that copy.
 The browser reads it locally and does not upload it.
 
 The deployed history model is append-only with no automatic purge. The

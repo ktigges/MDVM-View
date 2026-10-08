@@ -1,12 +1,14 @@
-# Local evaluation before Azure deployment
+# Local evaluation and local datasets
 
 > **Last modified:** 2026-09-28
 > **Purpose:** Keep a complete run in the local file store and review the entire dashboard before deploying Azure infrastructure.
 
-This is the recommended first path for a new evaluator. You can collect or
-replay source data, retain the raw and normalized run, inspect every dashboard
-dataset, and validate the application locally. It calls no Terraform command,
-creates no Azure resource, and does not upload to Azure Storage.
+This is a separate local-only development and demonstration path. It is not
+required when installing the Azure collector and running the Web App locally
+against the collector's published Azure data. You can collect or replay source
+data, retain the raw and normalized run, inspect every dashboard dataset, and
+validate the application locally. It calls no Terraform command, creates no
+Azure resource, and does not upload to Azure Storage.
 
 ## 1. Workstation requirements
 
@@ -29,8 +31,9 @@ python -m pip install -e '.[dev]'
 cp .env.example .env
 ```
 
-The ignored `.env` file is optional for a basic Azure CLI collection. Never
-commit it. Environment variables already set in the shell take precedence.
+The `.env` file is optional for a basic Azure CLI collection. Keep environment
+values out of source control. Environment variables already set in the shell
+take precedence.
 
 ## 3. Choose local data
 
