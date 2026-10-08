@@ -2,6 +2,7 @@
 # Purpose: Exclude generated, environment-specific, sensitive, and local operator files.
 
 .venv/
+.venv-win/
 .env
 .env.*
 !.env.example

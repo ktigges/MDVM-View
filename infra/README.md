@@ -11,7 +11,9 @@ permissions model.
 
 ## Cross-platform operations CLI
 
-The same commands work in Windows PowerShell, macOS, and Linux:
+The same subcommands work in Windows PowerShell, macOS, and Linux. The examples
+below use an activated macOS/Linux environment. On Windows, replace the leading
+`python` with `.\.venv-win\Scripts\python.exe`:
 
 ```text
 python -m vulnerability_view.operations_cli plan foundation
@@ -25,7 +27,8 @@ python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limi
 python -m vulnerability_view.operations_cli invoke function --confirm
 ```
 
-Install or refresh the editable project once after pulling CLI changes:
+Install or refresh the editable project once after pulling CLI changes on
+macOS or Linux:
 
 ```text
 python -m pip install -e ".[dev]"
@@ -37,11 +40,20 @@ Activate the environment on macOS/Linux:
 source .venv/bin/activate
 ```
 
-Activate it in Windows PowerShell:
+On Windows PowerShell, create a separate environment and always invoke its
+interpreter directly:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+py -3.14 --version
+py -3.14 -m venv .venv-win
+.\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv-win\Scripts\python.exe -c "import sys, vulnerability_view; print(sys.executable)"
 ```
+
+The verification output must end in `.venv-win\Scripts\python.exe`. Run
+operations on Windows as
+`.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli <command>`.
+Do not rely on an activated prompt or a global `python` command.
 
 The Python CLI replaces platform-sensitive Bash, `date`, `jq`, `curl`, and
 external ZIP operations with Python implementations. Azure CLI, Terraform, and
@@ -111,11 +123,11 @@ Run commands from the repository root. The script expects:
 
 | Tool or file | Used for |
 |---|---|
-| Python 3.12+ | Cross-platform orchestration, ZIP creation, HTTP, JSON, and time handling |
+| Python 3.12 or tested Python 3.14.7 | Cross-platform orchestration, ZIP creation, HTTP, JSON, and time handling; Azure runtimes remain on Python 3.12 |
 | `az` | Azure package deployment, verification, keys, settings, and invocation |
 | Terraform 1.10+ | Infrastructure initialization, plan, apply, output, and validation; on Windows it may be on `PATH` or saved as repository-root `terraform.exe` |
 | `git` | Function commit metadata and fallback release version |
-| `.venv/` | Status and Defender preflight commands |
+| `.venv/` or `.venv-win/` | Project Python, status, and Defender preflight commands |
 | `terraform/main.tfvars.json` | Ignored environment names, IDs, settings, and Function version |
 | Terraform state | Existing-resource identity and outputs consumed by package operations |
 

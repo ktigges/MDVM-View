@@ -29,6 +29,7 @@ Interpret the sources separately:
 | Symptom | Check and action |
 |---|---|
 | `vulnerability-view` is not found | Activate `.venv` or run `.venv/bin/vulnerability-view`; reinstall with `python -m pip install -e '.[dev]'`. |
+| Windows reports `No module named vulnerability_view` | The wrong Python interpreter is running or the project was not installed into `.venv-win`. Run `.\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"`, verify with `.\.venv-win\Scripts\python.exe -c "import sys, vulnerability_view; print(sys.executable)"`, and use that exact interpreter for operations commands. |
 | Dashboard has no data | Run a live collection, rebuild imported sample data, or build synthetic history, then run `vulnerability-view validate`. |
 | Synthetic build reports no CVE references | Collect or import one live raw snapshot first; synthetic generation intentionally requires retained live CVE references. |
 | Port 8000 is in use | Run `./start-app.sh 8080`. |

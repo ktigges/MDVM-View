@@ -108,7 +108,8 @@ The workstation requires:
 - Terraform 1.10 or newer, either on `PATH` or as `terraform.exe` in the
   repository root on Windows;
 - Azure CLI authenticated to the target tenant and subscription;
-- Python 3.12 and a separate virtual environment on each workstation;
+- Python 3.12 or the tested Python 3.14.7 local runtime, with a separate
+  virtual environment on each workstation;
 - Git;
 - globally unique Azure resource names;
 - the management group ID containing the subscriptions to inventory;
@@ -127,11 +128,11 @@ operators or workstations manage the environment, but it requires separate
 Terraform backend configuration and is not included in this deployment
 documentation.
 
-Use Python 3.12 for customer installation. The Azure Function and hosted Web App
-runtimes are both configured for Python 3.12. The project metadata permits
-newer Python versions for local development, but they do not change the Azure
-runtime. Python 3.14.7 currently passes the test suite with FastAPI/Starlette
-deprecation warnings; 3.12 remains the supported deployment baseline.
+Python 3.14.7 has been tested successfully for local installation, deployment
+operations, and the project test suite. The test run produces FastAPI/Starlette
+deprecation warnings but no failures. The Azure Function and hosted Web App
+runtimes remain configured for Python 3.12; the workstation's Python version
+does not change the deployed Azure runtime.
 
 Create the environment-specific Terraform values file on macOS or Linux:
 
@@ -146,24 +147,24 @@ On Windows PowerShell:
 Copy-Item infra/terraform/main.tfvars.example.json infra/terraform/main.tfvars.json
 ```
 
-Create and activate the virtual environment on macOS or Linux:
+Create, activate, install, and verify the project on macOS or Linux:
 
 ```bash
-python3.12 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
+python -m pip install -e '.[dev]'
+python -c "import sys, vulnerability_view; print(sys.executable)"
 ```
 
-On Windows PowerShell:
+On Windows PowerShell, use a separate `.venv-win` environment and its exact
+interpreter path. Do not rely on the prompt prefix or the global `python`
+command:
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-Install the project:
-
-```bash
-python -m pip install -e '.[dev]'
+py -3.14 --version
+py -3.14 -m venv .venv-win
+.\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv-win\Scripts\python.exe -c "import sys, vulnerability_view; print(sys.executable)"
 ```
 
 Run deployment operations as
@@ -171,9 +172,10 @@ Run deployment operations as
 Windows, macOS, and Linux and does not depend on the shell finding a generated
 `vulnerability-view-ops.exe` launcher.
 
-If the Windows virtual environment is not activated, use
-`.\.venv\Scripts\python.exe -m vulnerability_view.operations_cli <command>`
-instead.
+On Windows, always use
+`.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli <command>`.
+The remaining command examples use `python` for readability; replace that
+leading `python` with `.\.venv-win\Scripts\python.exe` in PowerShell.
 
 Before signing in, planning, or deploying, copy `.env.example` to `.env` and
 set:

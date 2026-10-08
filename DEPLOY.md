@@ -36,11 +36,14 @@ the collector's current live dataset from Azure Storage.
    ```
 
 2. Install the [workstation requirements](#workstation-requirements), create a
-   virtual environment, and activate it using the command for the workstation.
-   Then install the project:
+   virtual environment, and install the project. On Windows, use the exact
+   `.venv-win` interpreter for installation and verification:
 
-   ```bash
-   python -m pip install -e '.[dev]'
+   ```powershell
+   py -3.14 --version
+   py -3.14 -m venv .venv-win
+   .\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"
+   .\.venv-win\Scripts\python.exe -c "import sys, vulnerability_view; print(sys.executable)"
    ```
 
    Run deployment operations as
@@ -48,9 +51,10 @@ the collector's current live dataset from Azure Storage.
    Windows, macOS, and Linux and does not depend on the shell finding a
    generated `vulnerability-view-ops.exe` launcher.
 
-   If the Windows virtual environment is not activated, use
-   `.\.venv\Scripts\python.exe -m vulnerability_view.operations_cli <command>`
-   instead.
+   On Windows, always use
+   `.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli <command>`.
+   For command examples below, replace the leading `python` with
+   `.\.venv-win\Scripts\python.exe`.
 
 3. Copy `infra/terraform/main.tfvars.example.json` to the environment-specific
    `infra/terraform/main.tfvars.json` and replace every example value. Set
@@ -205,7 +209,8 @@ The deployment workstation needs:
 - Terraform 1.10 or newer, either on `PATH` or as `terraform.exe` in the
   repository root on Windows;
 - Azure CLI authenticated to the target tenant and subscription;
-- Python 3.12 and the project virtual environment;
+- Python 3.12 or the tested Python 3.14.7 local runtime, with the project
+  virtual environment;
 - Git;
 - outbound access required by Terraform providers, Azure CLI, package restore,
   and code deployment.
@@ -228,7 +233,7 @@ Install the application dependencies:
 macOS or Linux:
 
 ```bash
-python3.12 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
 ```
@@ -236,20 +241,25 @@ python -m pip install -e '.[dev]'
 Windows PowerShell:
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e '.[dev]'
+py -3.14 --version
+py -3.14 -m venv .venv-win
+.\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv-win\Scripts\python.exe -c "import sys, vulnerability_view; print(sys.executable)"
 ```
 
-Windows PowerShell, macOS, and Linux use the same
-`python -m vulnerability_view.operations_cli` commands documented in
-[Infrastructure operations](infra/README.md).
+The last command must print a path ending in
+`.venv-win\Scripts\python.exe`. If the import fails or it prints a global
+Python path, stop before deployment and repeat the installation with the exact
+`.venv-win` interpreter. Windows operations use
+`.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli`;
+macOS and Linux use `python -m vulnerability_view.operations_cli`. Both forms
+are documented in [Infrastructure operations](infra/README.md).
 
-Use Python 3.12 for customer deployment. Terraform configures both the Azure
-Function and Linux Web App runtimes for Python 3.12. The project metadata
-allows newer versions for local development, but they do not change the Azure
-runtime and should be validated before customer use. Python 3.14.7 currently
-passes the test suite with dependency deprecation warnings.
+Python 3.14.7 has been tested successfully for local installation, deployment
+operations, and the full project test suite. The test run produces dependency
+deprecation warnings but no failures. Terraform continues to configure the
+Azure Function and Linux Web App runtimes for Python 3.12. Using Python 3.14.7
+on the workstation does not change those deployed runtimes.
 
 ## What the deployment commands do
 
