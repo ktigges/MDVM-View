@@ -118,6 +118,11 @@ Run commands from the repository root. The script expects:
 | `terraform/main.tfvars.json` | Ignored environment names, IDs, settings, and Function version |
 | Terraform state | Existing-resource identity and outputs consumed by package operations |
 
+The supplied configuration writes Terraform state locally to
+`infra/terraform/terraform.tfstate` on the deployment workstation. A shared
+remote backend can be configured separately, but remote-state setup and
+migration are not part of this deployment documentation.
+
 Do not commit `main.tfvars.json`, Terraform state, saved plans, packages, or local
 operator notes.
 

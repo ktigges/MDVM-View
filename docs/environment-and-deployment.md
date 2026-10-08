@@ -21,7 +21,12 @@ creates a new greenfield resource group, protected history account, containers,
 and optional Function resources. Existing populated accounts remain outside that
 state and are not imported or deleted.
 
-Terraform state must be stored outside the protected DVM history account. Use a separate secured backend so infrastructure state lifecycle cannot affect retained vulnerability history.
+The supplied Terraform configuration stores state locally at
+`infra/terraform/terraform.tfstate` on the deployment workstation. Protect,
+retain, and back up that file separately from the protected DVM history
+account. Organizations can configure a shared remote state backend, but backend
+provisioning, access control, migration, and recovery are outside this
+deployment documentation.
 
 ### Terraform variables
 

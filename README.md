@@ -63,7 +63,16 @@ Elite-MockUp/
 
 ## Installation paths
 
-### Deploy the collector and run the Web App locally
+Choose one of these three installation paths:
+
+1. **Azure collector with local Web App** — deploy the Function and protected
+   storage, then run the Web App on a workstation against the live Azure data.
+2. **Fully hosted Azure deployment** — deploy the Function, protected storage,
+   and authenticated Web App in Azure.
+3. **Everything local** — run the collector processing and Web App locally to
+   evaluate the application without deploying Azure infrastructure.
+
+### 1. Deploy the Azure collector and run the Web App locally
 
 This is the current customer installation path. Azure hosts the protected
 history storage and scheduled collection Function. The Web App runs on the
@@ -82,9 +91,15 @@ The workstation requires:
 - Python 3.12 and a separate virtual environment on each workstation;
 - Git;
 - globally unique Azure resource names;
-- an organization-defined Terraform state backend for production;
 - Azure and Microsoft Entra permissions described in
   [Required operator permissions](DEPLOY.md#required-operator-permissions).
+
+This deployment uses local Terraform state at
+`infra/terraform/terraform.tfstate` on the deployment workstation. Protect and
+retain that file. A shared remote state backend can be used when multiple
+operators or workstations manage the environment, but it requires separate
+Terraform backend configuration and is not included in this deployment
+documentation.
 
 Create the environment-specific Terraform values file on macOS or Linux:
 
@@ -198,10 +213,14 @@ for the consolidated installation commands and
 [Required operator permissions](DEPLOY.md#required-operator-permissions) for the
 deployment account requirements.
 
-### Complete hosted deployment
+### 2. Deploy the collector and Web App in Azure
 
-The optional third deployment stage hosts the Web App in Azure with Microsoft
-Entra authentication. Deploy it later when users need shared hosted access:
+This path runs both application components as managed Azure services. The
+Function collects and publishes the data, and the Linux Web App reads that data
+using its own managed identity. Microsoft Entra authentication controls user
+access to the hosted Web App.
+
+The three cumulative deployment stages are:
 
 1. Protected history foundation
 2. Collector Function and managed identity
@@ -210,6 +229,15 @@ Entra authentication. Deploy it later when users need shared hosted access:
 Use [Azure deployment guide](DEPLOY.md) for the full procedure or
 [Greenfield Azure deployment](docs/greenfield-deployment.md) for the shorter
 operator checklist.
+
+### 3. Run everything locally
+
+This path is for evaluation, demonstrations, replay, synthetic history, and
+development without deploying Azure infrastructure. Collection processing and
+the Web App both run on the workstation, and the Web App reads datasets under
+`dashboard/data/`.
+
+Continue with [Local evaluation and local datasets](#local-evaluation-and-local-datasets).
 
 ## What gets deployed
 
@@ -270,7 +298,7 @@ DASHBOARD_DATA_SOURCE=local ./start-app.sh
 The local dataset does not automatically follow the Azure collector. To display
 the collector's current live Azure data, use `DASHBOARD_DATA_SOURCE=azure` and
 the Storage environment variables documented under
-[Deploy the collector and run the Web App locally](#deploy-the-collector-and-run-the-web-app-locally).
+[Deploy the Azure collector and run the Web App locally](#1-deploy-the-azure-collector-and-run-the-web-app-locally).
 
 See [Local evaluation and datasets](docs/local-evaluation.md) for collection,
 replay, synthetic history, validation, and local file details.

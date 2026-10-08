@@ -132,9 +132,14 @@ The deployment workstation needs:
 - Azure CLI authenticated to the target tenant and subscription;
 - Python 3.12 and the project virtual environment;
 - Git;
-- access to a secured Terraform state backend for production;
 - outbound access required by Terraform providers, Azure CLI, package restore,
   and code deployment.
+
+Terraform stores state locally at `infra/terraform/terraform.tfstate` on the
+deployment workstation. Protect and retain that file because it records the
+managed resources and may contain sensitive deployment values. A shared remote
+state backend can be used, but it requires separate Terraform backend
+configuration and is not part of this deployment documentation.
 
 Install the application dependencies:
 
@@ -267,8 +272,14 @@ cp infra/terraform/main.tfvars.example.json infra/terraform/main.tfvars.json
 
 The deployment helper requires
 `infra/terraform/main.tfvars.json`. Keep environment values, plans, and state
-files out of source control. Store Terraform state in a secured backend that is
-separate from the protected DVM history account before production deployment.
+files out of source control. The supplied configuration writes local state to
+`infra/terraform/terraform.tfstate`. Keep that file on the authoritative
+deployment workstation and include it in the organization's protected backup
+process. Do not store it in the protected DVM history account.
+
+Organizations that require shared state can configure a separate remote
+Terraform backend. Backend provisioning, access control, migration, and
+recovery are not included in this deployment documentation.
 
 The wrapper supplies the cumulative deployment-stage values:
 
