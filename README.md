@@ -72,6 +72,10 @@ Choose one of these three installation paths:
 3. **Everything local** — run the collector processing and Web App locally to
    evaluate the application without deploying Azure infrastructure.
 
+Options 1 and 2 use the same protected foundation and the same collector
+Function deployment. Option 2 does not install a different collector; it adds
+the hosted Web App stage to the resources already created for option 1.
+
 ### 1. Deploy the Azure collector and run the Web App locally
 
 This is the current customer installation path. Azure hosts the protected
@@ -100,6 +104,12 @@ retain that file. A shared remote state backend can be used when multiple
 operators or workstations manage the environment, but it requires separate
 Terraform backend configuration and is not included in this deployment
 documentation.
+
+Use Python 3.12 for customer installation. The Azure Function and hosted Web App
+runtimes are both configured for Python 3.12. The project metadata permits
+newer Python versions for local development, but they do not change the Azure
+runtime. Python 3.14.7 currently passes the test suite with FastAPI/Starlette
+deprecation warnings; 3.12 remains the supported deployment baseline.
 
 Create the environment-specific Terraform values file on macOS or Linux:
 
@@ -215,16 +225,25 @@ deployment account requirements.
 
 ### 2. Deploy the collector and Web App in Azure
 
-This path runs both application components as managed Azure services. The
-Function collects and publishes the data, and the Linux Web App reads that data
-using its own managed identity. Microsoft Entra authentication controls user
-access to the hosted Web App.
+This path uses the exact same foundation and collector Function from option 1.
+The only additional infrastructure is the authenticated Linux Web App, its
+managed identity, and its Microsoft Entra application. The hosted Web App reads
+the same current Azure dataset that the local Web App reads in option 1.
 
-The three cumulative deployment stages are:
+After completing the foundation and Function steps from option 1, add the Web
+App stage:
 
-1. Protected history foundation
-2. Collector Function and managed identity
-3. Authenticated dashboard Web App
+```bash
+vulnerability-view-ops plan webapp
+terraform -chdir=infra/terraform show webapp.tfplan
+vulnerability-view-ops apply webapp
+vulnerability-view-ops deploy webapp
+vulnerability-view-ops verify webapp
+```
+
+The `webapp` Terraform stage is cumulative: it preserves the existing
+foundation and Function while adding the hosted Web App. Microsoft Entra
+authentication controls user access to it.
 
 Use [Azure deployment guide](DEPLOY.md) for the full procedure or
 [Greenfield Azure deployment](docs/greenfield-deployment.md) for the shorter

@@ -57,7 +57,9 @@ The greenfield history account and its two containers use Terraform `prevent_des
 
 Local live collection requires:
 
-- Python 3.12 or 3.13 and the project virtual environment
+- Python 3.12 and the project virtual environment. Both Azure runtimes are
+  configured for Python 3.12; use newer versions only for separately validated
+  local development.
 - A developer identity authenticated through Azure CLI or another supported developer credential
 - Defender permissions and device-group visibility
 - `AUTH_MODE=local`

@@ -6,6 +6,11 @@
 The deployment is staged so retained DVM history stays independent of
 replaceable application infrastructure.
 
+The protected foundation and collector Function are identical whether the Web
+App runs locally or in Azure. A hosted deployment simply adds the cumulative
+`webapp` stage; it does not create a second foundation or a different
+collector.
+
 For the complete inventory of Terraform inputs, runtime environment variables,
 JSON keys, generated Azure App Settings, SLA controls, presentation settings,
 and script overrides, see
@@ -161,6 +166,12 @@ python -m pip install -e '.[dev]'
 
 Windows PowerShell, macOS, and Linux use the same `vulnerability-view-ops`
 commands documented in [Infrastructure operations](infra/README.md).
+
+Use Python 3.12 for customer deployment. Terraform configures both the Azure
+Function and Linux Web App runtimes for Python 3.12. The project metadata
+allows newer versions for local development, but they do not change the Azure
+runtime and should be validated before customer use. Python 3.14.7 currently
+passes the test suite with dependency deprecation warnings.
 
 ## What the deployment commands do
 
