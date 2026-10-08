@@ -193,13 +193,29 @@ DASHBOARD_DATA_SOURCE=azure
 STORAGE_ACCOUNT_NAME=<history-storage-account>
 STORAGE_CONTAINER_NAME=dvm-history
 STORAGE_CURRENT_CONTAINER_NAME=dvm-current
+APP_MODE=live
 DASHBOARD_AUTH_ENABLED=false
+DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=false
 ```
 
 Leave `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` empty for this normal path.
 Microsoft Entra uses “client ID” and “application ID” for the same application
 identifier, but neither value is needed here. Terraform configures the deployed
 managed identities, and the local Web App uses the current `az login` identity.
+
+The normal values mean:
+
+| Setting | Normal value | Meaning |
+|---|---|---|
+| `AUTH_MODE` | `auto` | Uses Azure CLI authentication locally and managed identity in Azure |
+| `APP_MODE` | `live` | Publishes live Defender data; synthetic data is an explicit evaluation option |
+| `DASHBOARD_DATA_SOURCE` | `azure` | Local Web App reads the collector's current Azure bundle |
+| `DASHBOARD_AUTH_ENABLED` | `false` | Required for local hosting; the hosted Web App enables App Service Authentication |
+| `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | `false` | Optional dashboard collaboration feature; not required for collection or reporting |
+
+Recommendation tracking records dashboard-local work status; it does not create
+or update remediation tasks in Defender. Leave it off unless shared tracking is
+specifically required.
 
 Start the local Web App with the same command on Windows, macOS, or Linux:
 

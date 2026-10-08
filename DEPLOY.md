@@ -98,7 +98,9 @@ the collector's current live dataset from Azure Storage.
    STORAGE_ACCOUNT_NAME=<history-storage-account>
    STORAGE_CONTAINER_NAME=dvm-history
    STORAGE_CURRENT_CONTAINER_NAME=dvm-current
+   APP_MODE=live
    DASHBOARD_AUTH_ENABLED=false
+   DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=false
    ```
 
    Leave `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` empty. “Client ID” and
@@ -106,6 +108,13 @@ the collector's current live dataset from Azure Storage.
    is required for the normal deployment/local Web App path. Terraform
    configures the Azure managed identities, while the local Web App uses the
    current `az login` identity.
+
+   `AUTH_MODE=auto` is the normal Azure authentication setting: it uses the
+   current Azure CLI login locally and managed identity when hosted. Keep
+   `APP_MODE=live`. Local hosting requires `DASHBOARD_AUTH_ENABLED=false`;
+   Terraform enables App Service Authentication for the hosted Web App.
+   Recommendation tracking is optional dashboard-only collaboration state and
+   should remain false unless explicitly required.
 
 9. Run the Web App locally:
 

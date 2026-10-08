@@ -112,7 +112,7 @@ These can be environment variables or keys in
 
 | Environment variable | JSON key | Default | Effect |
 |---|---|---|---|
-| `AUTH_MODE` | `authMode` | `auto` | `auto`, `local`, `client_secret`, or `managed_identity` credential selection |
+| `AUTH_MODE` | `authMode` | `auto` | Normal Azure authentication setting: current Azure CLI identity locally and managed identity when hosted; `client_secret` is an explicit local-only exception |
 | `AZURE_TENANT_ID` | `azureTenantId` | Empty | Entra tenant for local or explicit credentials |
 | `AZURE_CLIENT_ID` | `azureClientId` | Empty | Leave empty for normal deployment/local Web App use; client ID and application ID are the same Entra identifier and are needed only for explicit local client-secret mode |
 | `AZURE_CLIENT_SECRET` | None | Empty | Local-only service-principal secret; never place in tracked JSON |
@@ -139,7 +139,7 @@ These can be environment variables or keys in
 | `DASHBOARD_AUTH_ENABLED` | `dashboardAuthEnabled` | `false` | Requires App Service Easy Auth identity when enabled |
 | `DASHBOARD_DATA_BROWSER_ENABLED` | `dashboardDataBrowserEnabled` | `false` | Enables read-only Data Evidence surface |
 | `DASHBOARD_DATA_BROWSER_ROLE` | `dashboardDataBrowserRole` | Empty | Optional Easy Auth role required by Data Evidence |
-| `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | `dashboardRecommendationTrackingEnabled` | `false` | Enables shared recommendation work status |
+| `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | `dashboardRecommendationTrackingEnabled` | `false` | Optional dashboard-only collaboration state; not required for collection, lifecycle reporting, or remediation evidence |
 | `DASHBOARD_RECOMMENDATION_TRACKING_ROLE` | `dashboardRecommendationTrackingRole` | `Recommendation.Tracker` | Legacy compatibility setting; tracking no longer requires this role |
 | `DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER` | `dashboardRecommendationTrackingContainer` | `dvm-workflow` | Workflow event container |
 
@@ -283,7 +283,7 @@ Asset query versions in `dashboard/index.html` control browser cache busting for
 | Positional port argument | `8000` | Local dashboard TCP port |
 | `HOST` | `127.0.0.1` | Local bind address |
 | `DASHBOARD_RELOAD` | `true` | Enables Uvicorn source/static reload |
-| `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | `true` | Enables in-memory local tracking unless explicitly overridden |
+| `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | `false` | Optional; when explicitly enabled locally, tracking is in memory and resets with the process |
 
 ## 10. Operational script inputs
 

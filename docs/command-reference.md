@@ -81,15 +81,15 @@ DASHBOARD_DATA_SOURCE=azure ./start-app.sh
 
 | Command | Use |
 |---|---|
-| `./start-app.sh` | Start local dashboard on `127.0.0.1:8000` with reload and in-memory tracking |
+| `./start-app.sh` | Start the local Web App on `127.0.0.1:8000` with reload; recommendation tracking is off by default |
 | `./start-app.sh 8080` | Use a different validated port |
 | `HOST=...` | Override bind address; expose beyond localhost only when intentionally secured |
 | `DASHBOARD_RELOAD=false` | Disable development reload |
 | `DASHBOARD_DATA_SOURCE=azure` | Read the verified Azure current bundle rather than local JSON |
 | `Ctrl+C` | Stop the foreground local server |
 
-Local recommendation tracking is in memory and resets when the server stops. It
-does not write Defender or Azure workflow history.
+When explicitly enabled, local recommendation tracking is in memory and resets
+when the server stops. It does not write Defender or Azure workflow history.
 
 ## 4. Application CLI
 

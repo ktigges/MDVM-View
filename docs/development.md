@@ -20,9 +20,9 @@ Start the local dashboard:
 ```
 
 Use `./start-app.sh 8080` for another port. Set
-`DASHBOARD_RELOAD=false` to disable the development reloader. Local
-recommendation tracking is an in-memory preview and resets when the process
-stops.
+`DASHBOARD_RELOAD=false` to disable the development reloader. Recommendation
+tracking is off by default. When explicitly enabled locally, it is an in-memory
+preview and resets when the process stops.
 
 To read the verified Azure current bundle without copying it locally:
 

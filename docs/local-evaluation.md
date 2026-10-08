@@ -143,7 +143,8 @@ The explicit local mode:
 - exposes the same dashboard data APIs used by the hosted application;
 - disables App Service Authentication;
 - reloads source changes during development;
-- uses in-memory recommendation tracking;
+- leaves recommendation tracking off by default; when explicitly enabled, it
+  uses in-memory tracking;
 - never writes shared Azure workflow state.
 
 Stop it with `Ctrl+C`.
