@@ -85,21 +85,32 @@ def test_dashboard_loads_datasets_progressively():
 
 def test_dashboard_filter_workspace_uses_compact_combined_toolbar():
     html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
     stylesheet = Path("dashboard/styles.css").read_text()
     final_filterbar_rule = [rule for rule in re.findall(r"\.filterbar\{([^}]*)\}", stylesheet) if "background:" in rule][-1]
+    final_scope_rule = [rule for rule in re.findall(r"\.scope-bar\{([^}]*)\}", stylesheet) if "background:" in rule][-1]
 
     assert html.index('id="scopeBar"') < html.index('id="filterBar"')
     assert 'class="scope-actions"' in html
     assert '>Filters</button>' in html
-    assert "background:#f2f5f7!important" in final_filterbar_rule
-    assert "box-shadow:0 14px 28px" in final_filterbar_rule
+    assert "background:#e8eef2!important" in final_filterbar_rule
+    assert "background:#173f59!important" in final_scope_rule
+    assert "box-shadow:0 14px 28px" in stylesheet
     assert 'class="filter-check-options"' in html
     assert ".scope-bar{min-height:64px!important" in stylesheet
-    assert "background:#fff!important" in stylesheet
     assert ".filterbar fieldset{display:grid!important" in stylesheet
     assert "border:0!important" in stylesheet
     assert ".filter-toggle[aria-expanded=\"true\"]" in stylesheet
+    assert "function sizeFilterPanel()" in javascript
     assert "overflow-wrap:anywhere" in stylesheet
+
+
+def test_executive_sla_heading_describes_its_metrics():
+    html = Path("dashboard/index.html").read_text()
+
+    assert "SLA RESULTS AND CURRENT RISK" in html
+    assert "Confirmed fixes against SLA and critical findings still open" in html
+    assert "How finding remediation is performing" not in html
 
 
 def test_dashboard_scope_does_not_repeat_active_view():
@@ -200,11 +211,15 @@ def test_dashboard_exposes_shared_recommendation_work_status_filter():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
 
-    assert "Recommendation work status" in html
-    assert "Shared status; filtering does not assign or lock work" in html
-    assert '<option value="InProgress">In progress</option>' in html
-    assert '<option value="NeedsReassignment">Needs reassignment</option>' in html
-    assert '<option value="Untracked">Untracked / not started</option>' in html
+    assert "Filter recommendations by dashboard status" in html
+    assert "This dropdown only filters the list" in html
+    assert '<option value="InProgress">Only in progress</option>' in html
+    assert '<option value="NeedsReassignment">Only needs reassignment</option>' in html
+    assert '<option value="Untracked">Only untracked / not started</option>' in html
+    assert "Selected recommendation status:" in html
+    assert 'id="recommendationCurrentStatus" class="recommendation-current-status" hidden' in html
+    assert "Set dashboard status: In progress" in html
+    assert "stored against this recommendation ID" in html
     assert 'recommendationTrackingFilter:"All"' in javascript
     assert "TrackingUpdatedBy" in javascript
     assert "TrackingUserId" in javascript
@@ -300,8 +315,13 @@ def test_dashboard_treats_remediation_activity_as_supporting_context():
     assert 'id="weeklyTaskDueTable"' in html
     assert "Remediation history" in html
     assert "Remediation activity context" in html
-    assert "Remediation activities are supporting context" in html
+    assert 'id="remediationActivitySection" data-feature="remediation-activity" hidden' in html
+    assert 'id="remediationTaskHistorySection" data-feature="remediation-activity" hidden' in html
     assert 'id="remediateTaskDueBreakdown"' not in html
+    assert "const remediationActivityEnabled=diagnosticsConfig.showExperimentalEndpoints===true" in javascript
+    assert "...(remediationActivityEnabled?[{name:\"remediation-activities\"" in javascript
+    assert "if(remediationActivityEnabled)renderRemediationActivities" in javascript
+    assert "if(remediationActivityEnabled)renderTaskDueHistory" in javascript
     assert "taskDueStatus" in javascript
     assert "CompletedByDueDate" in javascript
     assert "CompletedAfterDueDate" in javascript
@@ -369,6 +389,7 @@ def test_dashboard_prioritizes_recommendations_not_individual_findings():
     assert "<h2>Prioritized recommendations</h2>" in html
     assert "priorityRecommendationRows" in javascript
     assert "renderPriority" in javascript
+    assert "SuppressRecommendationHandoff:true" in javascript
     assert "RecommendationSeverity" in javascript
     assert "AffectedMachines" in javascript
     assert "RelatedCves" in javascript
@@ -469,6 +490,26 @@ def test_reporting_uses_retained_collection_run_history_for_trajectory():
     assert "Number(row.NewFindings||0)+Number(row.ReopenedFindings||0)" in javascript
     assert "function renderRunHistoryTrend()" in javascript
     assert 'anchor:"collectionRunTrend"' in javascript
+
+
+def test_lifecycle_entity_selector_and_latest_run_change_filter_are_wired():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+
+    assert "Lifecycle reporting by entity" in html
+    assert "function originMatches(row)" in javascript
+    assert 'state.reportingEntity=event.target.value;renderLifecycleReporting()' in javascript
+    assert 'class="latest-run-changes-toggle"' in html
+    assert "Show only findings changed since the previous run" in html
+    assert "function latestRunChangeMatches(row)" in javascript
+    assert "state.latestRunChangesOnly" in javascript
+    assert 'items.push(["Run changes","New, reopened, or fixed since previous run"])' in javascript
+    assert '"Limit workspace to these first-seen findings"' in javascript
+    assert "not necessarily the interval since the previous collection" in javascript
+    assert "View period evidence" not in javascript
+    assert 'rel="icon" type="image/png" href="favicon.png?' in html
+    assert Path("dashboard/favicon.png").is_file()
+    assert "Finding activity in the 24 hours ending at latest collection" in javascript
     assert 'id="ownership"' not in html
     assert 'id="assignmentTable"' not in html
     assert "renderOwnership" not in javascript
@@ -574,21 +615,27 @@ def test_dashboard_filters_all_views_by_subscription():
     assert "subscription.SubscriptionName" in javascript
 
 
-def test_dashboard_asset_inventory_uses_devices_and_includes_cloud_assets_without_findings():
+def test_dashboard_endpoint_inventory_defines_scope_and_temporal_filtering():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
 
     assert 'data-view="workstations"' in html
-    assert '<span class="nav-label">Assets</span>' in html
-    assert "<h2>Asset inventory</h2>" in html
-    assert "including assets with no current vulnerability rows" in html
+    assert '<span class="nav-label">Endpoint assets</span>' in html
+    assert "<h2>Endpoint device inventory</h2>" in html
+    assert "Cloud resources without endpoint device records are not counted here" in html
     assert '{name:"devices",key:"devices",label:"device inventory",required:true}' in javascript
-    assert "state.devices.filter(device=>inventoryDeviceMatches(device)" in javascript
+    assert "state.devices.filter(device=>" in javascript
+    assert "inventoryDeviceMatches(device)" in javascript
+    assert "findingScopeRestrictsInventory=state.newPeriodFilter||state.latestRunChangesOnly" in javascript
+    assert "!findingScopeRestrictsInventory||scopedDevices.has(device.DeviceId)" in javascript
     assert 'state.domains.has(findingDomain(row))' in javascript
     assert 'id="includeDiscoveredAssets" type="checkbox"' in html
     assert "defaultIncludeDiscoveredOnly: false" in Path("dashboard/config.js").read_text()
     assert 'state.includeDiscoveredOnly||device.OnboardingStatus==="Onboarded"' in javascript
     assert 'coverage=assessed?"Endpoint assessed":item.OpenFindings?"Limited evidence":"Not assessed"' in javascript
+    assert '"Health status: Active"' in javascript
+    assert "this does not mean active vulnerabilities" in javascript
+    assert '"Unresolved endpoint finding instances"' in javascript
     assert '["OpenFindings","Critical","High","Medium","Low"].includes(column)&&row.VulnerabilityCoverage==="Not assessed"' in javascript
     assert '["DeviceName","WorkloadType","InstanceCount","OSPlatform","AssetClass","Subscription","HealthStatus","OnboardingStatus","VulnerabilityCoverage","LastSeenUtc","OpenFindings","Critical","High","Medium","Low"]' in javascript
 
@@ -697,7 +744,7 @@ def test_dashboard_connects_executive_workload_sla_and_recommendation_impact():
     assert "RECOMMENDATION INVENTORY" not in html
     assert "<h2>Recommendation inventory and workflow</h2>" in html
     assert 'selectEntity("recommendation",id,true)' in javascript
-    assert 'order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "data-browser"]' in configuration
+    assert 'order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "help"]' in configuration
 
 
 def test_dashboard_executive_summary_uses_readable_visual_hierarchy():
@@ -724,12 +771,14 @@ def test_dashboard_shows_ui_revision_below_live_snapshot():
     assert 'id="revisionText"' in html
     assert "formatUtc" in javascript
     assert "const formatLocal=" in javascript
-    assert "UTC and browser local time" in html
-    assert "Local: ${esc(formatLocal(row.SnapshotTimeUtc))}" in javascript
+    assert "Local time with UTC below" in html
+    assert "<strong>${esc(formatLocal(row.SnapshotTimeUtc))}</strong>" in javascript
+    assert "UTC: ${esc(formatUtc(row.SnapshotTimeUtc))}" in javascript
+    assert '$("freshnessText").textContent=latest?formatLocal(latest.SnapshotTimeUtc)' in javascript
+    assert '$("freshnessLocalText").textContent=latest?`UTC: ${formatUtc(latest.SnapshotTimeUtc)}`' in javascript
     assert "Web version ${presentation.version||\"unversioned\"}" in javascript
     assert "UI revision ${presentation.revision?formatUtc(presentation.revision)" in javascript
     assert ".freshness .revision-text{display:block!important" in stylesheet
-    assert "latest?formatUtc(latest.SnapshotTimeUtc)" in javascript
     assert re.search(r'version: "\d{4}\.\d{2}\.\d{2}\.\d+"', configuration)
     assert re.search(r'revision: "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"', configuration)
     assert 'ui_revision="$(date -u' in deployment
@@ -788,8 +837,12 @@ def test_dashboard_freshness_shows_ten_recent_collection_runs():
     assert "renderRecentRuns();" in javascript
     assert ".freshness:hover .recent-runs-popover,.freshness:focus-within .recent-runs-popover" in stylesheet
     assert ".recent-runs-popover{position:absolute;top:calc(100% + 9px);right:0;left:auto;width:min(320px,calc(100vw - 24px));max-height:280px" in stylesheet
-    assert ".freshness>#healthDot{display:none!important}" in stylesheet
-    assert ".recent-runs-popover li>i{display:none}" in stylesheet
+    assert ".recent-runs-popover li::before,.recent-runs-popover li::after" in stylesheet
+    assert ".recent-runs-popover li>b{border:0!important;border-radius:3px!important" in stylesheet
+    assert 'id="healthDot"' not in html
+    assert '<i class="${statusClass}"' not in javascript
+    assert ".recent-runs-popover li>i" not in stylesheet
+    assert "#healthDot" not in stylesheet
 
 
 def test_dashboard_uses_top_filters_and_responsive_workspace_navigation():
@@ -830,36 +883,72 @@ def test_dashboard_supports_new_vulnerability_period_analysis_and_filtering():
     stylesheet = Path("dashboard/styles.css").read_text()
 
     assert 'id="newPeriod"' in html
-    assert '<option value="day">24 hours before latest snapshot</option>' in html
-    assert '<option value="week">7 days before latest snapshot</option>' in html
-    assert '<option value="month">30 days before latest snapshot</option>' in html
+    assert '<option value="day">Latest 24 hours ending at collection</option>' in html
+    assert '<option value="week">Latest 7 days ending at collection</option>' in html
+    assert '<option value="month">Latest 30 days ending at collection</option>' in html
     assert '<option value="custom">Custom date range</option>' in html
+    assert "RECENTLY FIRST SEEN" not in html
+    assert '<label class="new-activity-period">Date window<select id="newPeriod">' in html
+    assert 'id="newPeriodCustom" class="new-period-custom" hidden' in html
     assert 'id="applyNewPeriodFilter"' in html
     assert 'id="newActivityBar"' in html
     assert 'data-new-view="workstations"' in html
     assert "function newPeriodRange()" in javascript
     assert "function firstObservedMatches(row)" in javascript
+    assert "function fixedInPeriodMatches(row)" in javascript
     assert "function renderNewActivity()" in javascript
-    assert "filteredFindings(false).filter(firstObservedMatches)" in javascript
-    assert "Anchored to latest collected snapshot" in javascript
+    assert "rows=scoped.filter(firstObservedMatches)" in javascript
+    assert "fixedRows=scoped.filter(fixedInPeriodMatches)" in javascript
+    assert 'id="fixedWindowFindingCount"' in html
+    assert 'id="fixedWindowCveCount"' in html
+    assert 'id="fixedWindowMachineCount"' in html
+    assert 'id="fixedWindowRecommendationCount"' in html
+    assert 'class="window-metric" tabindex="0"' in html
+    assert ".window-metric:hover,.new-activity-metrics .window-metric:focus-visible" in stylesheet
+    assert "counts use each finding's first-seen or fixed timestamp inside this UTC window" in javascript
     assert ".new-activity-bar{" in stylesheet
 
 
-def test_dashboard_data_browser_is_hidden_and_read_only_by_default():
+def test_reporting_exposes_customer_workflow_help():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
     stylesheet = Path("dashboard/styles.css").read_text()
+    workflow = Path("docs/daily-vulnerability-remediation-workflow.md").read_text()
 
-    assert 'data-view="data-browser" data-feature="data-browser" hidden' in html
-    assert 'id="dataBrowserDataset"' in html
-    assert 'id="dataBrowserTable"' in html
-    assert 'id="dataBrowserJson"' in html
-    assert "Read-only evidence" in html
-    assert "/api/data-browser/catalog" in javascript
-    assert "/api/data-browser/${encodeURIComponent(dataBrowserState.dataset)}" in javascript
-    assert "openMetricEvidence" in javascript
-    assert "View evidence" in javascript
+    assert 'id="openWorkflowHelp"' in html
+    assert 'data-view="help"' in html
+    assert 'class="nav-help-group"' in html
+    assert '<span class="nav-help-heading">Help</span>' in html
+    assert 'id="help" class="story workflow-help-story"' in html
+    assert "How to use this dashboard" in html
+    assert "Common customer scenarios" in html
+    assert "Read the numbers correctly" in html
+    assert '$("openWorkflowHelp").addEventListener("click",()=>activateView("help"))' in javascript
+    assert ".workflow-help-story .workflow-help-body{padding:0}" in stylesheet
+    assert "Reporting" in workflow
+    assert "## Common customer scenarios" in workflow
+
+
+def test_data_evidence_is_a_separate_diagnostic_page():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    evidence_html = Path("dashboard/data-evidence.html").read_text()
+    evidence_javascript = Path("dashboard/data-evidence.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert "data-browser" not in html
+    assert "dataBrowser" not in javascript
+    assert "View evidence" not in javascript
+    assert "Diagnostic Data Evidence" in evidence_html
+    assert 'id="dataBrowserDataset"' in evidence_html
+    assert 'id="dataBrowserTable"' in evidence_html
+    assert 'id="dataBrowserJson"' in evidence_html
+    assert "/api/data-browser/catalog" in evidence_javascript
+    assert "/api/data-browser/${encodeURIComponent(state.dataset)}" in evidence_javascript
+    assert "No datasets available" in evidence_javascript
     assert ".story-nav button[hidden]{display:none!important}" in stylesheet
+
+
 def test_cost_calculator_is_local_only():
     deploy_script = Path("infra/deploy.sh").read_text()
     calculator = Path("tools/calculator.html").read_text()

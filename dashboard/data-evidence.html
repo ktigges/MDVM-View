@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diagnostic Data Evidence</title>
+  <link rel="icon" type="image/png" href="favicon.png?v=20261009-2200">
+  <link rel="stylesheet" href="styles.css?v=20261009-2200">
+</head>
+<body>
+  <header class="topbar data-evidence-topbar">
+    <div class="brand-title">
+      <div><h1>Diagnostic Data Evidence</h1><p class="eyebrow">VULNERABILITY VIEW SUPPORT TOOL</p></div>
+    </div>
+    <a class="data-evidence-back" href="/">Return to dashboard</a>
+  </header>
+  <main class="data-evidence-page">
+    <section class="story active">
+      <div class="section-heading"><div><h2>Curated data evidence</h2></div></div>
+      <div class="notice data-browser-notice"><strong>Authorized diagnostic endpoint</strong><p>This support page shows normalized records used by the dashboard. It does not provide storage credentials, editing, or deletion.</p></div>
+      <section class="data-browser-controls" aria-label="Data evidence controls">
+        <label>Dataset<select id="dataBrowserDataset" disabled><option>Loading datasets</option></select></label>
+        <label>Search current dataset<input id="dataBrowserSearch" type="search" placeholder="Search any displayed field" disabled></label>
+        <button id="dataBrowserSearchButton" type="button" disabled>Search</button>
+      </section>
+      <section id="dataBrowserMetadata" class="data-browser-metadata" aria-live="polite">Data evidence is loading.</section>
+      <article class="panel data-browser-table-panel">
+        <div class="panel-title"><h3 id="dataBrowserTitle">Dataset rows</h3><span id="dataBrowserPageStatus"></span></div>
+        <div class="table-wrap"><table id="dataBrowserTable"></table></div>
+        <div class="data-browser-pagination"><button id="dataBrowserPrevious" type="button" disabled>Previous</button><button id="dataBrowserNext" type="button" disabled>Next</button></div>
+      </article>
+      <article class="panel data-browser-json-panel">
+        <div class="panel-title"><h3 id="dataBrowserRecordTitle">Select a row to inspect every field</h3><button id="copyDataBrowserJson" type="button" disabled>Copy JSON</button></div>
+        <pre id="dataBrowserJson">No record selected.</pre>
+      </article>
+    </section>
+  </main>
+  <script src="data-evidence.js?v=20261009-2200"></script>
+</body>
+</html>

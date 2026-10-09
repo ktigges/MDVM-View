@@ -9,7 +9,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
-  <link rel="stylesheet" href="styles.css?v=20261009-1022">
+  <link rel="icon" type="image/png" href="favicon.png?v=20261009-2216">
+  <link rel="stylesheet" href="styles.css?v=20261009-2334">
 </head>
 <body>
   <header class="topbar">
@@ -26,9 +27,9 @@
       <span id="brandingStatus" class="branding-status" role="status" aria-live="polite" hidden></span>
     </div>
     <div class="topbar-meta">
-      <div id="freshnessSummary" class="freshness" tabindex="0" aria-describedby="recentRunsPopover"><span id="healthDot"></span><strong id="freshnessText">Loading data</strong><small id="freshnessLocalText">Local time loading</small><small>Data refreshed · Live snapshot · Hover for recent runs</small><small id="revisionText" class="revision-text">UI revision loading</small><small id="authStatus" class="auth-status">Checking access mode</small>
+      <div id="freshnessSummary" class="freshness" tabindex="0" aria-describedby="recentRunsPopover"><strong id="freshnessText">Local time loading</strong><small id="freshnessLocalText">UTC loading</small><small>Data refreshed · Live snapshot · Hover for recent runs</small><small id="revisionText" class="revision-text">UI revision loading</small><small id="authStatus" class="auth-status">Checking access mode</small>
         <aside id="recentRunsPopover" class="recent-runs-popover" role="tooltip">
-          <div class="recent-runs-heading"><strong>Recent collection runs</strong><small>Newest first · UTC and browser local time</small></div>
+          <div class="recent-runs-heading"><strong>Recent collection runs</strong><small>Newest first · Local time with UTC below</small></div>
           <ol id="recentRunsList"><li class="empty">Collection history is loading.</li></ol>
         </aside>
       </div>
@@ -62,12 +63,15 @@
     </div>
     <button class="active" data-view="executive"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg></span><span class="nav-label">Executive</span></button>
     <button data-view="overview"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4zm0 4v10m-4-5h8"/></svg></span><span class="nav-label">Vulnerabilities</span></button>
-    <button data-view="workstations"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></span><span class="nav-label">Assets</span></button>
+    <button data-view="workstations"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></span><span class="nav-label">Endpoint assets</span></button>
     <button data-view="recommendations"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4h6l1 2h3v15H5V6h3l1-2zm0 7h6m-6 4h6"/></svg></span><span class="nav-label">Recommendations</span></button>
     <button data-view="priority"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="M12 2v3m0 14v3m10-10h-3M5 12H2"/></svg></span><span class="nav-label">Prioritize</span></button>
     <button data-view="sla"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><span class="nav-label">Remediate</span></button>
     <button data-view="trend"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2"/></svg></span><span class="nav-label">Reporting</span></button>
-    <button data-view="data-browser" data-feature="data-browser" hidden><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5m-16 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span><span class="nav-label">Data evidence</span></button>
+    <div class="nav-help-group">
+      <span class="nav-help-heading">Help</span>
+      <button data-view="help"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.4 2.4 0 114.5 1.2c-.8 1.1-2.3 1.3-2.3 3.1M12 17h.01"/></svg></span><span class="nav-label">How to use</span></button>
+    </div>
   </nav>
   <div class="workspace">
   <div class="workspace-controls">
@@ -84,29 +88,47 @@
   </section>
   <section id="filterBar" class="filterbar" aria-label="Dashboard filters">
     <label>Severity / task priority<select id="severityFilter"><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
-    <label id="recommendationTrackingFilterLabel" hidden>Recommendation work status<select id="recommendationTrackingFilter"><option value="All">All work statuses</option><option value="NeedsAttention">Needs attention</option><option value="Untracked">Untracked / not started</option><option value="InProgress">In progress</option><option value="NeedsReassignment">Needs reassignment</option><option value="ReadyForValidation">Marked fixed · awaiting collection</option><option value="Confirmed">Confirmed fixed</option><option value="StillDetected">Still detected after validation</option></select><span>Shared status; filtering does not assign or lock work</span></label>
+    <label id="recommendationTrackingFilterLabel" hidden>Filter recommendations by dashboard status<select id="recommendationTrackingFilter"><option value="All">All dashboard statuses</option><option value="NeedsAttention">Needs attention</option><option value="Untracked">Only untracked / not started</option><option value="InProgress">Only in progress</option><option value="NeedsReassignment">Only needs reassignment</option><option value="ReadyForValidation">Only marked fixed · awaiting collection</option><option value="Confirmed">Only confirmed fixed</option><option value="StillDetected">Only still detected after validation</option></select><span>This dropdown only filters the list. It does not show or change the selected recommendation's status.</span></label>
     <fieldset class="type-filter"><legend>Recommendation type</legend><div class="filter-check-options"><label><input type="checkbox" name="recommendationType" value="Vulnerability" checked>Vulnerability</label><label><input type="checkbox" name="recommendationType" value="Misconfiguration">Misconfiguration</label></div></fieldset>
     <label class="classification-filter">Asset classification<select id="assetClassFilter"><option value="All">All classifications</option><option value="AzureCloud">Azure / Cloud</option><option value="TraditionalIT">Traditional IT</option><option value="Unknown">Unknown</option></select><span>Azure resource metadata → Defender machine tag → inventory fallback</span></label>
     <label class="subscription-filter">Subscription<select id="subscriptionFilter"><option value="All">All subscriptions</option><option value="NoSubscription">No subscription</option></select><span>Derived from Defender machine resource metadata</span></label>
     <fieldset class="reporting-filter"><legend>Device reporting</legend><label><input id="hideNonReporting" type="checkbox">Hide non-reporting devices</label><select id="reportingDays" aria-label="Device reporting timeframe"><option value="7">Last reported within 7 days</option><option value="14">Last reported within 14 days</option><option value="30">Last reported within 30 days</option><option value="60">Last reported within 60 days</option><option value="90">Last reported within 90 days</option></select><span>Uses LastSeenUtc from the current dataset; retained evidence is not deleted</span></fieldset>
     <label class="queue-filter">Operating queue (derived)<select id="teamFilter"><option>All</option></select><span>Inferred from asset evidence, not a Defender assignment</span></label>
     <label class="search-filter">Find items<input id="searchFilter" type="search" placeholder="CVE, recommendation, machine..."></label>
-    <label class="new-period-filter">First observed<select id="newPeriod"><option value="day">24 hours before latest snapshot</option><option value="week">7 days before latest snapshot</option><option value="month">30 days before latest snapshot</option><option value="custom">Custom date range</option></select><span>Relative windows end at the latest collected snapshot, not the current clock</span></label>
-    <fieldset class="new-period-apply"><legend>Apply new-item period</legend><label><input id="applyNewPeriodFilter" type="checkbox">Filter every workspace view</label></fieldset>
-    <fieldset id="newPeriodCustom" class="new-period-custom" hidden><legend>Custom first-observed dates</legend><label>From<input id="newPeriodStart" type="date"></label><label>Through<input id="newPeriodEnd" type="date"></label></fieldset>
+    <fieldset class="new-period-apply"><legend>First-seen filter</legend><label><input id="applyNewPeriodFilter" type="checkbox">Limit workspace to findings first seen in this window</label></fieldset>
+    <fieldset class="latest-run-change-filter"><legend>Run-to-run changes</legend><label><input class="latest-run-changes-toggle" type="checkbox">Show only findings changed since the previous run</label><span>Includes new, reopened, or fixed findings</span></fieldset>
     <fieldset class="domain-filter"><legend>Asset domains</legend><div class="filter-check-options"><label><input type="checkbox" name="assetDomain" value="Devices" checked>Devices</label><label><input type="checkbox" name="assetDomain" value="Cloud" checked>Cloud</label><label><input type="checkbox" name="assetDomain" value="SaaS Apps">SaaS Apps</label><label><input type="checkbox" name="assetDomain" value="Identities">Identities</label><label><input type="checkbox" name="assetDomain" value="Data">Data</label></div></fieldset>
   </section>
   </div>
 
   <section id="newActivityBar" class="new-activity-bar" aria-labelledby="newActivityTitle">
-    <div class="new-activity-heading"><span>NEWLY OBSERVED</span><strong id="newActivityTitle">24 hours before latest run</strong><small id="newActivityContext">Window anchored to the latest collected snapshot</small></div>
-    <div class="new-activity-metrics">
-      <button type="button" data-new-view="overview"><strong id="newFindingCount">0</strong><span>finding instances</span></button>
-      <button type="button" data-new-view="overview"><strong id="newCveCount">0</strong><span>distinct CVEs</span></button>
-      <button type="button" data-new-view="workstations"><strong id="newMachineCount">0</strong><span>affected machines</span></button>
-      <button type="button" data-new-view="recommendations"><strong id="newRecommendationCount">0</strong><span>recommendations</span></button>
+    <div class="new-activity-heading">
+      <strong id="newActivityTitle">Finding activity in the 24 hours ending at latest collection</strong>
+      <label class="new-activity-period">Date window<select id="newPeriod"><option value="day">Latest 24 hours ending at collection</option><option value="week">Latest 7 days ending at collection</option><option value="month">Latest 30 days ending at collection</option><option value="custom">Custom date range</option></select></label>
+      <fieldset id="newPeriodCustom" class="new-period-custom" hidden><legend>Custom activity dates</legend><label>From<input id="newPeriodStart" type="date"></label><label>Through<input id="newPeriodEnd" type="date"></label></fieldset>
+      <small id="newActivityContext">Counts use each finding's first-seen or fixed timestamp inside this UTC window; it is not necessarily the interval since the previous collection</small>
     </div>
-    <button id="toggleNewPeriodFilter" class="new-activity-action" type="button">Filter workspace</button>
+    <div class="new-activity-metric-groups">
+      <section class="new-activity-metric-group" aria-labelledby="firstSeenMetricLabel">
+        <strong id="firstSeenMetricLabel">First seen in window</strong>
+        <div class="new-activity-metrics">
+          <button type="button" data-new-view="overview" title="Apply the first-seen window and open these findings"><strong id="newFindingCount">0</strong><span>finding instances</span></button>
+          <button type="button" data-new-view="overview" title="Apply the first-seen window and open these CVEs"><strong id="newCveCount">0</strong><span>distinct CVEs</span></button>
+          <button type="button" data-new-view="workstations" title="Apply the first-seen window and open matching endpoint devices"><strong id="newMachineCount">0</strong><span>machines first affected</span></button>
+          <button type="button" data-new-view="recommendations" title="Apply the first-seen window and open matching recommendations"><strong id="newRecommendationCount">0</strong><span>recommendations</span></button>
+        </div>
+      </section>
+      <section class="new-activity-metric-group corrected" aria-labelledby="correctedMetricLabel">
+        <strong id="correctedMetricLabel">Fixed in the same window</strong>
+        <div class="new-activity-metrics corrected-metrics">
+          <div class="window-metric" tabindex="0" title="Finding instances with a fixed timestamp inside the selected window"><strong id="fixedWindowFindingCount">0</strong><span>finding instances fixed</span></div>
+          <div class="window-metric" tabindex="0" title="Distinct CVEs represented by finding instances fixed inside the selected window"><strong id="fixedWindowCveCount">0</strong><span>distinct CVEs with fixes</span></div>
+          <div class="window-metric" tabindex="0" title="Machines with at least one finding fixed inside the selected window; they may still have other open findings"><strong id="fixedWindowMachineCount">0</strong><span>machines with fixes</span></div>
+          <div class="window-metric" tabindex="0" title="Recommendations with at least one finding fixed inside the selected window"><strong id="fixedWindowRecommendationCount">0</strong><span>recommendations with fixes</span></div>
+        </div>
+      </section>
+    </div>
+    <button id="toggleNewPeriodFilter" class="new-activity-action" type="button">Limit workspace to these first-seen findings</button>
   </section>
 
   <main>
@@ -124,14 +146,14 @@
         <a id="defenderRemediationLink" class="action-link primary" href="https://security.microsoft.com/exposure-recommendations?tabId=Devices" target="_blank" rel="noopener">Open Exposure Recommendations</a>
         <button id="copyRecommendationReference" class="action-link" type="button">Copy recommendation reference</button>
         <span id="recommendationTrackingActions" class="recommendation-tracking-actions" hidden>
-          <button type="button" data-tracking-status="InProgress">Mark in progress here</button>
-          <button type="button" data-tracking-status="ReadyForValidation">Mark fixed for next collection</button>
+          <button type="button" data-tracking-status="InProgress">Set dashboard status: In progress</button>
+          <button type="button" data-tracking-status="ReadyForValidation">Set dashboard status: Fixed, awaiting collection</button>
           <button type="button" data-tracking-status="Clear">Clear dashboard status</button>
         </span>
-        <span id="recommendationTrackingStatus" class="action-status"></span>
+        <span id="recommendationCurrentStatus" class="recommendation-current-status" hidden><strong>Selected recommendation status:</strong><span id="recommendationTrackingStatus" class="action-status"></span></span>
         <span id="pivotActionStatus" class="action-status" role="status"></span>
       </div>
-      <p class="handoff-note">The work-status controls above coordinate users in this dashboard only; they do not update Defender. The Defender link opens <strong>Exposure management → Recommendations</strong>. Defender does not expose its selected flyout as a URL, so select <strong>Vulnerabilities</strong> and paste the copied recommendation reference to open the exact item.</p>
+      <p class="handoff-note">Dashboard work status is stored against this recommendation ID for shared coordination in Vulnerability View only; it does not update Defender, assign ownership, or start remediation. The Defender link opens <strong>Exposure management → Recommendations</strong>. Defender does not expose its selected flyout as a URL, so select <strong>Vulnerabilities</strong> and paste the copied recommendation reference to open the exact item.</p>
       <div id="pivotCards" class="metric-grid compact"></div>
       <div class="table-wrap"><table id="pivotTable"></table></div>
       <div id="pivotDetails" class="pivot-details"></div>
@@ -141,7 +163,7 @@
       <div class="executive-heading"><div><span>EXECUTIVE POSTURE</span><h2>Current security posture</h2></div><p>Filtered remediation posture, Microsoft Secure Score, and policy SLA outcomes</p></div>
       <div class="executive-decision-grid">
         <article class="decision-panel primary-kpis"><div class="decision-panel-title"><span>WORK TO DO NOW</span><h3>Current exposure and latest-run change</h3><small id="executiveDeltaContext">Loading comparable runs</small></div><div id="executiveWorkload" class="decision-metrics"></div></article>
-        <article class="decision-panel sla-kpis"><div class="decision-panel-title"><span>FINDING SLA PERFORMANCE</span><h3>How finding remediation is performing</h3></div><div id="executiveSlaPerformance" class="decision-metrics"></div></article>
+        <article class="decision-panel sla-kpis"><div class="decision-panel-title"><span>SLA RESULTS AND CURRENT RISK</span><h3>Confirmed fixes against SLA and critical findings still open</h3></div><div id="executiveSlaPerformance" class="decision-metrics"></div></article>
         <article id="secureScoreCard" class="secure-score-card supporting-score"></article>
       </div>
     </section>
@@ -156,7 +178,7 @@
       <div id="severityCards" class="metric-grid compact"></div>
       <div class="subsection-heading"><div><span>LATEST COLLECTION MOVEMENT</span><h3>Overall finding movement between the latest runs</h3></div><p>Every value counts finding instances; machine counts are shown beneath each total.</p></div>
       <article class="panel latest-run-panel">
-        <div class="panel-title"><h3 id="executiveRunMovementTitle">Latest-run comparison</h3><span id="executiveRunMovementContext">Loading comparable runs</span></div>
+        <div class="panel-title"><div><h3 id="executiveRunMovementTitle">Latest-run comparison</h3><span id="executiveRunMovementContext">Loading comparable runs</span></div><label class="latest-run-change-toggle-label"><input class="latest-run-changes-toggle" type="checkbox"> Show only findings changed since the previous run</label></div>
         <div id="executiveRunMovement" class="decision-metrics latest-run-metrics"></div>
         <p id="executiveRunEquation" class="latest-run-equation"></p>
       </article>
@@ -173,10 +195,10 @@
     </section>
 
     <section id="workstations" class="story">
-      <div class="section-heading"><div><h2>Asset inventory</h2></div><p>Onboarded devices in scope, including assets with no current vulnerability rows. Discovery-only assets are optional.</p></div>
-      <div class="asset-inventory-controls"><label><input id="includeDiscoveredAssets" type="checkbox">Include discovered-only assets</label><span>Non-onboarded devices are inventory evidence only; vulnerability coverage is not available.</span></div>
+      <div class="section-heading"><div><h2>Endpoint device inventory</h2></div><p>Defender endpoint inventory only. Cloud resources without endpoint device records are not counted here. A first-observed or run-change filter limits this list to matching endpoint devices.</p></div>
+      <div class="asset-inventory-controls"><label><input id="includeDiscoveredAssets" type="checkbox">Include discovered-only endpoint devices</label><span>Non-onboarded devices are inventory evidence only; endpoint vulnerability coverage is not available.</span></div>
       <div id="workstationCards" class="metric-grid"></div>
-      <article class="panel"><div class="panel-title"><h3>Devices and grouped scale-out workloads</h3><span>Current reporting state with open findings from the selected vulnerability scope</span></div><div class="table-wrap"><table id="workstationTable"></table></div></article>
+      <article class="panel"><div class="panel-title"><h3>Endpoint devices and grouped scale-out workloads</h3><span>Device inventory status with unresolved finding instances from the selected finding scope</span></div><div class="table-wrap"><table id="workstationTable"></table></div></article>
     </section>
 
     <section id="recommendations" class="story">
@@ -201,13 +223,15 @@
         <article class="panel sla-graph-panel"><div class="panel-title"><h3 id="findingSlaGraphTitle">Finding outcomes by severity</h3><span>Open and Defender-confirmed fixed, within vs outside policy SLA</span></div><div id="findingSlaGraph" class="sla-bar-chart" role="region" aria-labelledby="findingSlaGraphTitle"></div></article>
         <article class="panel sla-graph-panel"><div class="panel-title"><h3 id="recommendationSlaGraphTitle">Recommendation outcomes by severity</h3><span>Distinct recommendations represented in each finding outcome</span></div><div id="recommendationSlaGraph" class="sla-bar-chart recommendation-sla-chart" role="region" aria-labelledby="recommendationSlaGraphTitle"></div></article>
       </div>
-      <div class="notice"><strong>How confirmation works</strong><p>The team remediates from Defender recommendations or its existing operational process. This view waits for Defender reassessment: a finding is confirmed fixed only after it disappears from fresh active-device snapshots. Remediation activities are supporting context, not the primary workflow.</p></div>
-      <div id="remediationActivityCards" class="metric-grid compact"></div>
-      <article class="panel"><div class="panel-title"><h3>Remediation activity context</h3><span>Active first, then task priority, overdue state, and due date</span></div><div class="table-wrap"><table id="remediationTable"></table></div></article>
+      <div class="notice"><strong>How confirmation works</strong><p>The team remediates from Defender recommendations or its existing operational process. This view waits for Defender reassessment: a finding is confirmed fixed only after it disappears from fresh active-device snapshots.</p></div>
+      <section id="remediationActivitySection" data-feature="remediation-activity" hidden>
+        <div id="remediationActivityCards" class="metric-grid compact"></div>
+        <article class="panel"><div class="panel-title"><h3>Remediation activity context</h3><span>Active first, then task priority, overdue state, and due date</span></div><div class="table-wrap"><table id="remediationTable"></table></div></article>
+      </section>
     </section>
 
     <section id="trend" class="story">
-      <div class="section-heading"><div><span>REPORTING</span><h2>Vulnerability reporting and change over time</h2></div><p>Compare finding workload, affected machines, remediation outcomes, and SLA performance across runs or date ranges.</p></div>
+      <div class="section-heading"><div><span>REPORTING</span><h2>Vulnerability reporting and change over time</h2></div><div class="reporting-intro-actions"><p>Compare finding workload, affected machines, remediation outcomes, and SLA performance across runs or date ranges.</p><button id="openWorkflowHelp" type="button">How to use this dashboard</button></div></div>
       <section class="statistics-period-panel" aria-labelledby="statisticsPeriodTitle">
         <div>
           <span>COMPARISON WINDOW</span>
@@ -251,29 +275,25 @@
       <div id="collectionRunTrend" class="subsection-heading"><div><h3>Collection-run workload trajectory</h3></div></div>
       <article class="panel chart-panel"><div class="trend-chart-head"><div><strong>Completed snapshots from the last 90 days</strong><span id="trendFilterContext" class="filter-chip"></span></div><div class="legend"><span class="new">New / reopened</span><span class="fixed">Fixed</span><span class="remaining">Open</span></div></div><div id="trendChart" class="chart"></div></article>
       <article class="panel trend-history"><div class="panel-title"><h3>Weekly change history</h3><span>Select New or Fixed for recommendation, CVE, and machine details</span></div><div class="weekly-legend"><span><i class="new-key"></i>New</span><span><i class="fixed-key"></i>Fixed</span></div><div id="weeklyTrendChart" class="weekly-chart"></div><div class="table-wrap"><table id="weeklyComparisonTable"></table></div></article>
-      <div class="subsection-heading"><div><h3>Weekly remediation task due-date history</h3></div></div>
-      <div id="trendTaskDueCards" class="metric-grid compact task-due-summary"></div>
-      <article class="panel task-history"><div class="panel-title"><h3>Remediation task performance over time</h3><span>Separate from Defender-confirmed finding remediation</span></div><div class="table-wrap"><table id="weeklyTaskDueTable"></table></div></article>
+      <section id="remediationTaskHistorySection" data-feature="remediation-activity" hidden>
+        <div class="subsection-heading"><div><h3>Weekly remediation task due-date history</h3></div></div>
+        <div id="trendTaskDueCards" class="metric-grid compact task-due-summary"></div>
+        <article class="panel task-history"><div class="panel-title"><h3>Remediation task performance over time</h3><span>Separate from Defender-confirmed finding remediation</span></div><div class="table-wrap"><table id="weeklyTaskDueTable"></table></div></article>
+      </section>
     </section>
 
-    <section id="data-browser" class="story">
-      <div class="section-heading"><div><h2>Curated data evidence</h2></div></div>
-      <div class="notice data-browser-notice"><strong>Read-only evidence</strong><p>This view shows the normalized records used by the dashboard. It does not provide storage credentials, raw API access, editing, or deletion.</p></div>
-      <section class="data-browser-controls" aria-label="Data browser controls">
-        <label>Dataset<select id="dataBrowserDataset"></select></label>
-        <label>Search current dataset<input id="dataBrowserSearch" type="search" placeholder="Search any displayed field"></label>
-        <button id="dataBrowserSearchButton" type="button">Search</button>
-      </section>
-      <section id="dataBrowserMetadata" class="data-browser-metadata" aria-live="polite">Data browser is loading.</section>
-      <article class="panel data-browser-table-panel">
-        <div class="panel-title"><h3 id="dataBrowserTitle">Dataset rows</h3><span id="dataBrowserPageStatus"></span></div>
-        <div class="table-wrap"><table id="dataBrowserTable"></table></div>
-        <div class="data-browser-pagination"><button id="dataBrowserPrevious" type="button">Previous</button><button id="dataBrowserNext" type="button">Next</button></div>
-      </article>
-      <article class="panel data-browser-json-panel">
-        <div class="panel-title"><h3 id="dataBrowserRecordTitle">Select a row to inspect every field</h3><button id="copyDataBrowserJson" type="button" disabled>Copy JSON</button></div>
-        <pre id="dataBrowserJson">No record selected.</pre>
-      </article>
+    <section id="help" class="story workflow-help-story">
+      <div class="section-heading"><div><span>CUSTOMER WORKFLOW</span><h2>How to use Vulnerability View</h2></div><p>A practical daily workflow for choosing, tracking, and validating vulnerability remediation.</p></div>
+      <div class="workflow-help-body">
+        <section class="workflow-help-start"><h3>Daily workflow</h3><ol><li><strong>Confirm freshness.</strong> Check Data refreshed and recent collection runs. Do not make decisions from a failed or unexpectedly old collection.</li><li><strong>Understand movement.</strong> Review First seen and Fixed in the selected UTC window. Use changes since the previous run when you specifically need run-to-run movement.</li><li><strong>Choose work.</strong> Filter by severity, subscription, asset class, or domain. Start with recommendations affecting the most open findings and machines, then consider SLA status.</li><li><strong>Coordinate remediation.</strong> Open a recommendation to identify machines and CVEs. Set the dashboard status to In progress when tracking is enabled; perform the actual change through approved management tools.</li><li><strong>Validate after collection.</strong> Mark work fixed awaiting collection, then use the next successful collection to confirm the findings disappeared or remain detected.</li><li><strong>Report and escalate.</strong> Use Reporting for lifecycle, SLA, and period comparisons. Escalate critical or outside-SLA work that remains blocked.</li></ol></section>
+        <section><h3>Common customer scenarios</h3><div class="workflow-scenarios">
+          <article><strong>Daily triage</strong><p>Select the latest 24-hour window. Review First seen, then open high-impact recommendations to identify affected machines and CVEs.</p></article>
+          <article><strong>Validate yesterday's remediation</strong><p>Review Fixed in the same window and changes since the previous run. A machine with a fix may still contain other open findings.</p></article>
+          <article><strong>Work an overdue backlog</strong><p>Filter to Critical or High and review open findings outside SLA. Prioritize recommendations that remove the largest current exposure.</p></article>
+          <article><strong>Investigate work that did not clear</strong><p>Find recommendations marked fixed awaiting collection but still detected after the latest successful run, then inspect the remaining machines.</p></article>
+        </div></section>
+        <section class="workflow-help-definitions"><h3>Read the numbers correctly</h3><dl><div><dt>Finding instance</dt><dd>One vulnerability finding on one asset. Most dashboard totals count findings, not machines.</dd></div><div><dt>Machine count</dt><dd>Distinct endpoint devices represented by those findings. Cloud-only resources may not appear in endpoint inventory.</dd></div><div><dt>First seen window</dt><dd>Findings whose first-seen timestamp falls inside the displayed UTC range anchored to the latest collection.</dd></div><div><dt>Fixed window</dt><dd>Findings whose fixed timestamp falls inside the same range. A machine with a fix can still have other open findings.</dd></div><div><dt>Previous-run changes</dt><dd>New, reopened, or fixed findings between the two latest comparable collections.</dd></div><div><dt>Dashboard status</dt><dd>Shared coordination state attached to a recommendation ID. It does not update Defender or perform remediation.</dd></div></dl></section>
+      </div>
     </section>
 
   </main>
@@ -283,7 +303,7 @@
   <aside id="recommendationPreview" class="recommendation-preview" role="status" hidden></aside>
   <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
   <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
-  <script src="config.js?v=20261008-2112"></script>
-  <script src="app.js?v=20261009-1007"></script>
+  <script src="config.js?v=20261009-2303"></script>
+  <script src="app.js?v=20261009-2334"></script>
 </body>
 </html>

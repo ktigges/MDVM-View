@@ -302,6 +302,7 @@ def test_dashboard_authentication_is_disabled_by_default(tmp_path: Path):
         "user": None,
         "authorization": {
             "brandingAdministrator": True,
+            "dataBrowserReader": False,
         },
     }
 
@@ -326,7 +327,7 @@ def test_dashboard_authentication_protects_pages_and_api(monkeypatch, tmp_path: 
 
     for path in (
         "/",
-        "/?view=data-browser",
+        "/data-evidence",
         "/api/auth",
         "/api/status",
         "/api/data/findings.json",
@@ -366,15 +367,19 @@ def test_decode_app_service_principal_rejects_invalid_header(monkeypatch, tmp_pa
 
 def test_data_browser_is_disabled_by_default(tmp_path: Path):
     (tmp_path / "dashboard").mkdir()
+    (tmp_path / "dashboard/data-evidence.html").write_text("evidence", encoding="utf-8")
     app = create_app(Settings(), project_root=tmp_path)
 
     status, _ = asgi_get(app, "/api/data-browser/catalog")
+    page_status, _ = asgi_get(app, "/data-evidence")
 
     assert status == 404
+    assert page_status == 404
 
 
 def test_data_browser_lists_and_pages_curated_rows(tmp_path: Path):
     (tmp_path / "dashboard").mkdir()
+    (tmp_path / "dashboard/data-evidence.html").write_text("evidence", encoding="utf-8")
     write_json(tmp_path / "dashboard/data/findings.json", [
         {"FindingKey": "finding-1", "Severity": "Critical"},
         {"FindingKey": "finding-2", "Severity": "High"},
@@ -388,12 +393,15 @@ def test_data_browser_lists_and_pages_curated_rows(tmp_path: Path):
 
     catalog_status, catalog_body = asgi_get(app, "/api/data-browser/catalog")
     rows_status, rows_body = asgi_get(app, "/api/data-browser/findings?limit=1&query=High")
+    page_status, page_body = asgi_get(app, "/data-evidence")
 
     assert catalog_status == 200
     findings = next(item for item in json.loads(catalog_body)["datasets"] if item["id"] == "findings")
     assert findings["rowCount"] == 2
     assert findings["fields"] == ["FindingKey", "Severity"]
     assert rows_status == 200
+    assert page_status == 200
+    assert page_body == b"evidence"
     row_payload = json.loads(rows_body)
     assert row_payload["total"] == 1
     assert row_payload["limit"] == 1
@@ -402,6 +410,7 @@ def test_data_browser_lists_and_pages_curated_rows(tmp_path: Path):
 
 def test_data_browser_can_require_an_app_role(tmp_path: Path):
     (tmp_path / "dashboard").mkdir()
+    (tmp_path / "dashboard/data-evidence.html").write_text("evidence", encoding="utf-8")
     app = create_app(
         Settings(
             dashboard_data_browser_enabled=True,
@@ -411,13 +420,19 @@ def test_data_browser_can_require_an_app_role(tmp_path: Path):
     )
 
     status, _ = asgi_get(app, "/api/data-browser/catalog")
+    page_status, _ = asgi_get(app, "/data-evidence")
+    auth_status, auth_body = asgi_get(app, "/api/auth")
 
     assert status == 403
+    assert page_status == 403
+    assert auth_status == 200
+    assert json.loads(auth_body)["authorization"]["dataBrowserReader"] is False
 
 
 def test_data_browser_accepts_configured_app_role(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("WEBSITE_HOSTNAME", "dashboard.azurewebsites.net")
     (tmp_path / "dashboard").mkdir()
+    (tmp_path / "dashboard/data-evidence.html").write_text("evidence", encoding="utf-8")
     write_json(tmp_path / "dashboard/data/collection-runs.json", [])
     write_json(tmp_path / "dashboard/data/secure-scores.json", [])
     app = create_app(
@@ -431,8 +446,14 @@ def test_data_browser_accepts_configured_app_role(monkeypatch, tmp_path: Path):
     header = (b"x-ms-client-principal", encoded_principal().encode())
 
     status, _ = asgi_get(app, "/api/data-browser/catalog", [header])
+    page_status, page_body = asgi_get(app, "/data-evidence", [header])
+    auth_status, auth_body = asgi_get(app, "/api/auth", [header])
 
     assert status == 200
+    assert page_status == 200
+    assert page_body == b"evidence"
+    assert auth_status == 200
+    assert json.loads(auth_body)["authorization"]["dataBrowserReader"] is True
 
 
 def test_recommendation_tracking_view_confirms_after_newer_absent_run():

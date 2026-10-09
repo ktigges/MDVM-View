@@ -37,12 +37,14 @@ Use this separate path when working without the deployed Azure collector:
 
 ### 3. Operate
 
-1. [Operations and monitoring](operations-and-configuration.md) —
+1. [Daily vulnerability remediation workflow](daily-vulnerability-remediation-workflow.md) —
+   simple daily steps for selecting, performing, and confirming remediation
+2. [Operations and monitoring](operations-and-configuration.md) —
    credentials, managed identities, dashboard access, current-run evidence, and
    operational interfaces
-2. [Command reference](command-reference.md) — exact commands, effects, and
+3. [Command reference](command-reference.md) — exact commands, effects, and
    when to use them
-3. [Complete configuration reference](configuration-reference.md) — every
+4. [Complete configuration reference](configuration-reference.md) — every
    Terraform input, environment variable, JSON key, presentation setting, and
    script override
 
@@ -73,6 +75,7 @@ Use this separate path when working without the deployed Azure collector:
 | Deploy Function code | [Azure deployment: deploy the collector](../DEPLOY.md#deploy-the-collector-function) |
 | Deploy Web App code | [Azure deployment: deploy the dashboard Web App](../DEPLOY.md#deploy-the-authenticated-dashboard-web-app) |
 | Collect data now | [Operations and monitoring](operations-and-configuration.md) |
+| Follow the daily remediation process | [Daily vulnerability remediation workflow](daily-vulnerability-remediation-workflow.md) |
 | Check active progress or failed runs | [Troubleshooting](troubleshooting.md#4-collector-progress-failure-and-memory) |
 | Find a command | [Command reference](command-reference.md) |
 | Find a setting | [Configuration reference](configuration-reference.md) |

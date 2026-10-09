@@ -215,8 +215,8 @@ infrastructure changes so Terraform retains all three stages.
 
 The application rejects requests that do not contain the trusted Easy Auth
 principal. The Enterprise Application independently prevents unassigned users
-from signing in. If the hidden Data evidence browser is enabled, authorized
-group members open `/?view=data-browser`; its API also verifies the
+from signing in. If the diagnostic Data evidence endpoint is enabled, authorized
+group members open `/data-evidence`; its API also verifies the
 `Data.Evidence.Reader` role.
 
 Easy Auth uses an application credential with a two-year lifetime and an annual

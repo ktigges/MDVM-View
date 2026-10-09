@@ -195,6 +195,13 @@ the feature to be enabled and may require the `Data.Evidence.Reader` role.
 | `GET /api/data/<asset>.json` | Retrieves one complete dashboard dataset from local files or the verified current Azure bundle. |
 | `GET /api/data/cve-details/<cve-id>.json` | Retrieves one CVE record; the first request can load and verify the vulnerabilities dataset. |
 
+If a tracking `PUT` succeeds but the following tracking `GET` returns 502 or
+503 with `JSONDecodeError`, check whether the workflow container uses
+hierarchical namespace directory markers under `events/`. Current application
+versions read only immutable `.json` event blobs and ignore those zero-byte
+directory markers. Do not delete the markers or retained workflow events to
+repair this condition; deploy the application fix instead.
+
 Valid `<dataset>` values for the data browser are:
 
 ```text

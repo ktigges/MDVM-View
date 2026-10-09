@@ -143,10 +143,10 @@ Browser presentation settings are not security controls. Keep `diagnostics.showE
 
 ### Curated data evidence
 
-The Data evidence view is available only when
+The diagnostic Data evidence page is available only when
 `DASHBOARD_DATA_BROWSER_ENABLED=true`. Enabling it does not add a navigation
 item. An authorized operator who knows the exact URI opens
-`/?view=data-browser`; ordinary dashboard navigation and Statistics cards do
+`/data-evidence`; ordinary dashboard navigation and Statistics cards do
 not advertise the feature. It provides:
 
 - a whitelist of normalized datasets used by the dashboard;
@@ -162,7 +162,7 @@ App Service application role only to authorized operators or auditors. A hidden
 URI obscurity is not an authorization boundary; the server enforces both the
 feature flag and optional role.
 
-App Service Authentication protects the hidden `/?view=data-browser` page and
+App Service Authentication protects the diagnostic `/data-evidence` page and
 all `/api/data-browser/*` routes through the same global authentication
 middleware as the rest of the dashboard. The optional data-browser role is an
 additional authorization check after authentication.

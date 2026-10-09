@@ -537,9 +537,8 @@ DASHBOARD_DATA_BROWSER_ENABLED=true
 
 Behavior:
 
-- The **Data evidence** navigation link remains hidden even when the server
-  reports that the feature is enabled. Authorized operators open
-  `/?view=data-browser` directly.
+- Data evidence is not present in dashboard navigation or dashboard cards.
+  Authorized operators open `/data-evidence` directly.
 - Hiding the link is presentation only and is not a security control.
 - When disabled, `/api/data-browser/*` returns HTTP 404.
 - When `DASHBOARD_DATA_BROWSER_ROLE` is configured, authenticated users

@@ -841,7 +841,7 @@ flowchart TD
 
 ## Data evidence browser
 
-The hidden Data evidence view opens at `/?view=data-browser` when
+The diagnostic Data evidence page opens at `/data-evidence` when
 `DASHBOARD_DATA_BROWSER_ENABLED=true`. The browser reads the same verified
 curated bundle used by the dashboard. It does not expose raw Defender pages,
 storage paths, credentials, editing, or deletion.

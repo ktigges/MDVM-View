@@ -497,10 +497,11 @@ The ordered documentation index is [docs/README.md](docs/README.md).
 
 ### Operations
 
-1. [Operations and monitoring](docs/operations-and-configuration.md)
-2. [Command reference](docs/command-reference.md)
-3. [Collect and replay a sample](docs/sample-replay.md)
-4. [Complete configuration reference](docs/configuration-reference.md)
+1. [Daily vulnerability remediation workflow](docs/daily-vulnerability-remediation-workflow.md)
+2. [Operations and monitoring](docs/operations-and-configuration.md)
+3. [Command reference](docs/command-reference.md)
+4. [Collect and replay a sample](docs/sample-replay.md)
+5. [Complete configuration reference](docs/configuration-reference.md)
 
 ### Troubleshooting
 

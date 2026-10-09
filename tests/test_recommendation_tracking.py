@@ -81,6 +81,29 @@ def test_tracking_store_surfaces_malformed_events():
         store.latest()
 
 
+def test_tracking_store_ignores_adls_directory_markers():
+    container = FakeContainer()
+    container.blobs["events/hash"] = FakeBlob()
+    container.blobs["events/hash/2026"] = FakeBlob()
+    container.blobs["events/hash/2026/09"] = FakeBlob()
+    container.blobs["events/hash/2026/09/27"] = FakeBlob()
+    container.blobs["events/hash/2026/09/27/event.json"] = FakeBlob(
+        json.dumps({
+            "RecommendationId": "rec-1",
+            "UserStatus": "InProgress",
+            "UpdatedUtc": "2026-09-27T12:00:00Z",
+        }).encode(),
+    )
+    store = RecommendationTrackingStore(
+        "account",
+        "workflow",
+        object(),
+        service_factory=lambda **_: FakeService(container),
+    )
+
+    assert store.latest()["rec-1"]["UserStatus"] == "InProgress"
+
+
 def test_tracking_store_rejects_an_event_without_a_recommendation():
     container = FakeContainer()
     container.blobs["events/hash/2026/09/27/missing-id.json"] = FakeBlob(
