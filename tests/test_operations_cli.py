@@ -18,6 +18,20 @@ def test_parser_exposes_identical_cross_platform_commands():
     assert operations_cli.build_parser().parse_args(["invoke", "function", "--confirm"]).confirm is True
 
 
+def test_log_query_has_bounded_timeout(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_az(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(args, 0, stdout="[]")
+
+    monkeypatch.setattr(operations_cli, "_az", fake_az)
+
+    assert operations_cli._log_query("workspace-id", "subscription-id", "AppTraces | take 1") == []
+    assert captured["kwargs"] == {"capture": True, "timeout": 90}
+
+
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):
     terraform = tmp_path / "terraform.exe"
     terraform.write_bytes(b"local terraform")
