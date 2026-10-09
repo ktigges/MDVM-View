@@ -84,7 +84,7 @@ resource "azurerm_network_security_perimeter_access_rule" "deployment_subscripti
   name                                  = "allow-deployment-subscription"
   network_security_perimeter_profile_id = azurerm_network_security_perimeter_profile.storage[each.key].id
   direction                             = "Inbound"
-  subscription_ids                      = [var.subscription_id]
+  subscription_ids                      = ["/subscriptions/${var.subscription_id}"]
 }
 
 resource "azurerm_network_security_perimeter_access_rule" "public_ips" {
