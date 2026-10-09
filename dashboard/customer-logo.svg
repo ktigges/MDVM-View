@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="48" viewBox="0 0 180 48" role="img" aria-labelledby="title description">
+  <title id="title">Customer logo placeholder</title>
+  <desc id="description">Replace this file with the customer logo before enabling customer branding.</desc>
+  <rect x="1" y="1" width="178" height="46" rx="6" fill="#ffffff" fill-opacity=".08" stroke="#9ccbd4" stroke-width="2"/>
+  <path d="M17 14h20v20H17z" fill="none" stroke="#9ccbd4" stroke-width="2"/>
+  <path d="M22 24l4 4 7-9" fill="none" stroke="#9ccbd4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="48" y="29" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">CUSTOMER LOGO</text>
+</svg>

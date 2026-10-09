@@ -354,10 +354,18 @@ DVM Viewer > Users and groups**, then assign:
 - **Dashboard Viewer** to every user or group allowed to open the Web App.
 - **Data Evidence Reader** only to users or groups allowed to use the optional
   Data Evidence browser.
+- **Dashboard Administrator** only to users or groups allowed to upload and
+  replace customer branding.
 
 Until **Dashboard Viewer** is assigned, users cannot sign in to the hosted Web
 App. Group assignment requires the applicable Microsoft Entra licensing; assign
 individual users when group assignment is unavailable.
+
+Dashboard Administrators can select the header logo and upload a PNG up to 2
+MB and 4096 pixels per dimension. The dashboard automatically fits it within
+the header while preserving its aspect ratio. Each upload is retained as a new
+immutable version in the workflow container; the application never overwrites
+or deletes earlier logo versions.
 
 The `webapp` Terraform stage is cumulative: it preserves the existing
 foundation and Function while adding the hosted Web App. Microsoft Entra

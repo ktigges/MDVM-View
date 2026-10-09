@@ -197,6 +197,9 @@ Terraform input rather than changing the generated setting in the portal.
 | `AUTH_MODE` | Fixed to `managed_identity` |
 | `AZURE_CLIENT_ID` | Dashboard user-assigned managed identity |
 | `DASHBOARD_AUTH_ENABLED` | Fixed to `true` in Azure |
+| `DASHBOARD_BRANDING_CONTAINER` | Protected workflow container used for immutable customer-logo versions |
+| `DASHBOARD_BRANDING_ENABLED` | Fixed to `true` in Azure |
+| `DASHBOARD_BRANDING_ROLE` | `Dashboard.Administrator` |
 | `DASHBOARD_CACHE_SECONDS` | `var.dashboard_cache_seconds` |
 | `DASHBOARD_DATA_BROWSER_ENABLED` | `var.dashboard_data_browser_enabled` |
 | `DASHBOARD_DATA_BROWSER_ROLE` | `Data.Evidence.Reader` when enabled |

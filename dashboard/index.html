@@ -9,16 +9,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
-  <link rel="stylesheet" href="styles.css?v=20261008-0857">
+  <link rel="stylesheet" href="styles.css?v=20261008-2112">
 </head>
 <body>
   <header class="topbar">
     <div class="brand-title">
-      <span class="ms-logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      <button id="brandLogoButton" class="brand-logo-button" type="button" aria-label="Customer logo" aria-describedby="brandingStatus" disabled>
+        <span id="defaultLogo" class="ms-logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <img id="customerLogo" class="customer-logo" src="customer-logo.svg" alt="Customer logo" hidden>
+      </button>
+      <input id="customerLogoInput" class="customer-logo-input" type="file" accept="image/png,.png" hidden>
       <div>
-      <p class="eyebrow">VULNERABILITY VIEW</p>
-      <h1>Microsoft Vulnerability Management</h1>
+        <h1>Microsoft Vulnerability Management</h1>
+        <p class="eyebrow">Vulnerability View</p>
       </div>
+      <span id="brandingStatus" class="branding-status" role="status" aria-live="polite" hidden></span>
     </div>
     <div class="topbar-meta">
       <div class="freshness"><span id="healthDot"></span><strong id="freshnessText">Loading data</strong><small>Data refreshed · Live snapshot</small><small id="revisionText" class="revision-text">UI revision loading</small><small id="authStatus" class="auth-status">Checking access mode</small></div>
@@ -40,25 +45,33 @@
 
   <div class="app-shell">
   <nav id="primaryNavigation" class="story-nav" aria-label="Primary views">
-    <span class="nav-heading">Workspace</span>
-    <button class="active" data-view="executive"><span>Executive</span></button>
-    <button data-view="overview"><span>Vulnerabilities</span></button>
-    <button data-view="workstations"><span>Assets</span></button>
-    <button data-view="recommendations"><span>Recommendations</span></button>
-    <button data-view="priority"><span>Prioritize</span></button>
-    <button data-view="sla"><span>Remediate</span></button>
-    <button data-view="trend"><span>Reporting</span></button>
-    <button data-view="data-browser" data-feature="data-browser" hidden><span>Data evidence</span></button>
+    <div class="nav-header">
+      <span class="nav-heading">Workspace</span>
+      <button id="navToggle" class="nav-toggle" type="button" aria-label="Collapse navigation" aria-expanded="true" title="Collapse navigation">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+    </div>
+    <button class="active" data-view="executive"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg></span><span class="nav-label">Executive</span></button>
+    <button data-view="overview"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4zm0 4v10m-4-5h8"/></svg></span><span class="nav-label">Vulnerabilities</span></button>
+    <button data-view="workstations"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></span><span class="nav-label">Assets</span></button>
+    <button data-view="recommendations"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4h6l1 2h3v15H5V6h3l1-2zm0 7h6m-6 4h6"/></svg></span><span class="nav-label">Recommendations</span></button>
+    <button data-view="priority"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="M12 2v3m0 14v3m10-10h-3M5 12H2"/></svg></span><span class="nav-label">Prioritize</span></button>
+    <button data-view="sla"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><span class="nav-label">Remediate</span></button>
+    <button data-view="trend"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2"/></svg></span><span class="nav-label">Reporting</span></button>
+    <button data-view="data-browser" data-feature="data-browser" hidden><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5m-16 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span><span class="nav-label">Data evidence</span></button>
   </nav>
   <div class="workspace">
   <div class="workspace-controls">
   <section id="scopeBar" class="scope-bar" aria-live="polite">
-    <div><strong>Current scope</strong><p id="scopeSummary">Loading filters</p><div id="activeFilterChips" class="active-filter-chips"></div></div>
-    <button id="resetFilters" type="button">Reset all filters</button>
-  </section>
-  <section class="filter-toolbar" aria-labelledby="filterTitle">
-    <div><span>FILTER WORKSPACE</span><strong id="filterTitle">Filter current view</strong><small id="filterCount">Loading scope</small></div>
-    <button id="filterToggle" class="filter-toggle" type="button" aria-controls="filterBar" aria-expanded="false" aria-label="Show filters" title="Show filters"></button>
+    <div class="scope-content">
+      <div class="scope-heading"><span>FILTER WORKSPACE</span><strong id="filterTitle">Current scope</strong><small id="filterCount">Loading scope</small></div>
+      <p id="scopeSummary">Loading filters</p>
+      <div id="activeFilterChips" class="active-filter-chips"></div>
+    </div>
+    <div class="scope-actions">
+      <button id="filterToggle" class="filter-toggle" type="button" aria-controls="filterBar" aria-expanded="false" aria-label="Show filters" title="Show filters">Filters</button>
+      <button id="resetFilters" type="button">Reset</button>
+    </div>
   </section>
   <section id="filterBar" class="filterbar" aria-label="Dashboard filters">
     <label>Severity / task priority<select id="severityFilter"><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
@@ -104,9 +117,9 @@
     <section class="executive-band" aria-label="Executive security posture">
       <div class="executive-heading"><div><span>EXECUTIVE POSTURE</span><h2>Current security posture</h2></div><p>Filtered remediation posture, Microsoft Secure Score, and policy SLA outcomes</p></div>
       <div class="executive-decision-grid">
-        <article id="secureScoreCard" class="secure-score-card"></article>
-        <article class="decision-panel"><div class="decision-panel-title"><span>WORK TO DO NOW</span><h3>Current posture and latest-run change</h3><small id="executiveDeltaContext">Loading comparable runs</small></div><div id="executiveWorkload" class="decision-metrics"></div></article>
-        <article class="decision-panel"><div class="decision-panel-title"><span>FINDING SLA PERFORMANCE</span><h3>How finding remediation is performing</h3></div><div id="executiveSlaPerformance" class="decision-metrics"></div></article>
+        <article class="decision-panel primary-kpis"><div class="decision-panel-title"><span>WORK TO DO NOW</span><h3>Current exposure and latest-run change</h3><small id="executiveDeltaContext">Loading comparable runs</small></div><div id="executiveWorkload" class="decision-metrics"></div></article>
+        <article class="decision-panel sla-kpis"><div class="decision-panel-title"><span>FINDING SLA PERFORMANCE</span><h3>How finding remediation is performing</h3></div><div id="executiveSlaPerformance" class="decision-metrics"></div></article>
+        <article id="secureScoreCard" class="secure-score-card supporting-score"></article>
       </div>
     </section>
       <div class="subsection-heading"><div><span>RECOMMENDATION IMPACT</span><h3>Highest-impact actions</h3></div><p class="impact-warning">One recommendation can address many findings, devices, and CVEs. Select an action to inspect exactly what it can fix.</p></div>
@@ -118,6 +131,12 @@
       </div>
       <div class="subsection-heading"><div><span>CURRENT EXPOSURE MIX</span><h3>Severity and subscription coverage</h3></div></div>
       <div id="severityCards" class="metric-grid compact"></div>
+      <div class="subsection-heading"><div><span>LATEST COLLECTION MOVEMENT</span><h3>Overall finding movement between the latest runs</h3></div><p>Every value counts finding instances; machine counts are shown beneath each total.</p></div>
+      <article class="panel latest-run-panel">
+        <div class="panel-title"><h3 id="executiveRunMovementTitle">Latest-run comparison</h3><span id="executiveRunMovementContext">Loading comparable runs</span></div>
+        <div id="executiveRunMovement" class="decision-metrics latest-run-metrics"></div>
+        <p id="executiveRunEquation" class="latest-run-equation"></p>
+      </article>
       <div class="subsection-heading"><div><span>GLOBAL VULNERABILITY SLA · FINDING-LEVEL RESULTS</span><h3>Defender-confirmed finding fixes against severity SLA windows</h3></div><p>Every value below counts finding instances: one CVE detected on one machine.</p></div>
       <div class="panel sla-severity-panel"><div class="table-wrap"><table id="executiveSlaBreakdown"></table></div></div>
       <div id="overviewSlaCards" class="metric-grid compact sla-summary"></div>
@@ -241,7 +260,7 @@
   <aside id="recommendationPreview" class="recommendation-preview" role="status" hidden></aside>
   <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
   <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
-  <script src="config.js?v=20261008-0857"></script>
-  <script src="app.js?v=20261008-0857"></script>
+  <script src="config.js?v=20261008-2112"></script>
+  <script src="app.js?v=20261008-2112"></script>
 </body>
 </html>

@@ -15,6 +15,10 @@ from vulnerability_view.dashboard_server import (
     recommendation_tracking_view,
 )
 
+VALID_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+
 
 def write_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -275,6 +279,9 @@ def test_dashboard_authentication_is_disabled_by_default(tmp_path: Path):
         "provider": "disabled",
         "authenticated": False,
         "user": None,
+        "authorization": {
+            "brandingAdministrator": True,
+        },
     }
 
 
@@ -561,6 +568,17 @@ class FakeRecommendationTrackingStore:
         return event
 
 
+class FakeDashboardBrandingStore:
+    def __init__(self):
+        self.content = None
+
+    def latest(self):
+        return self.content
+
+    def upload(self, content):
+        self.content = bytes(content)
+
+
 def test_recommendation_tracking_api_allows_dashboard_user_and_records_action(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("WEBSITE_HOSTNAME", "dashboard.azurewebsites.net")
     (tmp_path / "dashboard").mkdir()
@@ -658,3 +676,104 @@ def test_recommendation_tracking_requires_authentication_on_azure(monkeypatch, t
             project_root=tmp_path,
             recommendation_tracking_store=FakeRecommendationTrackingStore(),
         )
+
+
+def test_branding_api_requires_dashboard_administrator_and_serves_uploaded_png(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("WEBSITE_HOSTNAME", "dashboard.azurewebsites.net")
+    (tmp_path / "dashboard").mkdir()
+    branding_store = FakeDashboardBrandingStore()
+    app = create_app(
+        Settings(dashboard_auth_enabled=True, dashboard_branding_enabled=True),
+        project_root=tmp_path,
+        dashboard_branding_store=branding_store,
+    )
+    viewer_headers = [
+        (b"x-ms-client-principal", encoded_principal(["Dashboard.Viewer"]).encode()),
+        (b"content-type", b"image/png"),
+        (b"content-length", str(len(VALID_PNG)).encode()),
+    ]
+    admin_headers = [
+        (b"x-ms-client-principal", encoded_principal(["Dashboard.Administrator"]).encode()),
+        (b"content-type", b"image/png"),
+        (b"content-length", str(len(VALID_PNG)).encode()),
+    ]
+
+    forbidden_status, _, _ = asgi_response(
+        app,
+        "/api/branding/logo",
+        viewer_headers,
+        method="PUT",
+        request_body=VALID_PNG,
+    )
+    updated_status, updated_headers, updated_body = asgi_response(
+        app,
+        "/api/branding/logo",
+        admin_headers,
+        method="PUT",
+        request_body=VALID_PNG,
+    )
+    logo_status, logo_headers, logo_body = asgi_response(
+        app,
+        "/api/branding/logo",
+        viewer_headers[:1],
+    )
+
+    assert forbidden_status == 403
+    assert updated_status == 200
+    assert updated_headers[b"cache-control"] == b"no-store"
+    assert json.loads(updated_body) == {"status": "updated", "width": 1, "height": 1}
+    assert logo_status == 200
+    assert logo_headers[b"content-type"] == b"image/png"
+    assert logo_headers[b"x-content-type-options"] == b"nosniff"
+    assert logo_body == VALID_PNG
+
+
+def test_branding_api_rejects_non_png_and_invalid_png(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("WEBSITE_HOSTNAME", "dashboard.azurewebsites.net")
+    (tmp_path / "dashboard").mkdir()
+    app = create_app(
+        Settings(dashboard_auth_enabled=True, dashboard_branding_enabled=True),
+        project_root=tmp_path,
+        dashboard_branding_store=FakeDashboardBrandingStore(),
+    )
+    principal = (b"x-ms-client-principal", encoded_principal(["Dashboard.Administrator"]).encode())
+
+    wrong_type_status, _, _ = asgi_response(
+        app,
+        "/api/branding/logo",
+        [principal, (b"content-type", b"image/jpeg")],
+        method="PUT",
+        request_body=b"not-a-png",
+    )
+    invalid_status, _, invalid_body = asgi_response(
+        app,
+        "/api/branding/logo",
+        [principal, (b"content-type", b"image/png")],
+        method="PUT",
+        request_body=b"not-a-png",
+    )
+
+    assert wrong_type_status == 415
+    assert invalid_status == 400
+    assert json.loads(invalid_body)["detail"] == "The uploaded logo is not a PNG file"
+
+
+def test_branding_upload_is_available_in_local_preview(tmp_path: Path):
+    (tmp_path / "dashboard").mkdir()
+    branding_store = FakeDashboardBrandingStore()
+    app = create_app(
+        Settings(dashboard_branding_enabled=True),
+        project_root=tmp_path,
+        dashboard_branding_store=branding_store,
+    )
+
+    status, _, _ = asgi_response(
+        app,
+        "/api/branding/logo",
+        [(b"content-type", b"image/png")],
+        method="PUT",
+        request_body=VALID_PNG,
+    )
+
+    assert status == 200
+    assert branding_store.content == VALID_PNG

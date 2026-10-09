@@ -607,6 +607,15 @@ resource "azuread_application" "dashboard" {
     value                = "Recommendation.Tracker"
   }
 
+  app_role {
+    allowed_member_types = ["User"]
+    description          = "Allows assigned users and groups to upload customer dashboard branding."
+    display_name         = "Dashboard Administrator"
+    enabled              = true
+    id                   = "b18f83b9-3db8-4b94-bdad-94e7a4c94195"
+    value                = "Dashboard.Administrator"
+  }
+
   web {
     homepage_url  = "https://${var.web_app_name}.azurewebsites.net/"
     logout_url    = "https://${var.web_app_name}.azurewebsites.net/.auth/logout"
@@ -735,6 +744,9 @@ resource "azurerm_linux_web_app" "dashboard" {
     "AUTH_MODE"                                   = "managed_identity"
     "AZURE_CLIENT_ID"                             = azurerm_user_assigned_identity.dashboard[each.key].client_id
     "DASHBOARD_AUTH_ENABLED"                      = "true"
+    "DASHBOARD_BRANDING_CONTAINER"                = var.dashboard_recommendation_tracking_container
+    "DASHBOARD_BRANDING_ENABLED"                  = "true"
+    "DASHBOARD_BRANDING_ROLE"                     = "Dashboard.Administrator"
     "DASHBOARD_CACHE_SECONDS"                     = tostring(var.dashboard_cache_seconds)
     "DASHBOARD_VERSION"                           = var.dashboard_version
     "DASHBOARD_DATA_BROWSER_ENABLED"              = tostring(var.dashboard_data_browser_enabled)

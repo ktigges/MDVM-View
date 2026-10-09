@@ -10,6 +10,11 @@ window.VULNERABILITY_VIEW_CONFIG = {
   branding: {
     eyebrow: "VULNERABILITY VIEW",
     title: "Microsoft Vulnerability Management",
+    customerLogo: {
+      enabled: false,
+      src: "customer-logo.svg",
+      alt: "Customer logo",
+    },
   },
   theme: {
     primary: "#0b2f4f",

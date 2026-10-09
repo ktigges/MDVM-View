@@ -83,25 +83,22 @@ def test_dashboard_loads_datasets_progressively():
     assert ".loading-notice.degraded" in stylesheet
 
 
-def test_dashboard_filter_workspace_has_distinct_shading():
+def test_dashboard_filter_workspace_uses_compact_combined_toolbar():
     html = Path("dashboard/index.html").read_text()
     stylesheet = Path("dashboard/styles.css").read_text()
-    final_toolbar_rule = [rule for rule in re.findall(r"\.filter-toolbar\{([^}]*)\}", stylesheet) if "background:" in rule][-1]
     final_filterbar_rule = [rule for rule in re.findall(r"\.filterbar\{([^}]*)\}", stylesheet) if "background:" in rule][-1]
 
-    assert html.index('id="scopeBar"') < html.index('class="filter-toolbar"')
-    assert "background:#d9dde1!important" in final_toolbar_rule
-    assert "background:#adb7bd!important" in final_filterbar_rule
-    assert "box-shadow:inset 0 1px 0" in final_toolbar_rule
-    assert "box-shadow:0 16px 30px" in final_filterbar_rule
+    assert html.index('id="scopeBar"') < html.index('id="filterBar"')
+    assert 'class="scope-actions"' in html
+    assert '>Filters</button>' in html
+    assert "background:#f2f5f7!important" in final_filterbar_rule
+    assert "box-shadow:0 14px 28px" in final_filterbar_rule
     assert 'class="filter-check-options"' in html
-    assert "background-color:#cdd4d8!important" in stylesheet
-    assert "background:#c7cfd3" in stylesheet
+    assert ".scope-bar{min-height:64px!important" in stylesheet
+    assert "background:#fff!important" in stylesheet
     assert ".filterbar fieldset{display:grid!important" in stylesheet
     assert "border:0!important" in stylesheet
-    assert "background:#17384f!important" in stylesheet
-    assert "border-left:5px solid var(--cyan)!important" in stylesheet
-    assert "@media(max-width:1450px)" in stylesheet
+    assert ".filter-toggle[aria-expanded=\"true\"]" in stylesheet
     assert "overflow-wrap:anywhere" in stylesheet
 
 
@@ -236,13 +233,13 @@ def test_dashboard_header_and_scope_are_readable():
     stylesheet = Path("dashboard/styles.css").read_text()
 
     assert "Data refreshed · Live snapshot" in html
-    assert ".freshness strong{font-size:16px!important" in stylesheet
-    assert ".header-status-item{padding:9px 11px!important;font-size:12px!important}" in stylesheet
-    assert ".app-shell{grid-template-columns:220px minmax(0,1fr)!important}" in stylesheet
-    assert ".story-nav button span{font-size:15px!important" in stylesheet
-    assert ".scope-bar strong{font-size:17px!important}" in stylesheet
-    assert ".scope-bar p{font-size:14px!important" in stylesheet
-    assert ".filter-toolbar #filterCount{font-size:13px!important}" in stylesheet
+    assert "--topbar-height:64px" in stylesheet
+    assert ".topbar h1{order:1" in stylesheet
+    assert ".app-shell{width:100%;max-width:none!important" in stylesheet
+    assert "grid-template-columns:216px minmax(0,1fr)!important" in stylesheet
+    assert ".story-nav .nav-label" in stylesheet
+    assert ".scope-bar p{grid-column:1;" in stylesheet
+    assert 'id="filterCount"' in html
 
 
 def test_dashboard_resets_scroll_to_top_on_refresh():
@@ -449,7 +446,8 @@ def test_dashboard_uses_statistics_tab_without_ownership_story():
     javascript = Path("dashboard/app.js").read_text()
 
     assert 'data-view="trend"' in html
-    assert '<button data-view="trend"><span>Reporting</span></button>' in html
+    assert 'data-view="trend"' in html
+    assert '<span class="nav-label">Reporting</span>' in html
     assert "<h2>Vulnerability reporting and change over time</h2>" in html
     assert 'id="statisticsPeriod"' in html
     assert "This week vs previous week" in html
@@ -566,7 +564,8 @@ def test_dashboard_asset_inventory_uses_devices_and_includes_cloud_assets_withou
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
 
-    assert '<button data-view="workstations"><span>Assets</span></button>' in html
+    assert 'data-view="workstations"' in html
+    assert '<span class="nav-label">Assets</span>' in html
     assert "<h2>Asset inventory</h2>" in html
     assert "including assets with no current vulnerability rows" in html
     assert '{name:"devices",key:"devices",label:"device inventory",required:true}' in javascript
@@ -612,7 +611,8 @@ def test_dashboard_reports_latest_run_executive_deltas():
     assert "since previous run" in javascript
     assert "New findings since previous run" in javascript
     assert "Findings fixed since previous run" in javascript
-    assert 'label:"Open recommendations"' in javascript
+    assert 'label:"Outside SLA"' in javascript
+    assert 'label:"Fixed since previous run"' in javascript
     assert "metric-delta" in javascript
     assert ".metric-delta.good" in stylesheet
     assert ".metric-delta.bad" in stylesheet
@@ -621,7 +621,8 @@ def test_dashboard_reports_latest_run_executive_deltas():
 def test_statistics_view_is_presented_as_reporting():
     html = Path("dashboard/index.html").read_text()
 
-    assert '<button data-view="trend"><span>Reporting</span></button>' in html
+    assert 'data-view="trend"' in html
+    assert '<span class="nav-label">Reporting</span>' in html
     assert "Vulnerability reporting and change over time" in html
     assert "Workload and SLA statistics" not in html
     assert "New findings" in html
@@ -703,6 +704,27 @@ def test_dashboard_shows_ui_revision_below_live_snapshot():
     assert "Could not stamp all dashboard asset versions" in deployment
 
 
+def test_dashboard_customer_logo_placeholder_is_hidden_by_default():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    configuration = Path("dashboard/config.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert Path("dashboard/customer-logo.svg").is_file()
+    assert 'id="customerLogo"' in html
+    assert 'src="customer-logo.svg"' in html
+    assert 'alt="Customer logo" hidden' in html
+    assert "customerLogo.hidden=!customLogoEnabled" in javascript
+    assert "$(\"defaultLogo\").hidden=customLogoEnabled" in javascript
+    assert 'id="brandLogoButton"' in html
+    assert 'accept="image/png,.png"' in html
+    assert 'fetch("/api/branding/logo"' in javascript
+    assert "MAX_CUSTOMER_LOGO_BYTES" in javascript
+    assert "height:30px;max-width:150px" in stylesheet
+    assert "enabled: false" in configuration
+    assert ".customer-logo[hidden],.customer-logo-input[hidden]{display:none!important}" in stylesheet
+
+
 def test_dashboard_uses_top_filters_and_responsive_workspace_navigation():
     html = Path("dashboard/index.html").read_text()
     stylesheet = Path("dashboard/styles.css").read_text()
@@ -714,9 +736,12 @@ def test_dashboard_uses_top_filters_and_responsive_workspace_navigation():
     assert 'aria-label="Primary views"' in html
     navigation = html.split('<nav id="primaryNavigation"', 1)[1].split("</nav>", 1)[0]
     assert "<small>" not in navigation
-    assert ".app-shell{grid-template-columns:190px" in stylesheet
+    assert 'id="navToggle"' in navigation
+    assert 'class="nav-icon"' in navigation
+    assert ".app-shell{width:100%;max-width:none!important" in stylesheet
+    assert "body.nav-collapsed .app-shell{grid-template-columns:64px" in stylesheet
     assert ".story-nav{position:sticky!important" in stylesheet
-    assert "@media(max-width:960px)" in stylesheet
+    assert "@media(max-width:780px)" in stylesheet
     assert ".filterbar{display:grid!important" in stylesheet
     assert ".filter-toggle[aria-expanded=\"true\"]::before" in stylesheet
     assert "expandedByDefault: false" in configuration

@@ -356,10 +356,18 @@ Enterprise applications > DVM Viewer > Users and groups**:
 - Assign **Dashboard Viewer** to everyone who may open the application.
 - Assign **Data Evidence Reader** only to users or groups that may use the
   hidden Data evidence browser.
+- Assign **Dashboard Administrator** only to users or groups allowed to upload
+  and replace customer branding.
 
 Terraform does not create an access group and does not manage these
 assignments. Until **Dashboard Viewer** is assigned, users cannot sign in to
 the hosted Web App.
+
+Customer-logo uploads accept PNG files up to 2 MB and 4096 pixels per
+dimension. The dashboard preserves the image aspect ratio and fits it into the
+header automatically. Uploaded versions are appended under `branding/logos/`
+in the protected workflow container with `overwrite=False`; the application
+does not delete previous logo versions.
 
 ## Storage-account separation
 
@@ -1071,7 +1079,9 @@ Assign:
 
 - **Dashboard Viewer** to everyone allowed to open the dashboard;
 - **Data Evidence Reader** only to users allowed to use the optional evidence
-  browser.
+  browser;
+- **Dashboard Administrator** only to users allowed to upload customer
+  branding.
 
 Shared recommendation status is available to authenticated Dashboard Viewers
 when tracking is enabled.
@@ -1090,6 +1100,8 @@ Verify:
 5. The data timestamp matches the current immutable run, not the Web App
    deployment time.
 6. `/api/status` identifies the expected run and Azure data source.
+7. A Dashboard Administrator can select the header logo and upload a PNG; a
+   Dashboard Viewer without that role cannot upload one.
 
 Publishing Web App code never starts a collection. If the data timestamp is
 old, inspect Function status and run history separately.
