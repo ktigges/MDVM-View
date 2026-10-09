@@ -26,6 +26,18 @@ output "current_container_name" {
   value = azurerm_storage_container.current.name
 }
 
+output "network_security_perimeter_name" {
+  value = try(azurerm_network_security_perimeter.storage["storage"].name, null)
+}
+
+output "network_security_perimeter_profile_name" {
+  value = try(azurerm_network_security_perimeter_profile.storage["storage"].name, null)
+}
+
+output "network_security_perimeter_access_mode" {
+  value = var.network_security_perimeter_enabled ? var.network_security_perimeter_access_mode : null
+}
+
 output "function_app_name" {
   value = try(azurerm_function_app_flex_consumption.collector["collector"].name, null)
 }

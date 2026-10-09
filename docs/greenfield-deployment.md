@@ -91,6 +91,9 @@ This creates:
 
 - A new resource group.
 - A protected ADLS Gen2 storage account.
+- A default-enabled Network Security Perimeter with a shared Storage profile,
+  an inbound deployment-subscription rule, and an initial `0.0.0.0/0` IPv4
+  rule.
 - Private `dvm-history` and `dvm-current` containers.
 - Thirty-day blob and container soft delete by default.
 - An unlocked 365-day WORM policy on `dvm-history`; `dvm-current` remains
@@ -99,6 +102,13 @@ This creates:
 Historical storage and both containers have Terraform `prevent_destroy`
 protection. Application writes under `raw/`, `curated/`, and `runs/` remain
 append-only. Only `dvm-current/current/manifest.json` is replaceable.
+
+The perimeter initially does not restrict IPv4 source addresses. Microsoft
+Entra authentication and Storage data-plane RBAC still protect every request.
+The customer can replace `0.0.0.0/0` with approved operator CIDRs after
+validation. Azure Policy must allow
+`publicNetworkAccess=SecuredByPerimeter`; an unconditional `Disabled` policy is
+not compatible with this no-VNet deployment.
 
 Soft delete provides a recovery window after an eligible deletion. WORM blocks
 modification and deletion during the retention period. Soft delete does not

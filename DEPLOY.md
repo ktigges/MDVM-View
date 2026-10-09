@@ -71,6 +71,18 @@ the collector's current live dataset from Azure Storage.
    `collector_management_group_id` contain the same GUID. Do not enter the
    display name `Tenant Root Group`.
 
+   Keep `network_security_perimeter_enabled=true` for the default customer
+   deployment. The initial `network_security_perimeter_allowed_ip_cidrs` value
+   is `["0.0.0.0/0"]`, which does not restrict IPv4 source addresses yet.
+   Microsoft Entra authentication and Storage RBAC still protect every data
+   request. Replace that value with approved operator CIDRs when the customer
+   is ready to restrict source networks.
+
+   The customer's Azure Policy must allow
+   `publicNetworkAccess=SecuredByPerimeter`. A policy that unconditionally
+   changes Storage public network access to `Disabled` must be updated or
+   exempt the NSP-associated Storage accounts.
+
 4. Before signing in, planning, or deploying, copy `.env.example` to `.env`
    and set these environment variables:
 
@@ -406,6 +418,71 @@ template. It is not read by Terraform and is not packaged into the Function.
 Azure Function runtime settings are created by Terraform as Function App
 application settings.
 
+## Network Security Perimeter option
+
+Azure deployments enable a Network Security Perimeter (NSP) by default. The
+foundation stage creates one perimeter and one Storage profile, then associates
+the protected history account. The Function stage associates the separate
+Function runtime account with the same profile.
+
+The NSP provides these benefits without requiring a VNet or private endpoints:
+
+- Centralizes the network boundary for both Storage accounts.
+- Allows customer policy to use
+  `publicNetworkAccess=SecuredByPerimeter` instead of unrestricted `Enabled`.
+- Explicitly permits the deployment subscription so the Function, hosted Web
+  App, and Azure deployment service can reach Storage.
+- Preserves Microsoft Entra authentication, managed identities, private
+  containers, and Storage data-plane RBAC as the authorization controls.
+- Provides a controlled path to restrict operator access to approved public
+  CIDRs later without redesigning the application.
+
+Configure the option in `infra/terraform/main.tfvars.json`:
+
+```json
+{
+  "network_security_perimeter_enabled": true,
+  "network_security_perimeter_access_mode": "Enforced",
+  "network_security_perimeter_allowed_ip_cidrs": [
+    "0.0.0.0/0"
+  ]
+}
+```
+
+`0.0.0.0/0` intentionally leaves IPv4 source addresses unrestricted during the
+initial deployment. It does not make containers or blobs anonymous. Replace it
+with approved corporate or operator egress CIDRs when the customer is ready to
+enforce source-IP restrictions.
+
+The customer Azure Policy must permit
+`publicNetworkAccess=SecuredByPerimeter`. A policy that always changes Storage
+public network access to `Disabled` must be updated or exempt the two
+NSP-associated Storage accounts. Otherwise, Function ZIP deployment and
+application Storage access remain blocked.
+
+To add the NSP to an environment where the Function infrastructure already
+exists, create a new cumulative Function plan:
+
+```bash
+python -m vulnerability_view.operations_cli plan function
+python -m vulnerability_view.operations_cli show function
+python -m vulnerability_view.operations_cli apply function
+```
+
+Review the plan before applying it. It should add the perimeter, profile,
+rules, and two Storage associations without replacing either Storage account.
+After apply, both accounts should report `SecuredByPerimeter`. Then publish and
+verify the Function:
+
+```bash
+python -m vulnerability_view.operations_cli deploy function
+python -m vulnerability_view.operations_cli verify function
+```
+
+Set `network_security_perimeter_enabled=false` only when customer policy allows
+ordinary public Storage access and the customer explicitly chooses not to use
+the perimeter.
+
 ## Required operator permissions
 
 For a collector-only installation, the identity running Terraform needs:
@@ -509,22 +586,28 @@ Both ZIP files are local build artifacts and must not be committed.
    - HTTPS-only and TLS 1.2 minimum.
    - Shared-key access disabled.
    - Public blob access disabled.
-   - Public network endpoint enabled for the local Web App and operator
-     verification; every request still requires Microsoft Entra authentication
-     and Storage data-plane RBAC.
+   - Associated with the default Storage Network Security Perimeter profile.
+   - Every request still requires Microsoft Entra authentication and Storage
+     data-plane RBAC.
    - Configurable LRS, ZRS, GRS, or GZRS replication.
    - Blob and container soft delete, 30 days by default.
    - Terraform `prevent_destroy`.
-3. One private history container, `dvm-history` by default:
+3. One Network Security Perimeter and shared Storage profile:
+   - Enabled by default through `network_security_perimeter_enabled`.
+   - The deployment subscription is allowed for Function, hosted Web App, and
+     Azure deployment-service Storage traffic.
+   - IPv4 source addresses are initially unrestricted through `0.0.0.0/0`.
+   - Association mode defaults to `Enforced`.
+4. One private history container, `dvm-history` by default:
    - Holds append-only `raw/`, `curated/`, and `runs/` paths.
    - An unlocked 365-day time-based immutability policy protects existing and
      newly written blobs from modification or deletion during their retention period.
    - Terraform `prevent_destroy`.
-4. One private current-pointer container, `dvm-current` by default:
+5. One private current-pointer container, `dvm-current` by default:
    - Holds only `current/manifest.json`.
    - Has no immutability policy because the pointer must be replaceable.
    - Terraform `prevent_destroy`.
-5. Storage Blob Data Contributor on the history account for the identity running
+6. Storage Blob Data Contributor on the history account for the identity running
    Terraform when `grant_deployer_history_access=true`.
 
 Soft delete and WORM serve different purposes. The 30-day soft-delete window
@@ -558,8 +641,9 @@ or Function runtime account.
    - Used for host state and deployment packages only.
    - Shared-key access disabled.
    - Public blob access disabled.
-   - Public network endpoint enabled for Function hosting and code deployment;
-     anonymous blob access remains disabled.
+   - Associated with the same Storage Network Security Perimeter profile for
+     Function hosting and code deployment.
+   - Anonymous blob access remains disabled.
    - Seven-day blob and container soft delete.
 4. One private `function-releases` container in the runtime account.
 5. One user-assigned collector managed identity attached to the Function App.

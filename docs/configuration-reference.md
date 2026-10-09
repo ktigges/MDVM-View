@@ -1,6 +1,6 @@
 # Complete configuration reference
 
-> **Last modified:** 2026-09-28
+> **Last modified:** 2026-10-08
 > **Purpose:** List every operator-controlled configuration file and setting used by the collector, dashboard, Terraform, and operational scripts.
 
 For executable workflows and safety guidance, see the
@@ -61,6 +61,9 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `history_immutability_days` | `365`; 1-146000 | Minimum WORM retention for history blobs |
 | `lock_history_immutability_policy` | `false` | Permanently locks WORM policy when true; cannot be reversed or shortened |
 | `grant_deployer_history_access` | `true` | Grants the Terraform execution identity Blob Data Contributor for status, restore, backfill, and seeding |
+| `network_security_perimeter_enabled` | `true` | Creates a shared Storage Network Security Perimeter profile and associates the history and Function runtime accounts |
+| `network_security_perimeter_access_mode` | `Enforced`; `Audit`, `Enforced`, or `Learning` | Controls the access mode used by both Storage associations |
+| `network_security_perimeter_allowed_ip_cidrs` | `["0.0.0.0/0"]`; valid IPv4/IPv6 CIDRs | Allows public source networks through the perimeter; the default does not restrict IPv4 addresses yet |
 | `deploy_function` | `false` | Cumulative-stage switch used by the deployment helper to create the collector stack |
 | `deploy_web_app` | `false` | Cumulative-stage switch used by the deployment helper to create the dashboard stack |
 | `function_runtime_storage_account_name` | Required, globally unique | Replaceable Functions host/deployment storage; not retained DVM history |
@@ -90,6 +93,19 @@ not use the display name `Tenant Root Group` or the full resource path.
 `tfplan webapp` is cumulative: it preserves and plans the Function and Web App.
 Terraform plan output normally displays only differences. A setting absent from
 a no-op plan may already match Azure.
+
+When the perimeter is enabled, Terraform also adds an inbound subscription rule
+for `subscription_id`. This permits the Function, hosted Web App, and Azure
+deployment service to reach Storage from the deployment subscription. Network
+permission does not replace authentication: the private containers still
+require Microsoft Entra tokens and the appropriate Storage data-plane role.
+
+For the initial customer deployment,
+`network_security_perimeter_allowed_ip_cidrs=["0.0.0.0/0"]` intentionally
+leaves IPv4 sources unrestricted while the perimeter behavior is validated.
+Replace it with approved operator or corporate egress CIDRs later. Customer
+policy must permit `publicNetworkAccess=SecuredByPerimeter`; forcing
+`publicNetworkAccess=Disabled` prevents the no-VNet architecture from operating.
 
 ## 3. Data-mode behavior
 

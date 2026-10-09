@@ -16,6 +16,11 @@
   "history_immutability_days": 365,
   "lock_history_immutability_policy": false,
   "grant_deployer_history_access": true,
+  "network_security_perimeter_enabled": true,
+  "network_security_perimeter_access_mode": "Enforced",
+  "network_security_perimeter_allowed_ip_cidrs": [
+    "0.0.0.0/0"
+  ],
   "deploy_function": false,
   "deploy_web_app": false,
   "function_runtime_storage_account_name": "stdvmviewerfunc001",

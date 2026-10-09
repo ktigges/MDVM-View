@@ -149,6 +149,34 @@ variable "grant_deployer_history_access" {
   default     = true
 }
 
+variable "network_security_perimeter_enabled" {
+  description = "Associate history and Function runtime storage with a shared Network Security Perimeter profile."
+  type        = bool
+  default     = true
+}
+
+variable "network_security_perimeter_access_mode" {
+  description = "Access mode for storage associations with the Network Security Perimeter."
+  type        = string
+  default     = "Enforced"
+
+  validation {
+    condition     = contains(["Audit", "Enforced", "Learning"], var.network_security_perimeter_access_mode)
+    error_message = "network_security_perimeter_access_mode must be Audit, Enforced, or Learning."
+  }
+}
+
+variable "network_security_perimeter_allowed_ip_cidrs" {
+  description = "Public IPv4 or IPv6 CIDRs permitted by the storage perimeter. The default does not restrict IPv4 source addresses."
+  type        = set(string)
+  default     = ["0.0.0.0/0"]
+
+  validation {
+    condition     = alltrue([for cidr in var.network_security_perimeter_allowed_ip_cidrs : can(cidrhost(cidr, 0))])
+    error_message = "Every network_security_perimeter_allowed_ip_cidrs value must be a valid IPv4 or IPv6 CIDR."
+  }
+}
+
 variable "deploy_function" {
   description = "Create the collector Function, runtime storage, identity, monitoring, RBAC, and API permissions."
   type        = bool

@@ -43,6 +43,9 @@ data "azurerm_client_config" "current" {}
 locals {
   function_instances = var.deploy_function ? { collector = true } : {}
   web_app_instances  = var.deploy_web_app ? { dashboard = true } : {}
+  network_security_perimeter_instances = var.network_security_perimeter_enabled ? {
+    storage = true
+  } : {}
   role_definition_ids = {
     storage_blob_data_owner        = "/subscriptions/${var.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/b7e6dc6d-f1e8-4753-8033-0f276bb0955b"
     storage_blob_data_contributor  = "/subscriptions/${var.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe"
@@ -57,6 +60,42 @@ resource "azurerm_resource_group" "environment" {
   name     = var.resource_group_name
   location = var.location
   tags     = var.tags
+}
+
+resource "azurerm_network_security_perimeter" "storage" {
+  for_each = local.network_security_perimeter_instances
+
+  name                = "nsp-${var.project_name}-${var.environment}"
+  resource_group_name = azurerm_resource_group.environment.name
+  location            = azurerm_resource_group.environment.location
+  tags                = var.tags
+}
+
+resource "azurerm_network_security_perimeter_profile" "storage" {
+  for_each = local.network_security_perimeter_instances
+
+  name                          = "storage"
+  network_security_perimeter_id = azurerm_network_security_perimeter.storage[each.key].id
+}
+
+resource "azurerm_network_security_perimeter_access_rule" "deployment_subscription" {
+  for_each = local.network_security_perimeter_instances
+
+  name                                  = "allow-deployment-subscription"
+  network_security_perimeter_profile_id = azurerm_network_security_perimeter_profile.storage[each.key].id
+  direction                             = "Inbound"
+  subscription_ids                      = [var.subscription_id]
+}
+
+resource "azurerm_network_security_perimeter_access_rule" "public_ips" {
+  for_each = var.network_security_perimeter_enabled && length(var.network_security_perimeter_allowed_ip_cidrs) > 0 ? {
+    storage = true
+  } : {}
+
+  name                                  = "allow-configured-public-ips"
+  network_security_perimeter_profile_id = azurerm_network_security_perimeter_profile.storage[each.key].id
+  direction                             = "Inbound"
+  address_prefixes                      = sort(tolist(var.network_security_perimeter_allowed_ip_cidrs))
 }
 
 resource "azurerm_storage_account" "history" {
@@ -130,6 +169,20 @@ resource "azurerm_storage_container" "dashboard_workflow" {
   lifecycle {
     prevent_destroy = true
   }
+}
+
+resource "azurerm_network_security_perimeter_association" "history_storage" {
+  for_each = local.network_security_perimeter_instances
+
+  name                                  = "history-storage"
+  network_security_perimeter_profile_id = azurerm_network_security_perimeter_profile.storage[each.key].id
+  resource_id                           = azurerm_storage_account.history.id
+  access_mode                           = var.network_security_perimeter_access_mode
+
+  depends_on = [
+    azurerm_storage_container.current,
+    azurerm_storage_container_immutability_policy.history,
+  ]
 }
 
 resource "azurerm_role_assignment" "history_blob_contributor_deployer" {
@@ -210,6 +263,19 @@ resource "azurerm_storage_container" "function_deployment" {
   name                  = "function-releases"
   storage_account_id    = azurerm_storage_account.function_runtime[each.key].id
   container_access_type = "private"
+}
+
+resource "azurerm_network_security_perimeter_association" "function_runtime_storage" {
+  for_each = var.network_security_perimeter_enabled ? local.function_instances : {}
+
+  name                                  = "function-runtime-storage"
+  network_security_perimeter_profile_id = azurerm_network_security_perimeter_profile.storage["storage"].id
+  resource_id                           = azurerm_storage_account.function_runtime[each.key].id
+  access_mode                           = var.network_security_perimeter_access_mode
+
+  depends_on = [
+    azurerm_storage_container.function_deployment,
+  ]
 }
 
 resource "azurerm_user_assigned_identity" "collector" {
@@ -392,6 +458,8 @@ resource "azurerm_function_app_flex_consumption" "collector" {
   })
 
   depends_on = [
+    azurerm_network_security_perimeter_association.function_runtime_storage,
+    azurerm_network_security_perimeter_association.history_storage,
     azurerm_role_assignment.runtime_blob_owner,
     azurerm_role_assignment.runtime_blob_contributor,
     azurerm_role_assignment.runtime_queue_contributor,
@@ -648,6 +716,7 @@ resource "azurerm_linux_web_app" "dashboard" {
   tags = var.tags
 
   depends_on = [
+    azurerm_network_security_perimeter_association.history_storage,
     azurerm_role_assignment.dashboard_history_reader,
     azurerm_role_assignment.dashboard_workflow_contributor,
   ]

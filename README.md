@@ -92,6 +92,24 @@ Defender and Graph using its managed identity, publishes an immutable run, and
 updates `current/manifest.json`. The local Web App reads that manifest and the
 curated files it references.
 
+Azure deployments create a Network Security Perimeter and associate both the
+history and Function runtime Storage accounts with its shared Storage profile
+by default. The deployment subscription is allowed so the Function, hosted Web
+App, and Azure deployment service can reach Storage. The initial
+`network_security_perimeter_allowed_ip_cidrs` value is `0.0.0.0/0`, so the
+perimeter does not restrict IPv4 source addresses yet; private containers,
+Microsoft Entra authentication, managed identities, and Storage RBAC still
+control data access. Replace that CIDR with approved operator ranges when the
+customer is ready to enforce IP restrictions.
+
+Customer policy must allow Storage
+`publicNetworkAccess=SecuredByPerimeter`. A policy that always changes public
+network access to `Disabled` will prevent Function package deployment and
+application Storage access even when the NSP is configured. See the
+[Network Security Perimeter option](DEPLOY.md#network-security-perimeter-option)
+for benefits, settings, policy requirements, and existing-environment update
+steps.
+
 Set `collector_management_group_id` to the management group ID. Terraform
 grants the collector Reader once at that scope, and the collector inventories
 subscriptions under that group and its nested groups. Subscriptions added below
