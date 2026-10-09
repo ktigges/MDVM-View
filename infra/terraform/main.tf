@@ -13,6 +13,10 @@ terraform {
       source  = "aztfmod/azurecaf"
       version = "~> 1.2"
     }
+    azapi = {
+      source  = "Azure/azapi"
+      version = "~> 2.0"
+    }
     azurerm = {
       source  = "hashicorp/azurerm"
       version = "~> 4.0"
@@ -27,6 +31,8 @@ terraform {
 provider "azuread" {
   tenant_id = var.tenant_id
 }
+
+provider "azapi" {}
 
 provider "azurerm" {
   subscription_id     = var.subscription_id
@@ -185,6 +191,23 @@ resource "azurerm_network_security_perimeter_association" "history_storage" {
   ]
 }
 
+resource "azapi_update_resource" "history_storage_secured_by_perimeter" {
+  for_each = local.network_security_perimeter_instances
+
+  type        = "Microsoft.Storage/storageAccounts@2025-06-01"
+  resource_id = azurerm_storage_account.history.id
+
+  body = {
+    properties = {
+      publicNetworkAccess = "SecuredByPerimeter"
+    }
+  }
+
+  depends_on = [
+    azurerm_network_security_perimeter_association.history_storage,
+  ]
+}
+
 resource "azurerm_role_assignment" "history_blob_contributor_deployer" {
   count = var.grant_deployer_history_access ? 1 : 0
 
@@ -275,6 +298,23 @@ resource "azurerm_network_security_perimeter_association" "function_runtime_stor
 
   depends_on = [
     azurerm_storage_container.function_deployment,
+  ]
+}
+
+resource "azapi_update_resource" "function_runtime_storage_secured_by_perimeter" {
+  for_each = var.network_security_perimeter_enabled ? local.function_instances : {}
+
+  type        = "Microsoft.Storage/storageAccounts@2025-06-01"
+  resource_id = azurerm_storage_account.function_runtime[each.key].id
+
+  body = {
+    properties = {
+      publicNetworkAccess = "SecuredByPerimeter"
+    }
+  }
+
+  depends_on = [
+    azurerm_network_security_perimeter_association.function_runtime_storage,
   ]
 }
 
@@ -458,6 +498,8 @@ resource "azurerm_function_app_flex_consumption" "collector" {
   })
 
   depends_on = [
+    azapi_update_resource.function_runtime_storage_secured_by_perimeter,
+    azapi_update_resource.history_storage_secured_by_perimeter,
     azurerm_network_security_perimeter_association.function_runtime_storage,
     azurerm_network_security_perimeter_association.history_storage,
     azurerm_role_assignment.runtime_blob_owner,
@@ -716,6 +758,7 @@ resource "azurerm_linux_web_app" "dashboard" {
   tags = var.tags
 
   depends_on = [
+    azapi_update_resource.history_storage_secured_by_perimeter,
     azurerm_network_security_perimeter_association.history_storage,
     azurerm_role_assignment.dashboard_history_reader,
     azurerm_role_assignment.dashboard_workflow_contributor,

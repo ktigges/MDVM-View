@@ -423,7 +423,10 @@ application settings.
 Azure deployments enable a Network Security Perimeter (NSP) by default. The
 foundation stage creates one perimeter and one Storage profile, then associates
 the protected history account. The Function stage associates the separate
-Function runtime account with the same profile.
+Function runtime account with the same profile. After each association exists,
+Terraform uses the Azure API provider to set that Storage account's public
+network access to `SecuredByPerimeter`; creating the association alone does not
+change an account that customer policy previously set to `Disabled`.
 
 The NSP provides these benefits without requiring a VNet or private endpoints:
 
@@ -470,9 +473,10 @@ python -m vulnerability_view.operations_cli apply function
 ```
 
 Review the plan before applying it. It should add the perimeter, profile,
-rules, and two Storage associations without replacing either Storage account.
-After apply, both accounts should report `SecuredByPerimeter`. Then publish and
-verify the Function:
+rules, two Storage associations, and two in-place
+`SecuredByPerimeter` updates without replacing either Storage account. After
+apply, both accounts should report `SecuredByPerimeter`. Then publish and verify
+the Function:
 
 ```bash
 python -m vulnerability_view.operations_cli deploy function

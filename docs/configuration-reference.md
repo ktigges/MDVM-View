@@ -99,6 +99,10 @@ for `subscription_id`. This permits the Function, hosted Web App, and Azure
 deployment service to reach Storage from the deployment subscription. Network
 permission does not replace authentication: the private containers still
 require Microsoft Entra tokens and the appropriate Storage data-plane role.
+After each association is created, Terraform sets the account's
+`publicNetworkAccess` property to `SecuredByPerimeter` through the AzAPI
+provider. The association and public-network-access update are separate Azure
+operations, and both are required.
 
 For the initial customer deployment,
 `network_security_perimeter_allowed_ip_cidrs=["0.0.0.0/0"]` intentionally
