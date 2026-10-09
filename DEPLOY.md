@@ -225,6 +225,8 @@ The deployment workstation needs:
 - Terraform 1.10 or newer, either on `PATH` or as `terraform.exe` in the
   repository root on Windows;
 - Azure CLI authenticated to the target tenant and subscription;
+- Azure CLI `log-analytics` extension for progress and Function-log checks:
+  `az extension add --name log-analytics --allow-preview true --yes`;
 - Python 3.12 or the tested Python 3.14.7 local runtime, with the project
   virtual environment;
 - Git;
@@ -346,16 +348,18 @@ stage for later infrastructure plans so Terraform preserves the foundation,
 Function, and Web App together. Never apply a plan that deletes the protected
 history account, its retained containers, or their data.
 
-After Terraform creates the Enterprise Application, assign authorized users or
-groups manually at **Microsoft Entra admin center > Enterprise applications >
-DVM Viewer > Users and groups**:
+**Required after Web App deployment:** Terraform creates the Enterprise
+Application with assignment required, but it does not choose customer users.
+Assign authorized users or groups manually at **Microsoft Entra admin center >
+Enterprise applications > DVM Viewer > Users and groups**:
 
 - Assign **Dashboard Viewer** to everyone who may open the application.
 - Assign **Data Evidence Reader** only to users or groups that may use the
   hidden Data evidence browser.
 
 Terraform does not create an access group and does not manage these
-assignments.
+assignments. Until **Dashboard Viewer** is assigned, users cannot sign in to
+the hosted Web App.
 
 ## Storage-account separation
 

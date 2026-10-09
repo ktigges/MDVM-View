@@ -19,17 +19,35 @@ def test_parser_exposes_identical_cross_platform_commands():
 
 
 def test_log_query_has_bounded_timeout(monkeypatch):
-    captured: dict[str, object] = {}
+    captured: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     def fake_az(*args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
+        captured.append((args, kwargs))
         return subprocess.CompletedProcess(args, 0, stdout="[]")
 
     monkeypatch.setattr(operations_cli, "_az", fake_az)
 
     assert operations_cli._log_query("workspace-id", "subscription-id", "AppTraces | take 1") == []
-    assert captured["kwargs"] == {"capture": True, "timeout": 90}
+    assert captured[0] == (
+        ("extension", "show", "--name", "log-analytics", "--output", "none"),
+        {"check": False, "capture": True},
+    )
+    assert captured[1][1] == {"capture": True, "timeout": 90}
+
+
+def test_log_query_reports_missing_extension(monkeypatch):
+    monkeypatch.setattr(
+        operations_cli,
+        "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 1, stdout=""),
+    )
+
+    try:
+        operations_cli._log_query("workspace-id", "subscription-id", "AppTraces | take 1")
+    except RuntimeError as error:
+        assert "az extension add --name log-analytics --allow-preview true --yes" in str(error)
+    else:
+        raise AssertionError("missing log-analytics extension should fail explicitly")
 
 
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):

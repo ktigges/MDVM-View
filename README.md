@@ -346,6 +346,19 @@ python -m vulnerability_view.operations_cli deploy webapp
 python -m vulnerability_view.operations_cli verify webapp
 ```
 
+**Required after deployment:** Terraform creates the assignment-required
+`DVM Viewer` Enterprise Application, but it does not choose or assign customer
+users. In the Microsoft Entra admin center, open **Enterprise applications >
+DVM Viewer > Users and groups**, then assign:
+
+- **Dashboard Viewer** to every user or group allowed to open the Web App.
+- **Data Evidence Reader** only to users or groups allowed to use the optional
+  Data Evidence browser.
+
+Until **Dashboard Viewer** is assigned, users cannot sign in to the hosted Web
+App. Group assignment requires the applicable Microsoft Entra licensing; assign
+individual users when group assignment is unavailable.
+
 The `webapp` Terraform stage is cumulative: it preserves the existing
 foundation and Function while adding the hosted Web App. Microsoft Entra
 authentication controls user access to it.
