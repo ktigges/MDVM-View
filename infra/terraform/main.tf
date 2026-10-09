@@ -707,12 +707,14 @@ resource "azurerm_linux_web_app" "dashboard" {
   }
 
   site_config {
-    always_on                = true
-    app_command_line         = "python -m uvicorn vulnerability_view.dashboard_server:app --host 0.0.0.0 --port 8000"
-    ftps_state               = "Disabled"
-    minimum_tls_version      = "1.2"
-    scm_minimum_tls_version  = "1.2"
-    remote_debugging_enabled = false
+    always_on                         = true
+    app_command_line                  = "python -m uvicorn vulnerability_view.dashboard_server:app --host 0.0.0.0 --port 8000 --workers ${var.web_app_worker_processes}"
+    ftps_state                        = "Disabled"
+    health_check_eviction_time_in_min = 10
+    health_check_path                 = "/api/health"
+    minimum_tls_version               = "1.2"
+    scm_minimum_tls_version           = "1.2"
+    remote_debugging_enabled          = false
     application_stack {
       python_version = "3.12"
     }
@@ -721,6 +723,7 @@ resource "azurerm_linux_web_app" "dashboard" {
   auth_settings_v2 {
     auth_enabled           = true
     default_provider       = "azureactivedirectory"
+    excluded_paths         = ["/api/health"]
     require_authentication = true
     require_https          = true
     unauthenticated_action = "RedirectToLoginPage"

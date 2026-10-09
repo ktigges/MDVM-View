@@ -9,7 +9,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
-  <link rel="stylesheet" href="styles.css?v=20261008-2112">
+  <link rel="stylesheet" href="styles.css?v=20261009-1022">
 </head>
 <body>
   <header class="topbar">
@@ -26,7 +26,16 @@
       <span id="brandingStatus" class="branding-status" role="status" aria-live="polite" hidden></span>
     </div>
     <div class="topbar-meta">
-      <div class="freshness"><span id="healthDot"></span><strong id="freshnessText">Loading data</strong><small>Data refreshed · Live snapshot</small><small id="revisionText" class="revision-text">UI revision loading</small><small id="authStatus" class="auth-status">Checking access mode</small></div>
+      <div id="freshnessSummary" class="freshness" tabindex="0" aria-describedby="recentRunsPopover"><span id="healthDot"></span><strong id="freshnessText">Loading data</strong><small id="freshnessLocalText">Local time loading</small><small>Data refreshed · Live snapshot · Hover for recent runs</small><small id="revisionText" class="revision-text">UI revision loading</small><small id="authStatus" class="auth-status">Checking access mode</small>
+        <aside id="recentRunsPopover" class="recent-runs-popover" role="tooltip">
+          <div class="recent-runs-heading"><strong>Recent collection runs</strong><small>Newest first · UTC and browser local time</small></div>
+          <ol id="recentRunsList"><li class="empty">Collection history is loading.</li></ol>
+        </aside>
+      </div>
+      <div id="signedInUser" class="signed-in-user" hidden>
+        <span id="signedInUserInitials" class="signed-in-user-initials" aria-hidden="true"></span>
+        <span class="signed-in-user-copy"><strong id="signedInUserName"></strong><small id="signedInUserAccess">Dashboard Viewer</small></span>
+      </div>
       <div id="availabilityItems" class="header-statuses" aria-label="Snapshot status" aria-live="polite">
         <span class="header-status-item pending"><i aria-hidden="true"></i><strong>Loading status</strong><span class="status-info" aria-hidden="true">i</span></span>
       </div>
@@ -82,9 +91,23 @@
     <fieldset class="reporting-filter"><legend>Device reporting</legend><label><input id="hideNonReporting" type="checkbox">Hide non-reporting devices</label><select id="reportingDays" aria-label="Device reporting timeframe"><option value="7">Last reported within 7 days</option><option value="14">Last reported within 14 days</option><option value="30">Last reported within 30 days</option><option value="60">Last reported within 60 days</option><option value="90">Last reported within 90 days</option></select><span>Uses LastSeenUtc from the current dataset; retained evidence is not deleted</span></fieldset>
     <label class="queue-filter">Operating queue (derived)<select id="teamFilter"><option>All</option></select><span>Inferred from asset evidence, not a Defender assignment</span></label>
     <label class="search-filter">Find items<input id="searchFilter" type="search" placeholder="CVE, recommendation, machine..."></label>
+    <label class="new-period-filter">First observed<select id="newPeriod"><option value="day">24 hours before latest snapshot</option><option value="week">7 days before latest snapshot</option><option value="month">30 days before latest snapshot</option><option value="custom">Custom date range</option></select><span>Relative windows end at the latest collected snapshot, not the current clock</span></label>
+    <fieldset class="new-period-apply"><legend>Apply new-item period</legend><label><input id="applyNewPeriodFilter" type="checkbox">Filter every workspace view</label></fieldset>
+    <fieldset id="newPeriodCustom" class="new-period-custom" hidden><legend>Custom first-observed dates</legend><label>From<input id="newPeriodStart" type="date"></label><label>Through<input id="newPeriodEnd" type="date"></label></fieldset>
     <fieldset class="domain-filter"><legend>Asset domains</legend><div class="filter-check-options"><label><input type="checkbox" name="assetDomain" value="Devices" checked>Devices</label><label><input type="checkbox" name="assetDomain" value="Cloud" checked>Cloud</label><label><input type="checkbox" name="assetDomain" value="SaaS Apps">SaaS Apps</label><label><input type="checkbox" name="assetDomain" value="Identities">Identities</label><label><input type="checkbox" name="assetDomain" value="Data">Data</label></div></fieldset>
   </section>
   </div>
+
+  <section id="newActivityBar" class="new-activity-bar" aria-labelledby="newActivityTitle">
+    <div class="new-activity-heading"><span>NEWLY OBSERVED</span><strong id="newActivityTitle">24 hours before latest run</strong><small id="newActivityContext">Window anchored to the latest collected snapshot</small></div>
+    <div class="new-activity-metrics">
+      <button type="button" data-new-view="overview"><strong id="newFindingCount">0</strong><span>finding instances</span></button>
+      <button type="button" data-new-view="overview"><strong id="newCveCount">0</strong><span>distinct CVEs</span></button>
+      <button type="button" data-new-view="workstations"><strong id="newMachineCount">0</strong><span>affected machines</span></button>
+      <button type="button" data-new-view="recommendations"><strong id="newRecommendationCount">0</strong><span>recommendations</span></button>
+    </div>
+    <button id="toggleNewPeriodFilter" class="new-activity-action" type="button">Filter workspace</button>
+  </section>
 
   <main>
     <section id="pivotPanel" class="pivot-panel" role="dialog" aria-labelledby="pivotTitle" hidden aria-live="polite">
@@ -122,7 +145,7 @@
         <article id="secureScoreCard" class="secure-score-card supporting-score"></article>
       </div>
     </section>
-      <div class="subsection-heading"><div><span>RECOMMENDATION IMPACT</span><h3>Highest-impact actions</h3></div><p class="impact-warning">One recommendation can address many findings, devices, and CVEs. Select an action to inspect exactly what it can fix.</p></div>
+      <div class="subsection-heading executive-impact-heading"><div><span>RECOMMENDATION IMPACT</span><h3>Highest-impact actions</h3></div><p class="impact-warning">Note: one recommendation can address many findings, devices, and CVEs.</p></div>
       <div id="executiveRecommendationImpact" class="recommendation-impact-grid compact-impact"></div>
       <div class="exec-visual-grid">
         <article class="panel"><div class="panel-title"><h3>Recommendation severity</h3><span>Current filter context</span></div><div id="recommendationSeverityPie" class="donut-panel"></div></article>
@@ -225,8 +248,8 @@
       <div id="statisticsSlaCards" class="metric-grid compact statistics-sla-cards"></div>
       <div class="panel sla-severity-panel"><div class="table-wrap"><table id="statisticsSlaBreakdown"></table></div></div>
 
-      <div class="subsection-heading"><div><h3>Longer-term 90-day workload trajectory</h3></div></div>
-      <article class="panel chart-panel"><div class="trend-chart-head"><div><strong>90-day trajectory</strong><span id="trendFilterContext" class="filter-chip"></span></div><div class="legend"><span class="new">New</span><span class="fixed">Fixed</span><span class="remaining">Remaining</span><span class="exploit">Known exploit backlog</span></div></div><div id="trendChart" class="chart"></div></article>
+      <div id="collectionRunTrend" class="subsection-heading"><div><h3>Collection-run workload trajectory</h3></div></div>
+      <article class="panel chart-panel"><div class="trend-chart-head"><div><strong>Completed snapshots from the last 90 days</strong><span id="trendFilterContext" class="filter-chip"></span></div><div class="legend"><span class="new">New / reopened</span><span class="fixed">Fixed</span><span class="remaining">Open</span></div></div><div id="trendChart" class="chart"></div></article>
       <article class="panel trend-history"><div class="panel-title"><h3>Weekly change history</h3><span>Select New or Fixed for recommendation, CVE, and machine details</span></div><div class="weekly-legend"><span><i class="new-key"></i>New</span><span><i class="fixed-key"></i>Fixed</span></div><div id="weeklyTrendChart" class="weekly-chart"></div><div class="table-wrap"><table id="weeklyComparisonTable"></table></div></article>
       <div class="subsection-heading"><div><h3>Weekly remediation task due-date history</h3></div></div>
       <div id="trendTaskDueCards" class="metric-grid compact task-due-summary"></div>
@@ -261,6 +284,6 @@
   <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
   <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
   <script src="config.js?v=20261008-2112"></script>
-  <script src="app.js?v=20261008-2112"></script>
+  <script src="app.js?v=20261009-1007"></script>
 </body>
 </html>

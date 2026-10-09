@@ -456,6 +456,19 @@ def test_dashboard_uses_statistics_tab_without_ownership_story():
     assert 'id="statisticsSlaBreakdown"' in html
     assert "Selected-period finding results against severity-based SLA targets" in html
     assert 'data-view="ownership"' not in html
+
+
+def test_reporting_uses_retained_collection_run_history_for_trajectory():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+
+    assert 'id="collectionRunTrend"' in html
+    assert "Collection-run workload trajectory" in html
+    assert "Completed snapshots from the last 90 days" in html
+    assert "function buildRunHistoryPoints()" in javascript
+    assert "Number(row.NewFindings||0)+Number(row.ReopenedFindings||0)" in javascript
+    assert "function renderRunHistoryTrend()" in javascript
+    assert 'anchor:"collectionRunTrend"' in javascript
     assert 'id="ownership"' not in html
     assert 'id="assignmentTable"' not in html
     assert "renderOwnership" not in javascript
@@ -491,6 +504,7 @@ def test_dashboard_defaults_to_vulnerabilities_devices_and_cloud():
 def test_dashboard_can_hide_devices_outside_a_snapshot_relative_reporting_window():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
     configuration = Path("dashboard/config.js").read_text()
 
     assert 'id="hideNonReporting" type="checkbox"' in html
@@ -686,16 +700,35 @@ def test_dashboard_connects_executive_workload_sla_and_recommendation_impact():
     assert 'order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "data-browser"]' in configuration
 
 
+def test_dashboard_executive_summary_uses_readable_visual_hierarchy():
+    html = Path("dashboard/index.html").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert "subsection-heading executive-impact-heading" in html
+    assert "Note: one recommendation can address many findings, devices, and CVEs." in html
+    assert ".executive-impact-heading{align-items:flex-end;justify-content:flex-start;gap:14px}" in stylesheet
+    assert ".new-activity-metrics span{color:#354f61;font-size:12px" in stylesheet
+    assert ".decision-metric small{font-size:12px!important" in stylesheet
+    assert ".donut-legend span{font-size:13px}" in stylesheet
+
+
 def test_dashboard_shows_ui_revision_below_live_snapshot():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
     configuration = Path("dashboard/config.js").read_text()
     deployment = Path("infra/deploy.sh").read_text()
 
     assert "Live snapshot" in html
+    assert 'id="freshnessLocalText"' in html
     assert 'id="revisionText"' in html
     assert "formatUtc" in javascript
+    assert "const formatLocal=" in javascript
+    assert "UTC and browser local time" in html
+    assert "Local: ${esc(formatLocal(row.SnapshotTimeUtc))}" in javascript
+    assert "Web version ${presentation.version||\"unversioned\"}" in javascript
     assert "UI revision ${presentation.revision?formatUtc(presentation.revision)" in javascript
+    assert ".freshness .revision-text{display:block!important" in stylesheet
     assert "latest?formatUtc(latest.SnapshotTimeUtc)" in javascript
     assert re.search(r'version: "\d{4}\.\d{2}\.\d{2}\.\d+"', configuration)
     assert re.search(r'revision: "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"', configuration)
@@ -725,6 +758,40 @@ def test_dashboard_customer_logo_placeholder_is_hidden_by_default():
     assert ".customer-logo[hidden],.customer-logo-input[hidden]{display:none!important}" in stylesheet
 
 
+def test_dashboard_header_shows_authenticated_user_and_branding_access():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert 'id="signedInUser"' in html
+    assert 'id="signedInUserName"' in html
+    assert 'id="signedInUserAccess"' in html
+    assert "function configureSignedInUser(auth)" in javascript
+    assert 'auth.authorization?.brandingAdministrator?"Dashboard Administrator":"Dashboard Viewer"' in javascript
+    assert "configureSignedInUser(auth);configureBranding(auth)" in javascript
+    assert ".signed-in-user{" in stylesheet
+    assert ".signed-in-user[hidden]{display:none!important}" in stylesheet
+
+
+def test_dashboard_freshness_shows_ten_recent_collection_runs():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert 'id="freshnessSummary"' in html
+    assert 'tabindex="0" aria-describedby="recentRunsPopover"' in html
+    assert 'id="recentRunsPopover"' in html
+    assert 'id="recentRunsList"' in html
+    assert "function recentCollectionRuns()" in javascript
+    assert ".slice(0,10)" in javascript
+    assert "function renderRecentRuns()" in javascript
+    assert "renderRecentRuns();" in javascript
+    assert ".freshness:hover .recent-runs-popover,.freshness:focus-within .recent-runs-popover" in stylesheet
+    assert ".recent-runs-popover{position:absolute;top:calc(100% + 9px);right:0;left:auto;width:min(320px,calc(100vw - 24px));max-height:280px" in stylesheet
+    assert ".freshness>#healthDot{display:none!important}" in stylesheet
+    assert ".recent-runs-popover li>i{display:none}" in stylesheet
+
+
 def test_dashboard_uses_top_filters_and_responsive_workspace_navigation():
     html = Path("dashboard/index.html").read_text()
     stylesheet = Path("dashboard/styles.css").read_text()
@@ -748,6 +815,36 @@ def test_dashboard_uses_top_filters_and_responsive_workspace_navigation():
     assert "showExperimentalEndpoints: false" in configuration
 
 
+def test_primary_navigation_clears_selected_work_item_between_views():
+    javascript = Path("dashboard/app.js").read_text()
+    activate_view = javascript.split("function activateView(view){", 1)[1].split("\n}", 1)[0]
+
+    assert "const viewChanged=state.activeView!==view;" in activate_view
+    assert "if(viewChanged)clearSelectedWorkItem();" in activate_view
+    assert activate_view.index("if(viewChanged)clearSelectedWorkItem();") < activate_view.index("state.activeView=view;render();")
+
+
+def test_dashboard_supports_new_vulnerability_period_analysis_and_filtering():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert 'id="newPeriod"' in html
+    assert '<option value="day">24 hours before latest snapshot</option>' in html
+    assert '<option value="week">7 days before latest snapshot</option>' in html
+    assert '<option value="month">30 days before latest snapshot</option>' in html
+    assert '<option value="custom">Custom date range</option>' in html
+    assert 'id="applyNewPeriodFilter"' in html
+    assert 'id="newActivityBar"' in html
+    assert 'data-new-view="workstations"' in html
+    assert "function newPeriodRange()" in javascript
+    assert "function firstObservedMatches(row)" in javascript
+    assert "function renderNewActivity()" in javascript
+    assert "filteredFindings(false).filter(firstObservedMatches)" in javascript
+    assert "Anchored to latest collected snapshot" in javascript
+    assert ".new-activity-bar{" in stylesheet
+
+
 def test_dashboard_data_browser_is_hidden_and_read_only_by_default():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
@@ -766,6 +863,7 @@ def test_dashboard_data_browser_is_hidden_and_read_only_by_default():
 def test_cost_calculator_is_local_only():
     deploy_script = Path("infra/deploy.sh").read_text()
     calculator = Path("tools/calculator.html").read_text()
+    readme = Path("README.md").read_text()
 
     assert Path("tools/calculator.html").is_file()
     assert not Path("dashboard/calculator.html").exists()
@@ -788,5 +886,10 @@ def test_cost_calculator_is_local_only():
     assert 'id="egressGib"' in calculator
     assert 'id="licenseCost"' in calculator
     assert "collectionsFromSchedule" in calculator
+    assert 'value="25.55" selected>B2' in calculator
+    assert 'id="collectionsPerDay" type="number" min="0" step=".1" value="2"' in calculator
     assert "The application does not delete retained raw or curated evidence." in calculator
     assert "The bounded option changes estimates only; it does not configure deletion." in calculator
+    assert "$31.43" in readme
+    assert "$364.39" in readme
+    assert "[Azure Pricing Calculator](https://azure.microsoft.com/pricing/calculator/)" in readme

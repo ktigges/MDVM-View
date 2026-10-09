@@ -78,6 +78,7 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `web_app_service_plan_name` | Required | Linux App Service plan name |
 | `web_app_identity_name` | Required | User-assigned identity used by the dashboard |
 | `web_app_sku_name` | `B1` | App Service plan SKU |
+| `web_app_worker_processes` | `1`; from 1 through 4 | Uvicorn worker processes; use `2` with B2 for the expected 10–20-user workload |
 | `dashboard_entra_application_name` | `DVM Viewer` | App registration and Enterprise Application display name |
 | `dashboard_data_browser_enabled` | `false` | Enables Data Evidence UI/API and assigns `Data.Evidence.Reader` to the access group |
 | `dashboard_recommendation_tracking_enabled` | `false` | Enables shared dashboard-local work-status UI/API |
@@ -321,9 +322,10 @@ Asset query versions in `dashboard/index.html` control browser cache busting for
 | `infra/check-function-logs.sh` | Optional positive hours and count | Log window and invocation count |
 | `infra/check-function-logs.sh` | `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `FUNCTION_APP_NAME`, `LOG_ANALYTICS_WORKSPACE_NAME` | Optional diagnostic target overrides |
 
-Operational status scripts are read-only. `check-runs.sh` lists only completed,
-published manifests; failed invocations that never publish a manifest appear
-only in Function diagnostics.
+Operational status scripts are read-only. Run and invocation timestamps show
+both the source UTC value and the local time zone of the machine running the
+script. `check-runs.sh` lists only completed, published manifests; failed
+invocations that never publish a manifest appear only in Function diagnostics.
 
 ## 11. Dependency and packaging configuration
 

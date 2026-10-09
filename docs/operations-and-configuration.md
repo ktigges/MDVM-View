@@ -17,8 +17,9 @@ symptom-led diagnosis use [Troubleshooting](troubleshooting.md).
 ```
 
 The first command checks Function invocation state. The second combines current
-progress with completed immutable runs. Do not invoke manually while status is
-`ACTIVE` or `INDETERMINATE`.
+progress with completed immutable runs. Both show UTC together with the local
+time zone of the machine running the command. Do not invoke manually while
+status is `ACTIVE` or `INDETERMINATE`.
 
 The scripts support the macOS system Bash 3.2 and Linux Bash. They can be
 launched directly from zsh; no Homebrew Bash installation is required.
@@ -257,6 +258,11 @@ GET /api/data-browser/<dataset>?offset=0&limit=50&query=<text>
 GET /api/data/<dataset>.json
 GET /api/data/cve-details/<cve-id>.json
 ```
+
+`GET /api/health` is the only dashboard API that permits anonymous access. App
+Service Health Check uses it to verify that the FastAPI process can respond
+without requiring a user session or forcing an Azure Storage read. All other
+dashboard APIs remain protected by App Service Authentication.
 
 `GET /api/diagnostics` reports bounded, in-process request timings, current
 data-loading activity, cached dataset names, manifest state, and recent storage

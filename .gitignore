@@ -18,6 +18,7 @@ htmlcov/
 .DS_Store
 local.settings.json
 LOCAL-NOTES.txt
+bump-version.sh
 Function-App.txt
 AGENTS.md
 config/vulnerability-view.json

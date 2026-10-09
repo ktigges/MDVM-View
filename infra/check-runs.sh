@@ -35,6 +35,18 @@ for command in az jq terraform; do
   fi
 done
 
+utc_to_local() {
+  local value="$1" normalized epoch
+  if date -d "$value" "+%Y-%m-%d %H:%M:%S %Z" >/dev/null 2>&1; then
+    date -d "$value" "+%Y-%m-%d %H:%M:%S %Z"
+    return
+  fi
+  normalized="${value%%.*}"
+  normalized="${normalized%Z}"
+  epoch="$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$normalized" +%s)"
+  date -r "$epoch" "+%Y-%m-%d %H:%M:%S %Z"
+}
+
 if [[ "$SHOW_PROGRESS" == "true" ]]; then
   "$ROOT_DIR/infra/check-function-logs.sh" 1 1 --status-only
   echo
@@ -108,7 +120,9 @@ for manifest in "${manifests[@]}"; do
     --only-show-errors \
     --output none
 
-  jq -r --argjson includeExperimental "$INCLUDE_EXPERIMENTAL" '
+  SNAPSHOT_UTC="$(jq -r '.snapshotTimeUtc // empty' "$TEMP_FILE")"
+  SNAPSHOT_LOCAL="$(utc_to_local "$SNAPSHOT_UTC")"
+  jq -r --argjson includeExperimental "$INCLUDE_EXPERIMENTAL" --arg snapshotLocal "$SNAPSHOT_LOCAL" '
     def is_experimental:
       (.Endpoint // "") == "remediation_tasks"
       or (.Endpoint // "") == "vulnerability_changes";
@@ -128,7 +142,8 @@ for manifest in "${manifests[@]}"; do
     | "Run ID:           \(.runId)",
       "Type:             \($type)",
       "Snapshot (UTC):   \(.snapshotTimeUtc)",
-      "Status:           \($status)",
+    "Snapshot (Local): \($snapshotLocal)",
+    "Status:           \($status)",
       "Findings:         \([.files[]? | select(.dataset == "findings") | .rowCount][0] // 0)",
       "Reported issues:  \($failures | length)",
       (if ($failures | length) == 0 then

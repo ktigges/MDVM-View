@@ -49,6 +49,7 @@ Interpret the sources separately:
 | Optional route is unavailable | The run can complete as partial success. Experimental compatibility routes are disabled by default. |
 | Secure Score is unavailable | Check the `secure_scores` collection status. Microsoft Graph requires `SecurityEvents.Read.All` with tenant admin consent. |
 | Client-secret mode is rejected in Azure | Expected. Client-secret authentication is restricted to explicitly acknowledged local development. Hosted workloads use managed identity. |
+| A manual trigger is accepted but no run appears | Check Function telemetry. An `Executed ... (Failed)` record is not a completed collection. If runtime storage reports `AuthenticationFailed`, remove the legacy base `AzureWebJobsStorage` setting and retain the `AzureWebJobsStorage__*` managed-identity settings. Current apply/verify helpers reconcile and validate this automatically. |
 
 Run:
 
@@ -143,7 +144,7 @@ and Terraform do not delete retained paths.
 | AzureAD provider cannot create applications or app-role assignments | Use an authorized identity with the required Microsoft Entra directory authority. |
 | A plan proposes deleting protected storage | Do not apply it. Stop and reconcile state/configuration while preserving the storage account and containers. |
 | `tfapply` says the plan is missing | Run the matching `tfplan` command and review the saved plan first. |
-| ZipDeploy returns HTTP 504 | The client can time out while Kudu continues. Inspect the newest deployment record before retrying. |
+| ZipDeploy returns HTTP 504 | The client can time out while Kudu continues. Inspect the newest deployment record before retrying. Do not start a second deployment while the newest Kudu record is still building. |
 | Function code changed but infrastructure did not | Run `tfdeploy function`, then `tfverify function`; do not create a new Terraform plan solely for code. |
 | Dashboard code changed but infrastructure did not | Run `tfdeploy webapp`, then `tfverify webapp`. |
 
@@ -174,13 +175,15 @@ Kudu status `4` is successful and `3` is failed.
 
 ### Dashboard APIs
 
-All dashboard APIs use the same global authentication policy as the dashboard.
-The data-browser APIs additionally require the feature to be enabled and may
-require the `Data.Evidence.Reader` role.
+Dashboard APIs use the same global authentication policy as the dashboard,
+except `GET /api/health`. That endpoint permits anonymous App Service health
+probes, returns only non-secret service configuration, and does not access
+Azure Storage or load a dataset. The data-browser APIs additionally require
+the feature to be enabled and may require the `Data.Evidence.Reader` role.
 
 | Method and route | Retrieval or diagnostic purpose |
 |---|---|
-| `GET /api/health` | Confirms server availability, data-source mode, authentication mode, and enabled optional features. It does not force a dataset download. |
+| `GET /api/health` | Public liveness endpoint used by App Service Health Check. It confirms server availability and non-secret configuration without forcing a dataset download. |
 | `GET /api/auth` | Confirms the current dashboard identity and authentication state. |
 | `GET /api/diagnostics` | Reports bounded request timings, active and recent Azure Storage operations, pending requests, manifest-cache lifetime, and cached dataset names. It returns no dataset rows or identity details. |
 | `GET /api/status` | Reads the local run status or retrieves the Azure current manifest and reports its run ID, snapshot time, source, and Secure Score availability. |
@@ -234,8 +237,10 @@ identities, and response rows are intentionally omitted from diagnostics.
 
 For the deployed Web App, use an authenticated browser session and the browser
 Network panel, or an authorized authenticated HTTP client. An anonymous `curl`
-request should be rejected by App Service Authentication and is not a valid
-retrieval-performance measurement.
+request to a data or diagnostics endpoint should be rejected by App Service
+Authentication and is not a valid retrieval-performance measurement.
+`GET /api/health` is the deliberate anonymous exception and does not test
+Azure Storage retrieval.
 
 ### Collection source APIs
 

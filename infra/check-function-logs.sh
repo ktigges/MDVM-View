@@ -37,6 +37,16 @@ utc_to_epoch() {
   date -j -u -f "%Y-%m-%dT%H:%M:%S" "$normalized" +%s
 }
 
+utc_to_local() {
+  local value="$1" epoch
+  epoch="$(utc_to_epoch "$value")"
+  if date -d "@$epoch" "+%Y-%m-%d %H:%M:%S %Z" >/dev/null 2>&1; then
+    date -d "@$epoch" "+%Y-%m-%d %H:%M:%S %Z"
+    return
+  fi
+  date -r "$epoch" "+%Y-%m-%d %H:%M:%S %Z"
+}
+
 if [[ ! -f "$TFVARS" ]]; then
   echo "Terraform variables file not found: $TFVARS" >&2
   exit 1
@@ -97,23 +107,32 @@ RUN_STATE_JSON="$(
         | where TimeGenerated > ago(${HOURS}h)
         | where Message startswith \"Executed 'Functions.dataprep_snapshot'\"
         | extend InvocationId = extract(@'Id=([0-9a-fA-F-]{36})', 1, Message)
-        | project InvocationId, CompletedUtc=TimeGenerated;
+        | extend CompletionStatus = extract(@'\\(([^,]+),', 1, Message)
+        | project InvocationId, CompletedUtc=TimeGenerated, CompletionStatus;
       starts
         | join kind=leftouter completions on InvocationId
         | top 1 by StartedUtc desc
-        | project InvocationId, StartedUtc, CompletedUtc" \
+        | project InvocationId, StartedUtc, CompletedUtc, CompletionStatus" \
     --output json
 )"
 
 LATEST_INVOCATION_ID="$(jq -r '.[0].InvocationId // empty' <<<"$RUN_STATE_JSON")"
 LATEST_STARTED_UTC="$(jq -r '.[0].StartedUtc // empty' <<<"$RUN_STATE_JSON")"
 LATEST_COMPLETED_UTC="$(jq -r '.[0].CompletedUtc // empty | select(. != "None")' <<<"$RUN_STATE_JSON")"
+LATEST_COMPLETION_STATUS="$(jq -r '.[0].CompletionStatus // empty' <<<"$RUN_STATE_JSON")"
 
 echo "Active-run safety check:"
 if [[ -z "$LATEST_INVOCATION_ID" ]]; then
   echo "  No invocation start was found in this time window."
 elif [[ -n "$LATEST_COMPLETED_UTC" ]]; then
-  echo "  Latest invocation $LATEST_INVOCATION_ID completed at $LATEST_COMPLETED_UTC."
+  echo "  Latest invocation: $LATEST_INVOCATION_ID"
+  if [[ "$LATEST_COMPLETION_STATUS" == "Failed" ]]; then
+    echo "  Result:            FAILED - no durable run was published."
+  else
+    echo "  Result:            ${LATEST_COMPLETION_STATUS:-Completed}"
+  fi
+  echo "  Completed UTC:     $LATEST_COMPLETED_UTC"
+  echo "  Completed local:   $(utc_to_local "$LATEST_COMPLETED_UTC")"
 else
   PROGRESS_JSON="$(
     az monitor log-analytics query \
@@ -138,7 +157,9 @@ else
     echo "  ACTIVE - DO NOT INVOKE ANOTHER RUN."
     echo "  Invocation:      $LATEST_INVOCATION_ID"
     echo "  Started UTC:     $LATEST_STARTED_UTC"
-    echo "  Latest progress: $LATEST_PROGRESS_UTC"
+    echo "  Started local:   $(utc_to_local "$LATEST_STARTED_UTC")"
+    echo "  Progress UTC:    $LATEST_PROGRESS_UTC"
+    echo "  Progress local:  $(utc_to_local "$LATEST_PROGRESS_UTC")"
     echo "  $LATEST_PROGRESS_MESSAGE"
   else
     echo "  INDETERMINATE - invocation $LATEST_INVOCATION_ID has no completion and no progress in the last 10 minutes."
@@ -153,17 +174,23 @@ if [[ "$MODE" == "--status-only" ]]; then
 fi
 
 echo "Recent dataprep_snapshot invocations:"
-
-az monitor log-analytics query \
-  --subscription "$SUBSCRIPTION_ID" \
-  --workspace "$WORKSPACE_ID" \
-  --analytics-query "AppRequests
-    | where TimeGenerated > ago(${HOURS}h)
-    | where Name == 'dataprep_snapshot'
-    | top ${LIMIT} by TimeGenerated desc
-    | extend DurationSeconds = round(DurationMs / 1000.0, 1)
-    | project TimeGenerated, Success, DurationSeconds, OperationId" \
-  --output table
+RECENT_INVOCATIONS_JSON="$(
+  az monitor log-analytics query \
+    --subscription "$SUBSCRIPTION_ID" \
+    --workspace "$WORKSPACE_ID" \
+    --analytics-query "AppRequests
+      | where TimeGenerated > ago(${HOURS}h)
+      | where Name == 'dataprep_snapshot'
+      | top ${LIMIT} by TimeGenerated desc
+      | extend DurationSeconds = round(DurationMs / 1000.0, 1)
+      | project TimeGenerated, Success, DurationSeconds, OperationId" \
+    --output json
+)"
+printf "%-28s %-24s %-8s %-10s %s\n" "UTC" "Local" "Success" "Duration" "Operation ID"
+while IFS=$'\t' read -r timestamp success duration operation_id; do
+  printf "%-28s %-24s %-8s %-10s %s\n" \
+    "$timestamp" "$(utc_to_local "$timestamp")" "$success" "${duration}s" "$operation_id"
+done < <(jq -r '.[] | [.TimeGenerated, (.Success | tostring), (.DurationSeconds | tostring), .OperationId] | @tsv' <<<"$RECENT_INVOCATIONS_JSON")
 
 FAILED_JSON="$(
   az monitor log-analytics query \
@@ -193,6 +220,7 @@ WINDOW_END="$(date -u -d "$FAILED_START +$((FAILED_DURATION_SECONDS + 120)) seco
 echo
 echo "Latest failed invocation:"
 echo "  Started UTC:  $FAILED_START"
+echo "  Started local: $(utc_to_local "$FAILED_START")"
 echo "  Duration:     ${FAILED_DURATION_SECONDS}s"
 echo "  Operation ID: $FAILED_OPERATION_ID"
 

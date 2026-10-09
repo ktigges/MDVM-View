@@ -244,6 +244,27 @@ def test_dashboard_health_marks_client_secret_as_local_development(tmp_path: Pat
     assert "Never deploy" in health["warning"]
 
 
+def test_dashboard_health_is_available_to_app_service_without_user_identity(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setenv("WEBSITE_HOSTNAME", "host.azurewebsites.net")
+    (tmp_path / "dashboard").mkdir()
+    app = create_app(
+        Settings(
+            dashboard_auth_enabled=True,
+            dashboard_branding_enabled=False,
+            dashboard_recommendation_tracking_enabled=False,
+        ),
+        project_root=tmp_path,
+    )
+
+    status, body = asgi_get(app, "/api/health")
+
+    assert status == 200
+    assert json.loads(body)["status"] == "ok"
+
+
 def test_dashboard_rejects_client_secret_mode_on_azure_host(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("WEBSITE_HOSTNAME", "host.azurewebsites.net")
 

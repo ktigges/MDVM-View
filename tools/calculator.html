@@ -39,7 +39,7 @@
           <div class="fields">
             <label>Function memory (GB)<select id="functionMemory"><option value="2">2 GB</option><option value="4" selected>4 GB</option></select></label>
             <label>Average collection duration (minutes)<input id="collectionMinutes" type="number" min="0" step=".1" value="8"></label>
-            <label>Collections per day<input id="collectionsPerDay" type="number" min="0" step=".1" value="12"></label>
+            <label>Collections per day<input id="collectionsPerDay" type="number" min="0" step=".1" value="2"></label>
             <label>Days per month<input id="daysPerMonth" type="number" min="1" max="31" step="1" value="30"></label>
             <label>Executions per collection<input id="executionsPerCollection" type="number" min="1" step="1" value="1"></label>
             <label>Free executions per month<input id="freeExecutions" type="number" min="0" step="1000" value="250000"></label>
@@ -57,17 +57,18 @@
             <label>Linux App Service tier
               <select id="appServiceTier">
                 <option value="13.14">B1 — editable planning rate $13.14/month</option>
+                <option value="25.55" selected>B2 — editable planning rate $25.55/month</option>
                 <option value="69.35">S1 — editable planning rate $69.35/month</option>
                 <option value="62.05">P0v3 — editable planning rate $62.05/month</option>
                 <option value="124.10">P1v3 — editable planning rate $124.10/month</option>
                 <option value="custom">Custom monthly rate</option>
               </select>
             </label>
-            <label>Custom Web App rate ($/instance/month)<input id="customAppRate" type="number" min="0" step=".01" value="13.14" disabled></label>
+            <label>Custom Web App rate ($/instance/month)<input id="customAppRate" type="number" min="0" step=".01" value="25.55" disabled></label>
             <label>Web App instances<input id="appInstances" type="number" min="0" step="1" value="1"></label>
             <label>Standby/secondary region ($/month)<input id="standbyCost" type="number" min="0" step=".01" value="0"></label>
           </div>
-          <span class="hint">The deployed design uses one always-on Linux B1 Web App. Easy Auth, managed identity, role assignments, and the Entra app registration have no separate resource meter in this model.</span>
+          <span class="hint">The current deployment profile uses one always-on Linux B2 Web App. Easy Auth, managed identity, role assignments, and the Entra app registration have no separate resource meter in this model.</span>
         </section>
 
         <section class="panel">
@@ -168,12 +169,12 @@
         </div>
         <div class="recommendation">
           <strong>Current deployed profile</strong><br>
-          4 GB Flex Consumption, every two hours, one B1 Web App, two StorageV2 accounts, LRS immutable hot history, 30-day Log Analytics retention, and no Front Door/private networking.
+          4 GB Flex Consumption, every 12 hours, one B2 Web App, two StorageV2 accounts, LRS immutable hot history, 30-day Log Analytics retention, and no Front Door/private networking.
         </div>
       </aside>
     </div>
   </main>
-  <footer>Last updated 2026-10-08 14:35 UTC. Currency: USD. All rates are editable assumptions and must be refreshed before purchase.</footer>
+  <footer>Last updated 2026-10-09. Currency: USD. Default rates model Central US public retail assumptions and must be refreshed before purchase in the official Azure Pricing Calculator.</footer>
   <script>
     const ids=["functionMemory","collectionMinutes","collectionsPerDay","daysPerMonth","executionsPerCollection","freeExecutions","executionMillionRate","freeGbSeconds","executionRate","alwaysReadyCost","appServiceTier","customAppRate","appInstances","standbyCost","horizonMonths","retentionModel","modeledRetentionDays","immutabilityDays","existingHistoryGib","runSizeGib","historyReplication","historyCapacityRate","softDeletedGib","writesPerRun","historyReadsMonth","writeRate","readRate","workflowEvents","workflowEventKib","runtimeStorageGib","runtimeCapacityRate","runtimeOperations","runtimeOperationRate","logsPerCollectionGib","otherLogsGib","freeLogsGib","logIngestionRate","chargeableLogRetentionGib","logRetentionRate","egressGib","egressRate","frontDoorCost","networkCost","licenseCost","supportCost","otherCost","contingencyPercent"];
     const value=id=>Math.max(0,Number(document.getElementById(id).value)||0);

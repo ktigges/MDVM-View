@@ -72,6 +72,10 @@ The legacy equivalents remain:
 ./infra/check-function-logs.sh 1 10 --status-only
 ```
 
+Status commands show Azure UTC timestamps together with the local time zone of
+the machine running the command. The dashboard similarly shows UTC and the
+browser's local time for the active snapshot and recent collection runs.
+
 On native Windows, use `python -m vulnerability_view.operations_cli`; the `.sh` scripts require WSL or
 another Bash environment.
 
@@ -185,6 +189,11 @@ Once the Web App exists, use `tfplan webapp` for later infrastructure changes so
 the saved plan preserves all deployed stages. The helper blocks lower-stage plans
 when they would omit a known higher stage.
 
+After Function or cumulative Web App infrastructure applies, the helper removes
+the legacy `AzureWebJobsStorage` connection string that AzureRM can retain or
+inject during a Flex Consumption resource update. It then verifies that only the
+managed-identity runtime-storage settings remain before reporting success.
+
 ## Command matrix
 
 | Command | What it does | Terraform? | Azure login? |
@@ -279,8 +288,10 @@ This is also a code-package update and does not run Terraform. It reads
 `DASHBOARD_VERSION` override), stamps that release plus the UTC deployment
 revision into the UI, packages the dashboard and Python server without local
 dashboard data, uploads a clean ZIP deployment, and monitors Kudu/Oryx
-deployment status. A client-side timeout is treated as provisional until Kudu
-reports success or failure.
+deployment status. The app is not restarted while Oryx writes the package;
+after Kudu succeeds, the command stamps the hosted version and starts the app.
+A client-side timeout is treated as provisional until Kudu reports success or
+failure.
 
 Function and Web App package deployments are independent:
 

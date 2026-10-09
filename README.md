@@ -546,3 +546,28 @@ legal, compliance, security, or professional advice.
 Every deployed Azure resource can incur charges. Review current Azure pricing,
 budgets, alerts, consumption, and retained-history growth. Protected DVM history
 must not be deleted as part of ordinary cost reduction or application cleanup.
+
+### Estimated Azure cost
+
+The current single-region deployment is estimated at approximately **$31.43
+USD per month by the end of the first 12 months** and **$364.39 USD for the
+first year**, including a 10% planning contingency. This estimate uses public
+Central US retail assumptions retrieved on **2026-10-09** and models:
+
+- one always-on Linux App Service **B2** instance at $25.55 per 730-hour month;
+- one 4 GB Flex Consumption collector running twice per day for eight minutes;
+- two StorageV2 accounts, with hot LRS immutable history starting at 1 GiB and
+  growing by 0.160 GiB per successful collection;
+- 30-day Log Analytics retention with modeled ingestion below the included
+  monthly allowance; and
+- 1 GiB of monthly internet egress, no private networking, no Front Door, no
+  standby region, and no Always Ready Function instances.
+
+This is a planning estimate, not a quote. Actual charges vary with collection
+duration, retained-history growth, telemetry volume, region, currency, taxes,
+offers, reservations, negotiated discounts, support, networking, and usage.
+Defender, Entra, and other prerequisite licensing is excluded. Adjust the
+assumptions in the local [DVM Viewer Azure Cost Calculator](tools/calculator.html)
+and confirm the final design in the official
+[Azure Pricing Calculator](https://azure.microsoft.com/pricing/calculator/)
+before deployment and after material workload changes.

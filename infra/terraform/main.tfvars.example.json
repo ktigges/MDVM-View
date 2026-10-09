@@ -30,6 +30,7 @@
   "web_app_service_plan_name": "plan-dvmviewer-web-test",
   "web_app_identity_name": "id-dvmviewer-web-test",
   "web_app_sku_name": "B1",
+  "web_app_worker_processes": 1,
   "dashboard_entra_application_name": "DVM Viewer",
   "dashboard_data_browser_enabled": true,
   "dashboard_recommendation_tracking_enabled": false,

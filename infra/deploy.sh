@@ -97,6 +97,61 @@ tf_plan() {
   esac
 }
 
+validate_function_runtime_storage_auth() {
+  local resource_group function_app settings legacy account client credential
+  require_command az
+  require_command jq
+  resource_group="$(tf_output resource_group_name)"
+  function_app="$(tf_output function_app_name)"
+  settings="$(
+    az functionapp config appsettings list \
+      --resource-group "$resource_group" \
+      --name "$function_app" \
+      --output json
+  )"
+  legacy="$(jq -r '.[] | select(.name == "AzureWebJobsStorage") | .name' <<<"$settings")"
+  account="$(jq -r '.[] | select(.name == "AzureWebJobsStorage__accountName") | .value' <<<"$settings")"
+  client="$(jq -r '.[] | select(.name == "AzureWebJobsStorage__clientId") | .value' <<<"$settings")"
+  credential="$(jq -r '.[] | select(.name == "AzureWebJobsStorage__credential") | .value' <<<"$settings")"
+  if [[ -n "$legacy" ]]; then
+    echo "Legacy AzureWebJobsStorage overrides managed-identity runtime storage." >&2
+    return 1
+  fi
+  if [[ -z "$account" || -z "$client" || "$credential" != "managedidentity" ]]; then
+    echo "Function runtime storage managed-identity settings are incomplete." >&2
+    return 1
+  fi
+}
+
+reconcile_function_runtime_storage_auth() {
+  local resource_group function_app legacy
+  require_command az
+  resource_group="$(tf_output resource_group_name)"
+  function_app="$(tf_output function_app_name)"
+  legacy="$(
+    az functionapp config appsettings list \
+      --resource-group "$resource_group" \
+      --name "$function_app" \
+      --query "[?name=='AzureWebJobsStorage'].name | [0]" \
+      --output tsv
+  )"
+  if [[ -n "$legacy" ]]; then
+    echo "Removing legacy AzureWebJobsStorage setting injected during infrastructure apply..."
+    az functionapp config appsettings delete \
+      --resource-group "$resource_group" \
+      --name "$function_app" \
+      --setting-names AzureWebJobsStorage \
+      --output none
+    az functionapp restart \
+      --resource-group "$resource_group" \
+      --name "$function_app" \
+      --output none
+    echo "Waiting 45 seconds for managed-identity runtime storage to become ready..."
+    sleep 45
+  fi
+  validate_function_runtime_storage_auth
+}
+
 tf_apply() {
   # Applies only a previously reviewed stage plan.
   local stage="${1:-}"
@@ -125,6 +180,9 @@ tf_apply() {
   fi
 
   terraform -chdir="$TF_DIR" apply "$plan_file"
+  if [[ "$stage" == "function" || "$stage" == "webapp" ]]; then
+    reconcile_function_runtime_storage_auth
+  fi
   if [[ "$stage" == "webapp" ]]; then
     show_dashboard_access_details
   fi
@@ -305,7 +363,7 @@ PY
         --src-path "$package" \
         --type zip \
         --clean true \
-        --restart true \
+        --restart false \
         --track-status false \
         --timeout 600 \
         --output none
@@ -334,12 +392,6 @@ PY
               break
             fi
           fi
-          az webapp config appsettings set \
-            --resource-group "$resource_group" \
-            --name "$web_app" \
-            --settings "DASHBOARD_VERSION=$dashboard_version" \
-            --output none
-          echo "Dashboard version deployed: $dashboard_version"
           sleep 15
         done
         if (( deploy_exit != 0 )); then
@@ -348,6 +400,16 @@ PY
           return "$deploy_exit"
         fi
       fi
+      az webapp config appsettings set \
+        --resource-group "$resource_group" \
+        --name "$web_app" \
+        --settings "DASHBOARD_VERSION=$dashboard_version" \
+        --output none
+      az webapp start \
+        --resource-group "$resource_group" \
+        --name "$web_app" \
+        --output none
+      echo "Dashboard version deployed: $dashboard_version"
       ;;
     *)
       echo "Usage: ./infra/deploy.sh tfdeploy <function|webapp>" >&2
@@ -364,6 +426,9 @@ tf_verify() {
   local function_app history_account resource_group
   history_account="$(tf_output history_storage_account_name)"
   resource_group="$(tf_output resource_group_name)"
+  if [[ "$stage" == "function" || "$stage" == "webapp" ]]; then
+    validate_function_runtime_storage_auth
+  fi
   case "$stage" in
     foundation)
       az storage container list \
@@ -463,6 +528,9 @@ tf_invoke() {
     --header "Content-Type: application/json" \
     --data '{"input":null}' \
     "https://$function_app.azurewebsites.net/admin/functions/dataprep_snapshot"
+  echo
+  echo "Function trigger accepted. This does not confirm collection success."
+  echo "Verify execution and immutable publication with: ./infra/check-runs.sh 10 --progress"
 }
 
 usage() {

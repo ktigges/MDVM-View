@@ -93,6 +93,7 @@ outside this infrastructure estimate. Confirm those licenses separately.
 | Local only | $0 Azure Web App cost | Developer workstation only | UI development | Not a published service |
 | App Service Free F1 | $0 | No production SLA | Short demonstrations | Quotas, no Always On, not production |
 | Linux Basic B1, one instance | about **$13.14/month** | Single instance | **Recommended lowest-cost published viewer** | No autoscale or deployment slots; recover by redeploying |
+| Linux Basic B2, one instance | about **$25.55/month** | Single instance | Recommended for approximately 10–20 concurrent dashboard users with two Uvicorn workers | No autoscale or deployment slots; each worker maintains its own in-memory cache |
 | Linux Standard S1, one instance | about **$69.35/month** | Single instance | Workloads specifically needing Standard features | Current Central US retail price is higher than P0v3; compare before selecting |
 | Linux Premium v3 P0v3, one instance | about **$62.05/month** | Single instance | Feature/performance upgrade | No instance redundancy by itself |
 | Linux Premium v3 P0v3, two instances | about **$124.10/month** | Instance redundancy | Small production deployment | Both instances are billed continuously |
@@ -109,6 +110,7 @@ Current Central US Linux retail meters used above:
 | SKU | Retail hourly rate | Approximate 730-hour month |
 |---|---:|---:|
 | B1 | $0.018/hour | $13.14 |
+| B2 | $0.035/hour | $25.55 |
 | S1 | $0.095/hour | $69.35 |
 | P0v3 | $0.085/hour | $62.05 |
 | P1v3 | $0.170/hour | $124.10 |

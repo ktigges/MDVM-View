@@ -210,6 +210,17 @@ variable "web_app_sku_name" {
   default     = "B1"
 }
 
+variable "web_app_worker_processes" {
+  description = "Number of Uvicorn worker processes serving the dashboard."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.web_app_worker_processes >= 1 && var.web_app_worker_processes <= 4
+    error_message = "web_app_worker_processes must be between 1 and 4."
+  }
+}
+
 variable "dashboard_entra_application_name" {
   description = "Display name for the dashboard app registration and Enterprise Application."
   type        = string
