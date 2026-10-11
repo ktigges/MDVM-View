@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import requests
 
 from vulnerability_view.defender_client import ENDPOINTS, DefenderClient, collection_endpoints
-from vulnerability_view.live_collector import normalize_live, recommendation_requires_api_enrichment, reconcile_live_findings, replay_raw_snapshot
+from vulnerability_view.live_collector import apply_vulnerability_delta, merge_vulnerability_delta, normalize_live, recommendation_requires_api_enrichment, reconcile_live_findings, replay_raw_snapshot
 
 
 class Credential:
@@ -20,6 +20,7 @@ def test_experimental_endpoints_are_disabled_by_default():
         "machines",
         "vulnerabilities",
         "recommendations",
+        "vulnerability_changes",
     }
     assert {endpoint.name for endpoint in collection_endpoints(True)} == {endpoint.name for endpoint in ENDPOINTS}
 
@@ -31,6 +32,41 @@ def response(payload, url="https://example.test/page"):
     value._content = json.dumps(payload).encode()
     value.headers["Content-Type"] = "application/json"
     return value
+
+
+def test_vulnerability_delta_reconstructs_current_detected_snapshot():
+    previous = [
+        {"FindingKey": "old", "DeviceId": "d1", "CveId": "CVE-1", "SoftwareName": "App", "SoftwareVersion": "1", "FindingStatus": "Open", "DataOrigin": "Live"},
+        {"FindingKey": "pending", "DeviceId": "d2", "CveId": "CVE-2", "SoftwareName": "App", "SoftwareVersion": "1", "FindingStatus": "PendingConfirmation", "DataOrigin": "Live"},
+    ]
+    changes = [
+        {"id": "old", "deviceId": "d1", "cveId": "CVE-1", "softwareName": "App", "softwareVersion": "1", "status": "Fixed", "eventTimestamp": "2026-10-12T00:00:00Z"},
+        {"id": "new", "deviceId": "d3", "cveId": "CVE-3", "softwareName": "Browser", "softwareVersion": "2", "status": "New", "eventTimestamp": "2026-10-12T00:00:00Z"},
+    ]
+
+    reconstructed = apply_vulnerability_delta(previous, changes)
+
+    assert [row["id"] for row in reconstructed] == ["new"]
+
+
+def test_vulnerability_delta_keeps_new_side_of_same_timestamp_rbac_move():
+    previous = [{"FindingKey": "same", "DeviceId": "d1", "CveId": "CVE-1", "SoftwareName": "App", "SoftwareVersion": "1", "FindingStatus": "Open", "DataOrigin": "Live"}]
+    changes = [
+        {"id": "same", "deviceId": "d1", "cveId": "CVE-1", "softwareName": "App", "softwareVersion": "1", "status": "Fixed", "eventTimestamp": "2026-10-12T00:00:00Z"},
+        {"id": "same", "deviceId": "d1", "cveId": "CVE-1", "softwareName": "App", "softwareVersion": "1", "status": "New", "eventTimestamp": "2026-10-12T00:00:00Z"},
+    ]
+
+    assert [row["id"] for row in apply_vulnerability_delta(previous, changes)] == ["same"]
+
+
+def test_vulnerability_catalog_delta_merges_curated_baseline_and_changed_rows():
+    previous = [{"CveId": "CVE-1", "Description": "old", "Severity": "High"}]
+    changed = [{"id": "CVE-1", "description": "new", "severity": "Critical"}, {"id": "CVE-2", "description": "added"}]
+
+    merged = {row["id"]: row for row in merge_vulnerability_delta(previous, changed)}
+
+    assert merged["CVE-1"]["description"] == "new"
+    assert merged["CVE-2"]["description"] == "added"
 
 
 def test_pagination_archives_before_normalization(monkeypatch):
@@ -259,7 +295,12 @@ def test_live_reconciliation_requires_two_fresh_absences_to_confirm_fixed():
 
     assert by_key["fixed-key"]["FindingStatus"] == "PendingConfirmation"
     assert by_key["fixed-key"]["FirstAbsentUtc"] == "2026-09-17T17:05:09Z"
+    assert by_key["fixed-key"]["EffectiveRemediationUtc"] == "2026-09-17T17:05:09Z"
     assert by_key["fixed-key"]["ConsecutiveAbsentCount"] == 1
+    assert by_key["fixed-key"]["ConfirmationRunsCompleted"] == 1
+    assert by_key["fixed-key"]["ConfirmationRunsRequired"] == 2
+    assert by_key["fixed-key"]["SlaEvidenceStatus"] == "PendingConfirmation"
+    assert by_key["fixed-key"]["SlaStatus"] == "FixedWithinSla"
     assert by_key["open-key"]["FindingStatus"] == "Open"
 
     second_snapshot = datetime(2026, 9, 18, 17, 5, 9, tzinfo=timezone.utc)
@@ -269,8 +310,10 @@ def test_live_reconciliation_requires_two_fresh_absences_to_confirm_fixed():
 
     assert fixed["FindingStatus"] == "Fixed"
     assert fixed["FixedUtc"] == "2026-09-17T17:05:09Z"
+    assert fixed["EffectiveRemediationUtc"] == "2026-09-17T17:05:09Z"
     assert fixed["FixedConfirmedUtc"] == "2026-09-18T17:05:09Z"
     assert fixed["ConsecutiveAbsentCount"] == 2
+    assert fixed["SlaEvidenceStatus"] == "Confirmed"
 
 
 def test_live_reconciliation_does_not_fix_wholesale_device_disappearance():
@@ -291,7 +334,9 @@ def test_live_reconciliation_does_not_fix_wholesale_device_disappearance():
     assert second[0]["FindingStatus"] == "PendingVerification"
     assert second[0]["FixedUtc"] == ""
     assert second[0]["FixedConfirmedUtc"] == ""
+    assert second[0]["EffectiveRemediationUtc"] == ""
     assert second[0]["ConsecutiveAbsentCount"] == 2
+    assert second[0]["SlaEvidenceStatus"] == "AwaitingCorroboration"
     assert "corroborating evidence is required" in second[0]["LifecycleReason"]
 
 
@@ -350,6 +395,63 @@ def test_live_reconciliation_reopens_confirmed_finding():
     assert reconciled[0]["FindingStatus"] == "Reopened"
     assert reconciled[0]["ReopenedUtc"] == "2026-09-20T00:00:00Z"
     assert reconciled[0]["ConsecutiveAbsentCount"] == 0
+
+
+def test_live_reconciliation_uses_first_qualified_absence_for_sla_before_confirmation():
+    first_absence = datetime(2026, 9, 20, 23, 0, tzinfo=timezone.utc)
+    previous = [{
+        "FindingKey": "finding-1", "DeviceId": "device-1", "DataOrigin": "Live", "FindingStatus": "Open",
+        "Severity": "High", "PublicExploitAvailable": False, "VerifiedExploitAvailable": False,
+        "ExploitKitAvailable": False, "FirstSeenUtc": "", "FirstObservedUtc": "2026-09-14T00:00:00Z",
+        "SlaPolicyName": "High", "SlaPolicyVersion": "policy-v1", "SlaDays": 7,
+        "SlaStartUtc": "2026-09-14T00:00:00Z", "SlaDueUtc": "2026-09-21T00:00:00Z",
+        "SlaStatus": "OpenWithinSla", "FixedUtc": "", "ReopenedUtc": "", "FirstAbsentUtc": "",
+        "FixedConfirmedUtc": "", "ConsecutiveAbsentCount": 0, "SnapshotTimeUtc": "2026-09-20T12:00:00Z",
+        "CollectionRunId": "previous",
+    }]
+    devices = [{"DeviceId": "device-1", "LastSeenUtc": "2026-09-20T22:30:00Z", "HealthStatus": "Active", "OnboardingStatus": "Onboarded"}]
+    other_finding = dict(previous[0], FindingKey="finding-2", SnapshotTimeUtc="2026-09-20T23:00:00Z")
+
+    pending_rows = reconcile_live_findings([other_finding], previous + [other_finding], first_absence, "first-absence", devices)
+    pending = {row["FindingKey"]: row for row in pending_rows}["finding-1"]
+    assert pending["FindingStatus"] == "PendingConfirmation"
+    assert pending["SlaStatus"] == "FixedWithinSla"
+    assert pending["SlaEvidenceStatus"] == "PendingConfirmation"
+
+    confirmation = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
+    devices[0]["LastSeenUtc"] = "2026-09-21T11:30:00Z"
+    confirmed_rows = reconcile_live_findings([other_finding], pending_rows, confirmation, "confirmation", devices)
+    confirmed = {row["FindingKey"]: row for row in confirmed_rows}["finding-1"]
+    assert confirmed["FindingStatus"] == "Fixed"
+    assert confirmed["SlaStatus"] == "FixedWithinSla"
+    assert confirmed["EffectiveRemediationUtc"] == "2026-09-20T23:00:00Z"
+    assert confirmed["FixedConfirmedUtc"] == "2026-09-21T12:00:00Z"
+
+
+def test_live_reconciliation_marks_detection_returned_and_revokes_provisional_sla_resolution():
+    snapshot = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
+    current = [{
+        "FindingKey": "finding-1", "DeviceId": "device-1", "DataOrigin": "Live", "FindingStatus": "Open",
+        "Severity": "High", "PublicExploitAvailable": False, "VerifiedExploitAvailable": False,
+        "ExploitKitAvailable": False, "FirstSeenUtc": "", "FirstObservedUtc": "2026-09-14T00:00:00Z",
+        "SlaPolicyName": "High", "SlaPolicyVersion": "policy-v1", "SlaDays": 7,
+        "SlaStartUtc": "2026-09-14T00:00:00Z", "SlaDueUtc": "2026-09-21T00:00:00Z",
+        "SlaStatus": "FixedWithinSla", "FixedUtc": "", "ReopenedUtc": "",
+        "SnapshotTimeUtc": "2026-09-21T12:00:00Z", "CollectionRunId": "current",
+    }]
+    previous = [dict(
+        current[0], FindingStatus="PendingConfirmation", FirstAbsentUtc="2026-09-20T23:00:00Z",
+        EffectiveRemediationUtc="2026-09-20T23:00:00Z", ConsecutiveAbsentCount=1,
+        ConfirmationRunsCompleted=1, ConfirmationRunsRequired=2,
+    )]
+
+    returned = reconcile_live_findings(current, previous, snapshot, "returned")[0]
+
+    assert returned["FindingStatus"] == "DetectionReturned"
+    assert returned["EffectiveRemediationUtc"] == ""
+    assert returned["VerificationFailedUtc"] == "2026-09-21T12:00:00Z"
+    assert returned["SlaStatus"] == "OpenOutsideSla"
+    assert returned["SlaEvidenceStatus"] == "DetectionReturned"
 
 
 def test_live_reconciliation_preserves_assigned_sla_policy_version():
@@ -464,7 +566,11 @@ def test_live_normalization_emits_actual_secure_score():
 
 def test_live_normalization_emits_vulnerability_detail_rows():
     payloads = {
-        "machine_vulnerabilities": [], "machines": [], "recommendations": [],
+        "machine_vulnerabilities": [{
+            "id": "finding-1", "machineId": "machine-1", "cveId": "CVE-2026-0001",
+            "productName": "Example", "productVersion": "1", "severity": "High",
+        }],
+        "machines": [{"id": "machine-1"}], "recommendations": [],
         "vulnerabilities": [{
             "id": "CVE-2026-0001", "name": "CVE-2026-0001", "description": "Important vulnerability",
             "severity": "High", "cvssV3": 8.4, "cvssVector": "CVSS:3.1/AV:N", "epss": 0.12,
@@ -473,11 +579,16 @@ def test_live_normalization_emits_vulnerability_detail_rows():
             "publicExploit": True, "exploitVerified": False, "exploitInKit": True,
             "exploitTypes": ["Remote"], "exploitUris": ["https://example.invalid"],
             "cveSupportability": "Supported", "status": "RemediationRequired", "tags": ["tag"],
+        }, {
+            "id": "CVE-2026-9999", "name": "CVE-2026-9999",
+            "description": "Not referenced by a collected finding", "severity": "Low",
         }],
     }
 
-    row = normalize_live(payloads, datetime(2026, 9, 17, tzinfo=timezone.utc), "live-run")["vulnerabilities"][0]
+    rows = normalize_live(payloads, datetime(2026, 9, 17, tzinfo=timezone.utc), "live-run")["vulnerabilities"]
+    row = rows[0]
 
+    assert len(rows) == 1
     assert row["CveId"] == "CVE-2026-0001"
     assert row["Description"] == "Important vulnerability"
     assert row["CvssScore"] == 8.4
@@ -515,6 +626,29 @@ def test_raw_snapshot_replay(tmp_path):
     statuses_by_endpoint = {status["Endpoint"]: status for status in statuses}
     assert statuses_by_endpoint["secure_scores"]["Status"] == "OptionalUnavailable"
     assert statuses_by_endpoint["azure_subscriptions"]["Status"] == "Success"
+
+
+def test_delta_raw_snapshot_replay_uses_reconstructed_current_state(tmp_path):
+    run_folder = tmp_path / "live-20260916T120000Z"
+    run_folder.mkdir()
+    payloads = {
+        "derived_machine_vulnerabilities": [{"id": "finding-1", "machineId": "device-1", "cveId": "CVE-2026-0001", "severity": "High"}],
+        "derived_vulnerabilities": [{"id": "CVE-2026-0001", "description": "Replayed from delta baseline", "severity": "High"}],
+        "machines": [{"id": "device-1", "computerDnsName": "device", "machineTags": []}],
+        "recommendations": [],
+        "vulnerability_changes": [{"id": "finding-1", "status": "New"}],
+    }
+    for endpoint, rows in payloads.items():
+        with gzip.open(run_folder / f"{endpoint}-page-0001.json.gz", "wt", encoding="utf-8") as handle:
+            json.dump({"value": rows}, handle)
+
+    data, statuses = replay_raw_snapshot(run_folder)
+
+    assert data["findings"][0]["FindingKey"] == "finding-1"
+    assert data["vulnerabilities"][0]["Description"] == "Replayed from delta baseline"
+    statuses_by_endpoint = {status["Endpoint"]: status for status in statuses}
+    assert statuses_by_endpoint["machine_vulnerabilities"]["Status"] == "Success"
+    assert statuses_by_endpoint["vulnerabilities"]["Status"] == "Success"
 
 
 def test_raw_snapshot_replay_can_allow_missing_required_pages(tmp_path):

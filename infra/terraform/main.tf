@@ -478,8 +478,9 @@ resource "azurerm_function_app_flex_consumption" "collector" {
     "COLLECTION_SCHEDULE"              = var.collection_schedule
     "DEFENDER_API_BASE_URL"            = "https://api.security.microsoft.com"
     "ENABLE_EXPERIMENTAL_ENDPOINTS"    = tostring(var.enable_experimental_endpoints)
-    "FULL_ENRICHMENT_WEEKDAY"          = tostring(var.full_enrichment_weekday)
+    "FULL_COLLECTION_WEEKDAY"          = tostring(var.full_collection_weekday)
     "RECOMMENDATION_ENRICHMENT_MODE"   = var.recommendation_enrichment_mode
+    "VULNERABILITY_COLLECTION_MODE"    = var.vulnerability_collection_mode
     "STORAGE_ACCOUNT_NAME"             = azurerm_storage_account.history.name
     "STORAGE_CONTAINER_NAME"           = azurerm_storage_container.history.name
     "STORAGE_CURRENT_CONTAINER_NAME"   = azurerm_storage_container.current.name
@@ -704,6 +705,22 @@ resource "azurerm_linux_web_app" "dashboard" {
   identity {
     type         = "UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.dashboard[each.key].id]
+  }
+
+  logs {
+    detailed_error_messages = false
+    failed_request_tracing  = false
+
+    application_logs {
+      file_system_level = "Information"
+    }
+
+    http_logs {
+      file_system {
+        retention_in_days = 3
+        retention_in_mb   = 100
+      }
+    }
   }
 
   site_config {

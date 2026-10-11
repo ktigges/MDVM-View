@@ -297,11 +297,22 @@ variable "app_mode" {
 variable "recommendation_enrichment_mode" {
   description = "Recommendation-to-machine enrichment strategy."
   type        = string
-  default     = "auto"
+  default     = "targeted"
 
   validation {
     condition     = contains(["auto", "targeted", "full", "none"], var.recommendation_enrichment_mode)
     error_message = "recommendation_enrichment_mode must be auto, targeted, full, or none."
+  }
+}
+
+variable "vulnerability_collection_mode" {
+  description = "Vulnerability baseline strategy: auto uses daily deltas with weekly full reconciliation."
+  type        = string
+  default     = "auto"
+
+  validation {
+    condition     = contains(["auto", "delta", "full"], var.vulnerability_collection_mode)
+    error_message = "vulnerability_collection_mode must be auto, delta, or full."
   }
 }
 
@@ -311,14 +322,14 @@ variable "enable_experimental_endpoints" {
   default     = false
 }
 
-variable "full_enrichment_weekday" {
-  description = "Weekly full enrichment day, Monday 0 through Sunday 6."
+variable "full_collection_weekday" {
+  description = "Weekly full vulnerability reconciliation day, Monday 0 through Sunday 6."
   type        = number
   default     = 6
 
   validation {
-    condition     = var.full_enrichment_weekday >= 0 && var.full_enrichment_weekday <= 6
-    error_message = "full_enrichment_weekday must be from 0 through 6."
+    condition     = var.full_collection_weekday >= 0 && var.full_collection_weekday <= 6
+    error_message = "full_collection_weekday must be from 0 through 6."
   }
 }
 

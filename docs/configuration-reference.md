@@ -71,9 +71,10 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `function_instance_memory_in_mb` | `2048`; `2048` or `4096` | Memory assigned to each Flex Consumption collector instance |
 | `collection_schedule` | `0 0 5 * * *` | Six-field UTC NCRONTAB timer schedule |
 | `app_mode` | `live`; `live` or `combined` | Controls whether a newly published run contains live rows only or live plus retained labeled synthetic rows |
-| `recommendation_enrichment_mode` | `auto`; `auto`, `targeted`, `full`, or `none` | Controls recommendation-to-machine API enrichment |
+| `recommendation_enrichment_mode` | `targeted`; `auto`, `targeted`, `full`, or `none` | Controls recommendation-to-machine API enrichment; `auto` resolves to targeted |
+| `vulnerability_collection_mode` | `auto`; `auto`, `delta`, or `full` | Uses daily deltas with initial, weekly, and stale-state full reconciliation |
 | `enable_experimental_endpoints` | `false` | Enables undocumented Defender compatibility probes |
-| `full_enrichment_weekday` | `6`; Monday `0` through Sunday `6` | Full-enrichment day when mode is `auto` |
+| `full_collection_weekday` | `6`; Monday `0` through Sunday `6` | Full vulnerability reconciliation day when collection mode is `auto` |
 | `web_app_name` | Required, globally unique | Dashboard Web App name |
 | `web_app_service_plan_name` | Required | Linux App Service plan name |
 | `web_app_identity_name` | Required | User-assigned identity used by the dashboard |
@@ -150,9 +151,10 @@ These can be environment variables or keys in
 | `SYNTHETIC_SEED` | `syntheticSeed` | `24017` | Deterministic synthetic generator seed |
 | `SYNTHETIC_MONTHS` | `syntheticMonths` | `6` | Number of synthetic history months |
 | `SYNTHETIC_DEVICE_COUNT` | `syntheticDeviceCount` | `2500`; 1-100000 | Number of generated synthetic devices |
-| `RECOMMENDATION_ENRICHMENT_MODE` | `recommendationEnrichmentMode` | `auto` | `auto`, `targeted`, `full`, or `none` |
+| `RECOMMENDATION_ENRICHMENT_MODE` | `recommendationEnrichmentMode` | `targeted` | `auto`, `targeted`, `full`, or `none` |
+| `VULNERABILITY_COLLECTION_MODE` | `vulnerabilityCollectionMode` | `auto` | `auto`, `delta`, or `full` |
 | `ENABLE_EXPERIMENTAL_ENDPOINTS` | `enableExperimentalEndpoints` | `false` | Enables undocumented optional endpoint probes |
-| `FULL_ENRICHMENT_WEEKDAY` | `fullEnrichmentWeekday` | `6` | Weekly full-enrichment weekday, Monday 0 through Sunday 6 |
+| `FULL_COLLECTION_WEEKDAY` | `fullCollectionWeekday` | `6` | Weekly full vulnerability reconciliation weekday, Monday 0 through Sunday 6 |
 | `COLLECTION_SCHEDULE` | `collectionSchedule` | `0 0 5 * * *` | UTC Functions timer schedule |
 | `DASHBOARD_DATA_SOURCE` | `dashboardDataSource` | `local` | `local` reads `dashboard/data`; `azure` reads current manifest and curated blobs |
 | `DASHBOARD_STATIC_DIR` | `dashboardStaticDir` | Empty | Override path for dashboard static assets |
@@ -185,7 +187,8 @@ Terraform input rather than changing the generated setting in the portal.
 | `COLLECTION_SCHEDULE` | `var.collection_schedule` |
 | `DEFENDER_API_BASE_URL` | Microsoft Defender API root |
 | `ENABLE_EXPERIMENTAL_ENDPOINTS` | `var.enable_experimental_endpoints` |
-| `FULL_ENRICHMENT_WEEKDAY` | `var.full_enrichment_weekday` |
+| `VULNERABILITY_COLLECTION_MODE` | `var.vulnerability_collection_mode` |
+| `FULL_COLLECTION_WEEKDAY` | `var.full_collection_weekday` |
 | `RECOMMENDATION_ENRICHMENT_MODE` | `var.recommendation_enrichment_mode` |
 | `STORAGE_ACCOUNT_NAME` | Protected history storage account |
 | `STORAGE_CONTAINER_NAME` | Immutable history container |

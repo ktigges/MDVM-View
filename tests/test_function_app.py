@@ -9,7 +9,7 @@ def test_run_dataprep_uses_temporary_writable_workspace(monkeypatch):
 
     def fake_main(arguments: list[str]) -> int:
         observed["work_root"] = Path.cwd()
-        assert arguments == ["collect-live", "--skip-local-exports"]
+        assert arguments == ["collect-live", "--skip-local-exports", "--collection", "auto", "--enrichment", "auto"]
         assert observed["work_root"].parent == Path("/tmp").resolve()
         assert (observed["work_root"] / "config/sla-policies.json").is_file()
         output = observed["work_root"] / "output/raw/live-test"
@@ -28,7 +28,7 @@ def test_run_dataprep_restores_directory_after_failure(monkeypatch):
     original_directory = Path.cwd()
 
     def failing_main(arguments: list[str]) -> int:
-        assert arguments == ["collect-live", "--skip-local-exports"]
+        assert arguments == ["collect-live", "--skip-local-exports", "--collection", "auto", "--enrichment", "auto"]
         raise RuntimeError("collection failed")
 
     monkeypatch.setattr(function_app, "main", failing_main)
@@ -41,3 +41,12 @@ def test_run_dataprep_restores_directory_after_failure(monkeypatch):
         raise AssertionError("Expected collection failure")
 
     assert Path.cwd() == original_directory
+
+
+def test_manual_full_trigger_forces_full_collection_and_enrichment(monkeypatch):
+    calls = []
+    monkeypatch.setattr(function_app, "_run_dataprep", lambda collection, enrichment: calls.append((collection, enrichment)) or 0)
+
+    function_app.dataprep_full_snapshot("full")
+
+    assert calls == [("full", "full")]

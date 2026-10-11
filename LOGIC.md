@@ -50,9 +50,11 @@ machineId | cveId | productName | productVersion
 
 A product-version change can therefore close one key and open another.
 
-The dashboard identifies open workload as any finding whose `FindingStatus` is
-not `Fixed`. States such as `PendingConfirmation`, `StaleDevice`, `OutOfScope`,
-and `Unknown` remain visible because they have not been proven fixed.
+The dashboard separates current detections from evidence confirmation.
+`Open`, `Reopened`, and `DetectionReturned` are current detections.
+`PendingConfirmation` and `PendingVerification` remain visible as pending
+evidence but can be hidden or isolated with the Exposure status filter.
+Confirmed fixed evidence remains available in SLA and lifecycle reporting.
 
 ## 3. Asset classification and operating queue
 
@@ -169,6 +171,7 @@ The collector compares current finding keys with the prior live state.
 | Previously fixed key appears again | `Reopened`; set `ReopenedUtc` |
 | First qualified partial absence | `PendingConfirmation`; set `FirstAbsentUtc` |
 | Second qualified partial absence | `Fixed`; use first absence as `FixedUtc` and current snapshot as `FixedConfirmedUtc` |
+| Pending finding appears again | `DetectionReturned`; revoke provisional remediation and restore the current open SLA result |
 | All findings disappear for an active, fresh device | `PendingVerification`; never infer a fix without corroborating evidence |
 | Device is stale or not fresh | `StaleDevice`, not fixed |
 | Device is offboarded or unsupported | `OutOfScope`, not fixed |
@@ -187,6 +190,15 @@ Therefore, **fixed** means the exact finding key was absent from two consecutive
 complete snapshots while other vulnerability evidence for that active, fresh
 device remained available. A Defender task being completed does not by itself
 mark findings fixed.
+
+The first qualified absence also sets `EffectiveRemediationUtc`. SLA outcome is
+calculated immediately from that time and is labeled with
+`SlaEvidenceStatus=PendingConfirmation` until confirmation. The confirming run
+does not move the effective remediation time. If the finding returns before
+confirmation, `EffectiveRemediationUtc` is cleared, `VerificationFailedUtc` is
+set, and the SLA returns to its current open state. Wholesale device-level
+disappearance does not set an effective remediation time because independent
+corroboration is unavailable.
 
 ## 7. Remediation outcome
 

@@ -10,7 +10,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
   <link rel="icon" type="image/png" href="favicon.png?v=20261009-2216">
-  <link rel="stylesheet" href="styles.css?v=20261009-2334">
+  <link rel="stylesheet" href="styles.css?v=20261011-1840">
 </head>
 <body>
   <header class="topbar">
@@ -68,10 +68,7 @@
     <button data-view="priority"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="M12 2v3m0 14v3m10-10h-3M5 12H2"/></svg></span><span class="nav-label">Prioritize</span></button>
     <button data-view="sla"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><span class="nav-label">Remediate</span></button>
     <button data-view="trend"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2"/></svg></span><span class="nav-label">Reporting</span></button>
-    <div class="nav-help-group">
-      <span class="nav-help-heading">Help</span>
-      <button data-view="help"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.4 2.4 0 114.5 1.2c-.8 1.1-2.3 1.3-2.3 3.1M12 17h.01"/></svg></span><span class="nav-label">How to use</span></button>
-    </div>
+    <button data-view="help"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.4 2.4 0 114.5 1.2c-.8 1.1-2.3 1.3-2.3 3.1M12 17h.01"/></svg></span><span class="nav-label">How to use</span></button>
   </nav>
   <div class="workspace">
   <div class="workspace-controls">
@@ -88,6 +85,7 @@
   </section>
   <section id="filterBar" class="filterbar" aria-label="Dashboard filters">
     <label>Severity / task priority<select id="severityFilter"><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
+    <label class="exposure-status-filter">Exposure status<select id="exposureStatusFilter"><option value="DetectedAndPending">Detected and pending</option><option value="DetectedOnly">Detected only</option>    <option value="PendingOnly">Pending evidence only</option><option value="ConfirmedFixed">Confirmed fixed only</option><option value="All">All lifecycle states</option></select><span>Changes operational recommendations, hosts, and findings; SLA results always use the first qualified absence.</span></label>
     <label id="recommendationTrackingFilterLabel" hidden>Filter recommendations by dashboard status<select id="recommendationTrackingFilter"><option value="All">All dashboard statuses</option><option value="NeedsAttention">Needs attention</option><option value="Untracked">Only untracked / not started</option><option value="InProgress">Only in progress</option><option value="NeedsReassignment">Only needs reassignment</option><option value="ReadyForValidation">Only marked fixed · awaiting collection</option><option value="Confirmed">Only confirmed fixed</option><option value="StillDetected">Only still detected after validation</option></select><span>This dropdown only filters the list. It does not show or change the selected recommendation's status.</span></label>
     <fieldset class="type-filter"><legend>Recommendation type</legend><div class="filter-check-options"><label><input type="checkbox" name="recommendationType" value="Vulnerability" checked>Vulnerability</label><label><input type="checkbox" name="recommendationType" value="Misconfiguration">Misconfiguration</label></div></fieldset>
     <label class="classification-filter">Asset classification<select id="assetClassFilter"><option value="All">All classifications</option><option value="AzureCloud">Azure / Cloud</option><option value="TraditionalIT">Traditional IT</option><option value="Unknown">Unknown</option></select><span>Azure resource metadata → Defender machine tag → inventory fallback</span></label>
@@ -106,7 +104,7 @@
       <strong id="newActivityTitle">Finding activity in the 24 hours ending at latest collection</strong>
       <label class="new-activity-period">Date window<select id="newPeriod"><option value="day">Latest 24 hours ending at collection</option><option value="week">Latest 7 days ending at collection</option><option value="month">Latest 30 days ending at collection</option><option value="custom">Custom date range</option></select></label>
       <fieldset id="newPeriodCustom" class="new-period-custom" hidden><legend>Custom activity dates</legend><label>From<input id="newPeriodStart" type="date"></label><label>Through<input id="newPeriodEnd" type="date"></label></fieldset>
-      <small id="newActivityContext">Counts use each finding's first-seen or fixed timestamp inside this UTC window; it is not necessarily the interval since the previous collection</small>
+      <small id="newActivityContext">Counts use each finding's first-seen or effective-remediation timestamp inside this UTC window; it is not necessarily the interval since the previous collection</small>
     </div>
     <div class="new-activity-metric-groups">
       <section class="new-activity-metric-group" aria-labelledby="firstSeenMetricLabel">
@@ -119,9 +117,9 @@
         </div>
       </section>
       <section class="new-activity-metric-group corrected" aria-labelledby="correctedMetricLabel">
-        <strong id="correctedMetricLabel">Fixed in the same window</strong>
+        <strong id="correctedMetricLabel">Remediation observed in the same window</strong>
         <div class="new-activity-metrics corrected-metrics">
-          <div class="window-metric" tabindex="0" title="Finding instances with a fixed timestamp inside the selected window"><strong id="fixedWindowFindingCount">0</strong><span>finding instances fixed</span></div>
+          <div class="window-metric" tabindex="0" title="Finding instances whose first qualified absence occurred inside the selected window"><strong id="fixedWindowFindingCount">0</strong><span>remediation observations</span></div>
           <div class="window-metric" tabindex="0" title="Distinct CVEs represented by finding instances fixed inside the selected window"><strong id="fixedWindowCveCount">0</strong><span>distinct CVEs with fixes</span></div>
           <div class="window-metric" tabindex="0" title="Machines with at least one finding fixed inside the selected window; they may still have other open findings"><strong id="fixedWindowMachineCount">0</strong><span>machines with fixes</span></div>
           <div class="window-metric" tabindex="0" title="Recommendations with at least one finding fixed inside the selected window"><strong id="fixedWindowRecommendationCount">0</strong><span>recommendations with fixes</span></div>
@@ -163,7 +161,7 @@
       <div class="executive-heading"><div><span>EXECUTIVE POSTURE</span><h2>Current security posture</h2></div><p>Filtered remediation posture, Microsoft Secure Score, and policy SLA outcomes</p></div>
       <div class="executive-decision-grid">
         <article class="decision-panel primary-kpis"><div class="decision-panel-title"><span>WORK TO DO NOW</span><h3>Current exposure and latest-run change</h3><small id="executiveDeltaContext">Loading comparable runs</small></div><div id="executiveWorkload" class="decision-metrics"></div></article>
-        <article class="decision-panel sla-kpis"><div class="decision-panel-title"><span>SLA RESULTS AND CURRENT RISK</span><h3>Confirmed fixes against SLA and critical findings still open</h3></div><div id="executiveSlaPerformance" class="decision-metrics"></div></article>
+        <article class="decision-panel sla-kpis"><div class="decision-panel-title"><span>SLA RESULTS AND CURRENT RISK</span><h3>Observed remediation against SLA and critical findings still detected</h3></div><div id="executiveSlaPerformance" class="decision-metrics"></div></article>
         <article id="secureScoreCard" class="secure-score-card supporting-score"></article>
       </div>
     </section>
@@ -220,10 +218,10 @@
       <div id="remediationOutcomeCards" class="metric-grid compact"></div>
       <div class="panel recommendation-outcomes"><div class="panel-title"><h3>Priority remediation outcomes</h3><span>Highest effective severity, then current things to fix</span></div><div class="table-wrap"><table id="remediationOutcomeTable"></table></div></div>
       <div class="sla-graph-grid">
-        <article class="panel sla-graph-panel"><div class="panel-title"><h3 id="findingSlaGraphTitle">Finding outcomes by severity</h3><span>Open and Defender-confirmed fixed, within vs outside policy SLA</span></div><div id="findingSlaGraph" class="sla-bar-chart" role="region" aria-labelledby="findingSlaGraphTitle"></div></article>
+        <article class="panel sla-graph-panel"><div class="panel-title"><h3 id="findingSlaGraphTitle">Finding outcomes by severity</h3><span>Detected, remediation observed, and evidence-pending outcomes against policy SLA</span></div><div id="findingSlaGraph" class="sla-bar-chart" role="region" aria-labelledby="findingSlaGraphTitle"></div></article>
         <article class="panel sla-graph-panel"><div class="panel-title"><h3 id="recommendationSlaGraphTitle">Recommendation outcomes by severity</h3><span>Distinct recommendations represented in each finding outcome</span></div><div id="recommendationSlaGraph" class="sla-bar-chart recommendation-sla-chart" role="region" aria-labelledby="recommendationSlaGraphTitle"></div></article>
       </div>
-      <div class="notice"><strong>How confirmation works</strong><p>The team remediates from Defender recommendations or its existing operational process. This view waits for Defender reassessment: a finding is confirmed fixed only after it disappears from fresh active-device snapshots.</p></div>
+      <div class="notice"><strong>How confirmation and SLA timing work</strong><p>The first qualified complete snapshot where a finding is absent is the effective remediation time used for SLA. The finding remains visibly pending until another complete snapshot confirms the absence. Wholesale device-level disappearance requires corroborating evidence and does not provisionally satisfy SLA.</p></div>
       <section id="remediationActivitySection" data-feature="remediation-activity" hidden>
         <div id="remediationActivityCards" class="metric-grid compact"></div>
         <article class="panel"><div class="panel-title"><h3>Remediation activity context</h3><span>Active first, then task priority, overdue state, and due date</span></div><div class="table-wrap"><table id="remediationTable"></table></div></article>
@@ -254,9 +252,11 @@
         </div>
       </section>
       <section class="panel lifecycle-reporting" aria-labelledby="lifecycleReportingTitle">
-        <div class="panel-title"><div><h3 id="lifecycleReportingTitle">Lifecycle reporting by entity</h3><span>Counts are explicitly separated into findings, machines, CVEs, and recommendations</span></div><div class="reporting-actions"><label>Entity<select id="reportingEntity"><option value="findings">Findings</option><option value="machines">Machines</option><option value="cves">CVEs</option><option value="recommendations">Recommendations</option></select></label><button id="exportReportingCsv" type="button">Export filtered CSV</button></div></div>
+        <div class="panel-title"><div><h3 id="lifecycleReportingTitle">Lifecycle reporting by entity</h3><span>Counts and detail are explicitly separated into findings, machines, CVEs, and recommendations</span></div><div class="reporting-actions"><label>Entity<select id="reportingEntity"><option value="findings">Findings</option><option value="machines">Machines</option><option value="cves">CVEs</option><option value="recommendations">Recommendations</option></select></label><label>Change<select id="reportingChange"><option value="Fixed" selected>Confirmed fixed</option><option value="PendingConfirmation">Pending confirmation</option><option value="PendingVerification">Pending verification</option><option value="DetectionReturned">Detection returned</option><option value="New">New</option><option value="Reopened">Reopened after confirmation</option><option value="All">All changes</option></select></label><button id="exportReportingCsv" type="button">Export detail CSV</button></div></div>
         <p id="lifecycleCoverage" class="coverage-note"></p>
         <div id="lifecycleCards" class="metric-grid statistics-period-cards"></div>
+        <div class="panel-title lifecycle-detail-title"><div><h3 id="lifecycleDetailTitle">Fixed / corrected detail</h3><span id="lifecycleDetailContext">Machines, CVEs, and recommendations corrected during the selected comparison window</span></div></div>
+        <div class="table-wrap lifecycle-detail-wrap"><table id="lifecycleDetailTable"></table></div>
         <div class="table-wrap"><table id="lifecycleHistoryTable"></table></div>
       </section>
       <div class="statistics-definitions">
@@ -303,7 +303,7 @@
   <aside id="recommendationPreview" class="recommendation-preview" role="status" hidden></aside>
   <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
   <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
-  <script src="config.js?v=20261009-2303"></script>
-  <script src="app.js?v=20261009-2334"></script>
+  <script src="config.js?v=20261011-1840"></script>
+  <script src="app.js?v=20261011-1840"></script>
 </body>
 </html>

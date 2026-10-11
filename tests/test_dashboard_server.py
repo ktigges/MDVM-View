@@ -229,6 +229,33 @@ def test_azure_store_requires_storage_account():
         store.read("findings.json")
 
 
+def test_data_source_failures_are_logged_and_return_service_unavailable(tmp_path: Path, caplog):
+    (tmp_path / "dashboard").mkdir()
+    app = create_app(
+        Settings(dashboard_data_source="azure", storage_account_name="historyaccount"),
+        project_root=tmp_path,
+    )
+    data_route = next(route for route in app.routes if getattr(route, "path", "") == "/api/data/{asset_path:path}")
+    store = next(
+        cell.cell_contents
+        for cell in data_route.endpoint.__closure__ or ()
+        if isinstance(cell.cell_contents, DashboardDataStore)
+    )
+    store.manifest_loader = lambda *_: {
+        "runId": "run-1",
+        "files": [{"kind": "curated", "dataset": "findings"}],
+    }
+    store.dataset_loader = lambda *_: (_ for _ in ()).throw(RuntimeError("storage unavailable"))
+    store.credential_factory = lambda *_: object()
+
+    status, body = asgi_get(app, "/api/data/findings.json")
+
+    assert status == 503
+    assert json.loads(body)["detail"] == "Dashboard data source is unavailable"
+    assert "Dashboard data asset findings.json could not be read" in caplog.text
+    assert "storage unavailable" in caplog.text
+
+
 def test_dashboard_health_marks_client_secret_as_local_development(tmp_path: Path):
     (tmp_path / "dashboard").mkdir()
     app = create_app(

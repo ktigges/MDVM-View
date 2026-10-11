@@ -10,6 +10,124 @@ It does not change Defender data, perform remediation, or send dashboard state
 back to Defender. Optional recommendation work status coordinates users in this
 dashboard only.
 
+## Streamlined Azure deployment (recommended)
+
+For a new customer-hosted installation or a complete update, use the
+cross-platform interactive deployment menu. The same workflow works on an
+empty environment and an existing deployment because the Terraform `webapp`
+stage is cumulative: it includes the protected foundation, collector Function,
+and authenticated Web App.
+
+Before running the menu:
+
+1. Install Git, Azure CLI, Terraform 1.10 or newer, and Python 3.12 or the
+   tested Python 3.14.7 workstation runtime.
+2. Create and activate the project virtual environment, then install the
+   project with `python -m pip install -e '.[dev]'`.
+3. Copy `infra/terraform/main.tfvars.example.json` to
+   `infra/terraform/main.tfvars.json` and replace every example with the
+   customer's tenant, subscription, management-group, resource, schedule,
+   retention, network, SKU, and tag values.
+4. Sign in and verify the exact customer context:
+
+   ```bash
+   az login --tenant "<customer-tenant-id>"
+   az account set --subscription "<customer-subscription-id>"
+   az account show --query "{user:user.name,name:name,id:id,tenantId:tenantId}" --output table
+   ```
+
+The signed-in Azure CLI identity performs only deployment, update,
+verification, and any explicitly selected administrative operation. It must
+have the [required Azure and Microsoft Entra permissions](DEPLOY.md#required-operator-permissions).
+Vulnerability View does not upload, copy, or store that operator's password or
+Azure CLI token, and the deployed application does not use the operator's
+identity during normal processing. Azure CLI manages the local sign-in
+session.
+
+At runtime:
+
+- the collector Function uses its user-assigned managed identity for Defender,
+  Microsoft Graph, Function runtime Storage, and protected history Storage;
+- the hosted Web App uses its separate user-assigned managed identity to read
+  protected history and, when enabled, write dashboard workflow data;
+- the Entra application and Enterprise Application service principal provide
+  Easy Auth and assignment-required dashboard roles;
+- no operator or dashboard-user password is placed in application source,
+  settings, or collected data.
+
+Terraform creates and rotates an application credential used by App Service
+Easy Auth. That application credential is not a user credential. It is stored
+as a protected App Service setting and sensitive Terraform state, so retain and
+protect `infra/terraform/terraform.tfstate`.
+
+Run the menu on Linux or macOS:
+
+```bash
+./infra/deployment-menu.sh
+```
+
+Run the matching menu on Windows PowerShell or PowerShell 7:
+
+```powershell
+.\infra\deployment-menu.ps1
+```
+
+Select:
+
+```text
+1) Complete initial deployment or update: infrastructure, Function, and Web App
+```
+
+Option 1 performs these steps in order:
+
+1. Runs `terraform init` and validates the Terraform configuration.
+2. Plans the cumulative `webapp` stage against the selected customer
+   subscription and existing Terraform state.
+3. Saves and displays the exact Terraform plan for review.
+4. Stops until the operator types `APPLY`.
+5. Applies only that reviewed saved plan.
+6. Reconciles and verifies managed-identity Function runtime Storage
+   authentication.
+7. Configures and reports the dashboard Enterprise Application and roles.
+8. Packages, deploys, and verifies the collector Function code.
+9. Packages, deploys, starts, and verifies the hosted Web App code.
+10. Verifies the Function trigger, published-data status, Web App resource
+    state, HTTPS configuration, and Easy Auth gate.
+11. Offers to start the first live collection; this requires a second explicit
+    `COLLECT` confirmation and publishes a new immutable run only after
+    successful validation.
+
+Never type `APPLY` if the displayed plan proposes deletion or replacement of
+protected history Storage. The menus expose no destroy operation. Existing
+`raw/`, `curated/`, and `runs/` data remains append-only, and only
+`current/manifest.json` advances after a completed validated run.
+
+### Resources created by the complete deployment
+
+| Area | Resources and configuration |
+|---|---|
+| Foundation | Customer resource group; Network Security Perimeter, Storage profile, access rules, and Storage associations |
+| Protected history | ADLS Gen2 history account; private immutable-history and current-pointer containers; optional private workflow/branding container; soft-delete and WORM retention protections |
+| Collector runtime | Separate replaceable Function runtime Storage account and deployment container; Linux Flex Consumption plan; Python collector Function and scheduled timer |
+| Collector identity and access | User-assigned managed identity; management-group or subscription Reader; Defender `Machine.Read.All`, `Vulnerability.Read.All`, and `SecurityRecommendation.Read.All`; Microsoft Graph `SecurityEvents.Read.All`; required Storage and monitoring roles |
+| Monitoring | Log Analytics workspace, Application Insights, Function diagnostic settings, and metrics publishing access |
+| Dashboard hosting | Linux App Service plan; Python Web App; HTTPS-only configuration, health check, Always On, application/HTTP logging, and Easy Auth |
+| Dashboard identity and access | Separate user-assigned managed identity with read-only history access and scoped workflow-container contributor access |
+| Dashboard authentication | Entra application registration, assignment-required Enterprise Application service principal, rotating Easy Auth application credential, and Dashboard Viewer, Data Evidence Reader, Recommendation Tracker, and Dashboard Administrator roles |
+
+Terraform does not choose which customer users or groups may open the
+dashboard. After deployment, an Entra administrator must assign **Dashboard
+Viewer** to each approved user or group under **Enterprise applications > DVM
+Viewer > Users and groups**. Assign the optional roles only where their
+additional access is required.
+
+For separate foundation, Function, and Web App approval gates—or to inspect
+every command individually—continue with the
+[greenfield staged checklist](docs/greenfield-deployment.md) or the
+[canonical Azure deployment guide](DEPLOY.md). For a collector with a local
+workstation dashboard or a completely local evaluation, use the alternative
+installation paths below.
+
 ## Repository structure
 
 ```text
@@ -33,6 +151,8 @@ Elite-MockUp/
 │   └── config.js                Browser-safe presentation defaults
 ├── docs/                        Installation, operations, data, and troubleshooting guides
 ├── infra/
+│   ├── deployment-menu.sh       Recommended Linux/macOS deployment menu
+│   ├── deployment-menu.ps1      Matching Windows/PowerShell deployment menu
 │   ├── deploy.sh                Reviewed Terraform and package deployment workflow
 │   ├── check-runs.sh            Durable collection-run status checks
 │   ├── check-function-logs.sh   Function and Application Insights log checks
@@ -63,7 +183,9 @@ Elite-MockUp/
 
 ## Installation paths
 
-Choose one of these three installation paths:
+The streamlined hosted deployment above is the recommended customer path.
+Choose one of these alternatives when the customer needs a local dashboard,
+fully local evaluation, or the detailed staged commands:
 
 1. **Azure collector with local Web App** — deploy the Function and protected
    storage, then run the Web App on a workstation against the live Azure data.
@@ -78,7 +200,8 @@ the hosted Web App stage to the resources already created for option 1.
 
 ### 1. Deploy the Azure collector and run the Web App locally
 
-This is the current customer installation path. Azure hosts the protected
+Use this alternative when the dashboard must run on a workstation instead of
+in Azure. Azure hosts the protected
 history storage and scheduled collection Function. The Web App runs on the
 developer workstation and reads the latest successfully published live dataset
 from Azure Storage.
@@ -419,6 +542,11 @@ Do not manually invoke the collector while the status check reports `ACTIVE` or
 For schedules, manual invocation, deployment updates, monitoring, current-run
 verification, history restore, and dashboard user assignments, use:
 
+- Option 7, **Operations and diagnostics**, in either interactive deployment
+  menu for current activity, in-flight progress, latest published runs,
+  Function diagnostics, application verification, and a confirmed manual full
+  vulnerability/relationship reconciliation. Normal scheduled runs use deltas
+  between automatic weekly full vulnerability baselines.
 - [Operations and monitoring](docs/operations-and-configuration.md)
 - [Command reference](docs/command-reference.md)
 - [Troubleshooting](docs/troubleshooting.md)

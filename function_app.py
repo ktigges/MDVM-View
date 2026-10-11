@@ -18,7 +18,7 @@ app = func.FunctionApp()
 COLLECTOR_VERSION = os.getenv("COLLECTOR_VERSION", "not-stamped")
 
 
-def _run_dataprep() -> int:
+def _run_dataprep(collection_mode: str = "auto", enrichment_mode: str = "auto") -> int:
     """Run the data-preparation CLI in the function's temporary workspace."""
     application_root = Path(__file__).resolve().parent
     policy_source = application_root / "config/sla-policies.json"
@@ -33,7 +33,14 @@ def _run_dataprep() -> int:
         shutil.copy2(policy_source, policy_target)
         try:
             os.chdir(work_root)
-            return main(["collect-live", "--skip-local-exports"])
+            return main([
+                "collect-live",
+                "--skip-local-exports",
+                "--collection",
+                collection_mode,
+                "--enrichment",
+                enrichment_mode,
+            ])
         finally:
             os.chdir(previous_directory)
 
@@ -47,3 +54,14 @@ def dataprep_snapshot(timer: func.TimerRequest) -> None:
     if exit_code:
         raise RuntimeError(f"Scheduled vulnerability dataprep failed with exit code {exit_code}")
     logging.info("Scheduled vulnerability dataprep collector version %s completed", COLLECTOR_VERSION)
+
+
+@app.generic_trigger(arg_name="input", type="manualTrigger", data_type=func.DataType.STRING)
+def dataprep_full_snapshot(input: str) -> None:
+    """Run an operator-requested full vulnerability and relationship reconciliation."""
+    del input
+    logging.info("Starting manual full vulnerability collector version %s", COLLECTOR_VERSION)
+    exit_code = _run_dataprep("full", "full")
+    if exit_code:
+        raise RuntimeError(f"Manual full vulnerability dataprep failed with exit code {exit_code}")
+    logging.info("Manual full vulnerability collector version %s completed", COLLECTOR_VERSION)

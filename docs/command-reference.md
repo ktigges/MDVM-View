@@ -26,6 +26,13 @@ Run commands from the repository root unless a section says otherwise.
 Never manually invoke while the status checker reports `ACTIVE` or
 `INDETERMINATE`.
 
+`verify function` checks managed-identity runtime Storage configuration, the
+deployed collector version, and trigger discovery. It intentionally does not
+query the current data manifest, so Network Security Perimeter or operator
+Storage data-plane access cannot stall deployment verification. Use
+`check-runs --limit 5 --progress` for collection and immutable-publication
+status.
+
 ## 2. Initial workstation setup
 
 macOS or Linux:
@@ -145,8 +152,9 @@ vulnerability-view <command> --help
 | Command | Changes data? | When to use |
 |---|---|---|
 | `vulnerability-view collect-live --local-only` | Local files only | Collect Defender data without reading/writing Azure history |
-| `vulnerability-view collect-live --local-only --enrichment targeted` | Local files only | Normal daily local collection |
-| `vulnerability-view collect-live --local-only --enrichment full` | Local files only | Explicit full recommendation-machine reconciliation |
+| `vulnerability-view collect-live --local-only --collection auto --enrichment targeted` | Local files only | Initial/weekly full vulnerability baseline with deltas between reconciliations |
+| `vulnerability-view collect-live --local-only --collection delta --enrichment targeted` | Local files only | Force a delta; fails if no baseline exists or the prior snapshot exceeds 14 days |
+| `vulnerability-view collect-live --local-only --collection full --enrichment full` | Local files only | Explicit full vulnerability and recommendation-machine reconciliation |
 | `vulnerability-view collect-live --local-only --enrichment none` | Local files only | Skip API relationship enrichment for diagnosis |
 | `vulnerability-view collect-live --from-raw latest --local-only` | Local files only | Replay latest retained raw pages without calling Defender |
 | `vulnerability-view collect-live --from-raw <folder> --local-only` | Local files only | Replay a selected raw run |
@@ -247,6 +255,55 @@ history storage. A no-change plan may omit settings that already match Azure.
 
 Code-only deployments do not need `tfplan` or `tfapply`.
 
+### Interactive deployment menus
+
+Use the menu launchers to run the same operations with reviewed apply and live
+collection confirmations:
+
+```bash
+./infra/deployment-menu.sh
+```
+
+```powershell
+.\infra\deployment-menu.ps1
+```
+
+Both menus can plan, display, and apply Web App infrastructure; deploy and
+verify Function or Web App code; invoke a live collection; verify both hosted
+applications; inspect current collector activity, in-flight progress, published
+runs, and Function diagnostics; or run the complete
+initial-deployment/update workflow. The read-only **Operations and
+diagnostics** submenu provides standard 24-hour and extended 72-hour diagnostic
+views without changing Azure resources or data. Option 1
+plans the cumulative `webapp` stage, so on a clean customer environment it
+creates the foundation, protected history storage, Function infrastructure,
+and Web App before deploying and verifying both code packages. On an existing
+environment, the same cumulative stage preserves all deployed components while
+applying reviewed updates. It does not create customer-specific
+`main.tfvars.json` values or perform Azure CLI sign-in; complete those
+prerequisites first.
+
+The menus do not expose destroy operations. Option 1 displays the saved Web App
+plan and requires typing `APPLY` before applying it. It then offers an optional
+initial/live collection, which requires typing `COLLECT`.
+
+All deployment, update, and verification operations run under the identity
+currently signed in to Azure CLI. That operator identity must have the required
+customer tenant, subscription, resource, RBAC, and Entra permissions. It is
+used only to perform the requested administrative operations: the scripts and
+deployed application do not store the operator's user credentials. Runtime
+viewer authentication uses the deployed Entra application and service
+principal, while Function and Web App access to Azure resources and data uses
+their configured managed identities.
+
+The shell and PowerShell launchers are a maintained pair. Any menu option,
+workflow ordering, confirmation, or wrapped operations-command change must be
+made in both files in the same change. Automated tests enforce their command
+and menu parity:
+
+- `infra/deployment-menu.sh` for Linux and macOS
+- `infra/deployment-menu.ps1` for Windows PowerShell and PowerShell 7
+
 ### API preflight and manual invocation
 
 ```bash
@@ -285,7 +342,7 @@ Possible results:
 |---|---|
 | `ACTIVE - DO NOT INVOKE ANOTHER RUN` | Fresh collector progress exists; wait |
 | Latest invocation completed | Safe to inspect the published run |
-| `INDETERMINATE` | Start exists without completion or fresh progress; wait and investigate before invoking |
+| `INDETERMINATE` | Start exists without a completion trace, completed request record, or fresh progress; this is uncertainty, not a failure or permission to invoke again |
 | No invocation start | No start was found in the selected time window |
 
 Continuously monitor without modifying Azure:
@@ -305,6 +362,18 @@ watch -n 20 './infra/check-function-logs.sh 1 1 --status-only'
 `check-runs.sh` reads completed immutable manifests only. `--progress` first
 prints the active-run safety check, then lists published runs. The active run
 will not appear in the manifest list until publication completes.
+
+The status checker uses both Function execution traces and completed
+`AppRequests` telemetry. This avoids reporting a successfully completed run as
+`INDETERMINATE` when Azure emits the request result but omits the usual
+`Executed 'Functions.dataprep_snapshot'` trace.
+
+The operations submenu also provides **Force full vulnerability and
+relationship reconciliation**. It checks active-run safety, requires typing
+`FULL`, and invokes the dedicated managed-identity Function trigger. Use it
+after a missed delta window, RBAC reorganization, suspected incomplete API
+evidence, or an operator-directed complete refresh. It creates a new immutable
+run and does not replace retained history.
 
 ### Detailed Function diagnostics
 

@@ -159,9 +159,11 @@ At minimum, every dated finding snapshot must preserve:
 - `FirstSeenUtc` source metadata
 - `FirstObservedUtc` and `LastObservedUtc`
 - `FirstAbsentUtc` and `ConsecutiveAbsentCount`
+- `EffectiveRemediationUtc`, `ConfirmationRunsCompleted`, and `ConfirmationRunsRequired`
 - `FindingStatus`
 - `FixedUtc`
 - `FixedConfirmedUtc`
+- `VerificationFailedUtc` and `SlaEvidenceStatus`
 - `ReopenedUtc`
 - `SlaPolicyName`
 - `SlaDays`
@@ -466,9 +468,13 @@ Findings are the central dataset. One row represents a device-level vulnerabilit
 |---|---|
 | `FirstSeenUtc` | Defender vulnerability metadata retained for reference |
 | `FirstObservedUtc`, `LastObservedUtc` | First and latest times this collector observed the finding |
-| `FindingStatus` | `Open`, `PendingConfirmation`, `Fixed`, `Reopened`, `StaleDevice`, `OutOfScope`, or `Unknown` |
+| `FindingStatus` | `Open`, `PendingConfirmation`, `PendingVerification`, `Fixed`, `Reopened`, `DetectionReturned`, `StaleDevice`, `OutOfScope`, or `Unknown` |
 | `FirstAbsentUtc`, `ConsecutiveAbsentCount` | Evidence accumulated while a fresh, active device no longer reports the finding |
+| `EffectiveRemediationUtc` | First qualified absence used for SLA timing; blank when evidence is insufficient or provisional remediation is revoked |
+| `ConfirmationRunsCompleted`, `ConfirmationRunsRequired` | Evidence progress toward confirmed fixed status |
 | `FixedUtc`, `FixedConfirmedUtc` | Effective remediation time and later confirmation time |
+| `VerificationFailedUtc` | Time a finding returned before pending evidence could be confirmed |
+| `SlaEvidenceStatus` | Detection, pending-confirmation, corroboration, confirmed, or insufficient-evidence qualifier for the SLA outcome |
 | `ReopenedUtc` | Snapshot time when a previously fixed key appeared again |
 | `LifecycleReason` | Explanation for the current lifecycle state |
 
@@ -495,8 +501,10 @@ Event types include:
 
 - `New`
 - `PendingConfirmation`
+- `PendingVerification`
 - `Fixed`
 - `Reopened`
+- `DetectionReturned`
 - `StaleDevice`
 - `OutOfScope`
 - `Unknown`
@@ -644,8 +652,9 @@ stateDiagram-v2
     PendingConfirmation --> Fixed: Second qualified absence
     Open --> PendingVerification: All device findings disappear
     PendingVerification --> PendingVerification: Wholesale absence continues
-    PendingVerification --> Open: Finding returns
-    PendingConfirmation --> Open: Finding returns before confirmation
+    PendingVerification --> DetectionReturned: Finding returns
+    PendingConfirmation --> DetectionReturned: Finding returns before confirmation
+    DetectionReturned --> Open: Detection continues
     Open --> StaleDevice: Absent but device evidence is stale
     Open --> Unknown: Absent and device inventory is missing
     Open --> OutOfScope: Device is offboarded or unsupported
@@ -676,7 +685,13 @@ A previous key absent from the current finding list is evaluated against the cur
 - Offboarded or unsupported device: `OutOfScope`
 - Device missing from inventory: `Unknown`
 
-For a confirmed fix, `FixedUtc` uses `FirstAbsentUtc` as the effective remediation time and `FixedConfirmedUtc` records the second confirming snapshot.
+At the first qualified partial absence, `EffectiveRemediationUtc` uses
+`FirstAbsentUtc` and immediately determines whether remediation was observed
+within or outside SLA. `SlaEvidenceStatus` remains `PendingConfirmation`. For a
+confirmed fix, `FixedUtc` retains the same effective time and
+`FixedConfirmedUtc` records the later confirming snapshot. If the detection
+returns first, provisional remediation is revoked and retained as a
+`DetectionReturned` lifecycle event.
 
 ### Reopened or repeated
 
@@ -729,7 +744,7 @@ If first-seen time or a matching policy is unavailable, the SLA result is `Unkno
 The daily summary recalculates a finding's effective state at the end of each reporting day using:
 
 - `FirstObservedUtc`
-- `FixedUtc`
+- `EffectiveRemediationUtc` for SLA outcome and `FixedUtc` for confirmed-fix counts
 - `ReopenedUtc`
 - `SlaDueUtc`
 

@@ -9,6 +9,16 @@ scripts remain available for compatibility. Use the repository-level
 [Azure deployment guide](../DEPLOY.md) for the complete greenfield procedure and
 permissions model.
 
+The interactive `deployment-menu.sh` and `deployment-menu.ps1` launchers are a
+maintained pair over the same operations CLI. Every menu option, command
+sequence, typed confirmation, and safety boundary changed in one launcher must
+be changed in the other. `tests/test_deployment_menus.py` enforces parity and
+ensures neither menu exposes destructive operations.
+
+The Operations and diagnostics submenu includes a `FULL`-confirmed complete
+vulnerability baseline and recommendation-relationship reconciliation. Normal
+scheduled collection uses deltas between weekly full vulnerability baselines.
+
 ## Cross-platform operations CLI
 
 The same commands work in Windows PowerShell, macOS, and Linux after activating
@@ -24,6 +34,7 @@ python -m vulnerability_view.operations_cli verify webapp
 python -m vulnerability_view.operations_cli check-runs --limit 10 --progress
 python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 10 --status-only
 python -m vulnerability_view.operations_cli invoke function --confirm
+python -m vulnerability_view.operations_cli invoke function --confirm --full
 ```
 
 Install or refresh the editable project once after pulling CLI changes on
@@ -180,6 +191,13 @@ The Terraform stages are cumulative:
 2. `function` — foundation plus collector Function, identities, permissions,
    runtime storage, schedule, and monitoring;
 3. `webapp` — foundation and Function plus the authenticated dashboard.
+
+For a streamlined initial customer deployment after configuration and Azure
+CLI sign-in, select option 1 in `deployment-menu.sh` or
+`deployment-menu.ps1`. It plans and applies the cumulative `webapp` stage,
+deploys and verifies both code packages, and optionally starts the first live
+collection. Use the separate stages when the customer requires independent
+review or approval at each infrastructure boundary.
 
 The Function stage grants its managed identity Reader once at
 `collector_management_group_id`. The collector then inventories subscriptions

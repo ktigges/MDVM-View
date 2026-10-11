@@ -47,8 +47,9 @@ The Terraform implementation needs these inputs:
 | `function_instance_memory_in_mb` | Flex Consumption memory per collector instance; supported project values are 2048 and 4096 |
 | `deploy_function` | Creates Function, identity, permissions, and monitoring when `true` |
 | `collection_schedule` | Production NCRONTAB schedule |
-| `recommendation_enrichment_mode` | `targeted`, `full`, `none`, or `auto` |
-| `full_enrichment_weekday` | Weekly full relationship-reconciliation day |
+| `recommendation_enrichment_mode` | `targeted` for scheduled runs; `full` only for an explicit complete relationship refresh |
+| `vulnerability_collection_mode` | `auto` for daily deltas with safe full-baseline fallback |
+| `full_collection_weekday` | Weekly full vulnerability-state reconciliation day |
 | `tags` | Ownership, environment, application, and cost metadata |
 
 The greenfield history account and its two containers use Terraform `prevent_destroy`. Existing populated accounts such as the current development account remain separate and are not referenced by this new state. Use `docs/greenfield-deployment.md` for the staged commands.

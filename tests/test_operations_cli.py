@@ -25,6 +25,7 @@ def test_parser_exposes_identical_cross_platform_commands():
     assert operations_cli.build_parser().parse_args(["output", "function_app_name"]).name == "function_app_name"
     assert operations_cli.build_parser().parse_args(["check-runs", "--limit", "5", "--progress"]).progress is True
     assert operations_cli.build_parser().parse_args(["invoke", "function", "--confirm"]).confirm is True
+    assert operations_cli.build_parser().parse_args(["invoke", "function", "--confirm", "--full"]).full is True
 
 
 def test_log_query_has_bounded_timeout(monkeypatch):
@@ -79,6 +80,34 @@ def test_function_status_distinguishes_failed_execution_from_success(monkeypatch
     assert operations_cli.check_function_logs(1, 3, True) == "FAILED"
     output = capsys.readouterr().out
     assert "FAILED - no durable run was published" in output
+    assert "Completed local:" in output
+
+
+def test_function_status_uses_completed_request_when_completion_trace_is_missing(monkeypatch, capsys):
+    monkeypatch.setattr(
+        operations_cli,
+        "_workspace_context",
+        lambda: ({"function_app_name": "func-test", "subscription_id": "sub-test"}, "workspace-test"),
+    )
+    responses = iter([
+        [{
+            "InvocationId": "completed-invocation",
+            "StartedUtc": "2026-10-11T18:20:51Z",
+            "CompletedUtc": None,
+            "CompletionStatus": None,
+        }],
+        [{
+            "RequestStartedUtc": "2026-10-11T18:20:50Z",
+            "Success": True,
+            "DurationMs": 977000,
+            "ResultCode": "0",
+        }],
+    ])
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args: next(responses))
+
+    assert operations_cli.check_function_logs(1, 3, True) == "SUCCEEDED"
+    output = capsys.readouterr().out
+    assert "Result:            Succeeded" in output
     assert "Completed local:" in output
 
 
@@ -274,7 +303,38 @@ def test_invoke_distinguishes_trigger_acceptance_from_collection_success(monkeyp
     assert "check-runs --limit 10 --progress" in output
 
 
-def test_verify_function_allows_greenfield_before_first_run(monkeypatch, capsys):
+def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch):
+    class AcceptedResponse:
+        status_code = 202
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+    requests = []
+    monkeypatch.setattr(
+        operations_cli,
+        "_tf_output",
+        lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name],
+    )
+    monkeypatch.setattr(
+        operations_cli,
+        "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="host-key\n"),
+    )
+    monkeypatch.setattr(
+        operations_cli.requests,
+        "post",
+        lambda *args, **kwargs: requests.append((args, kwargs)) or AcceptedResponse(),
+    )
+
+    operations_cli.invoke(True, full=True)
+
+    assert requests[0][0][0].endswith("/admin/functions/dataprep_full_snapshot")
+    assert requests[0][1]["json"] == {"input": "full"}
+
+
+def test_verify_function_does_not_block_on_published_data_status(monkeypatch, capsys):
     outputs = {
         "resource_group_name": "rg-test",
         "function_app_name": "func-test",
@@ -295,14 +355,91 @@ def test_verify_function_allows_greenfield_before_first_run(monkeypatch, capsys)
             {"name": "AzureWebJobsStorage__accountName", "value": "runtime"},
             {"name": "AzureWebJobsStorage__clientId", "value": "client"},
             {"name": "AzureWebJobsStorage__credential", "value": "managedidentity"},
-        ] if args[:4] == ("functionapp", "config", "appsettings", "list") else {"exists": False},
-    )
-    monkeypatch.setattr(
-        operations_cli,
-        "_run",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("status should not run without a manifest")),
+        ],
     )
 
     operations_cli.verify("function")
 
-    assert "No current manifest is published yet" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Function verification complete" in output
+    assert "check-runs --progress" in output
+
+
+def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatch, capsys):
+    outputs = {
+        "resource_group_name": "rg-test",
+        "function_app_name": "func-test",
+        "web_app_name": "app-test",
+        "dashboard_url": "https://app-test.example/",
+        "dashboard_enterprise_application_name": "DVM Viewer",
+        "dashboard_entra_client_id": "client-id",
+        "dashboard_enterprise_application_object_id": "object-id",
+    }
+    azure_calls = []
+
+    class RedirectResponse:
+        status_code = 302
+        headers = {"location": "https://login.microsoftonline.com/example"}
+
+        @staticmethod
+        def close():
+            return None
+
+    def fake_az(*args, **kwargs):
+        azure_calls.append((args, kwargs))
+        stdout = "2026.10.11.2\n" if args[:4] == ("webapp", "config", "appsettings", "list") else ""
+        return subprocess.CompletedProcess(args, 0, stdout=stdout)
+
+    get_calls = []
+
+    def fake_get(*args, **kwargs):
+        get_calls.append((args, kwargs))
+        return RedirectResponse()
+
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: outputs[name])
+    monkeypatch.setattr(operations_cli, "_validate_function_runtime_storage_auth", lambda *args: None)
+    monkeypatch.setattr(operations_cli, "_az", fake_az)
+    monkeypatch.setattr(operations_cli.requests, "get", fake_get)
+
+    operations_cli.verify("webapp")
+
+    assert all(kwargs["timeout"] == 60 for _, kwargs in azure_calls)
+    assert get_calls == [
+        (("https://app-test.example/",), {"allow_redirects": False, "stream": True, "timeout": (10, 30)})
+    ]
+    output = capsys.readouterr().out
+    assert "Reading Web App deployment version" in output
+    assert "Authentication gate check: HTTP 302" in output
+
+
+def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys):
+    outputs = {
+        "resource_group_name": "rg-test",
+        "function_app_name": "func-test",
+        "web_app_name": "app-test",
+        "dashboard_url": "https://app-test.example/",
+        "dashboard_enterprise_application_name": "DVM Viewer",
+        "dashboard_entra_client_id": "client-id",
+        "dashboard_enterprise_application_object_id": "object-id",
+    }
+
+    class ChallengeResponse:
+        status_code = 401
+        headers = {"www-authenticate": 'Bearer realm="app-test.example"'}
+
+        @staticmethod
+        def close():
+            return None
+
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: outputs[name])
+    monkeypatch.setattr(operations_cli, "_validate_function_runtime_storage_auth", lambda *args: None)
+    monkeypatch.setattr(
+        operations_cli,
+        "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="2026.10.11.2\n"),
+    )
+    monkeypatch.setattr(operations_cli.requests, "get", lambda *args, **kwargs: ChallengeResponse())
+
+    operations_cli.verify("webapp")
+
+    assert "Authentication gate check: HTTP 401 -> Bearer" in capsys.readouterr().out

@@ -117,3 +117,26 @@ def test_daily_summary_reports_lifecycle_evidence_states():
     assert row["StaleDeviceCount"] == 1
     assert row["UnknownStateCount"] == 1
     assert row["OutOfScopeCount"] == 1
+
+
+def test_daily_summary_uses_effective_remediation_for_pending_sla_without_counting_confirmed_fix():
+    snapshot = datetime(2026, 9, 21, tzinfo=timezone.utc)
+    finding = {
+        "FindingKey": "pending", "AssetClass": "TraditionalIT", "SubscriptionId": "",
+        "OwnerTeam": "Endpoint Operations", "Severity": "High", "DataOrigin": "Live",
+        "FirstSeenUtc": "", "FirstObservedUtc": "2026-09-14T00:00:00Z", "FixedUtc": "",
+        "EffectiveRemediationUtc": "2026-09-20T23:00:00Z", "ReopenedUtc": "",
+        "SlaDueUtc": "2026-09-21T00:00:00Z", "SlaStatus": "FixedWithinSla",
+        "SlaEvidenceStatus": "PendingConfirmation", "FindingStatus": "PendingConfirmation",
+        "AssignmentStatus": "NotAssigned", "PublicExploitAvailable": False,
+        "VerifiedExploitAvailable": False, "ExploitKitAvailable": False,
+        "ScenarioId": "LIVE", "SnapshotTimeUtc": snapshot.isoformat(),
+        "CollectionRunId": "live-20260921T000000Z",
+    }
+
+    today = build_daily_summary([finding], history_days=1)[0]
+
+    assert today["FixedWithinSlaCount"] == 1
+    assert today["OpenOutsideSlaCount"] == 0
+    assert today["FixedCount"] == 0
+    assert today["PendingConfirmationCount"] == 1

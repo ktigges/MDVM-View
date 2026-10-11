@@ -325,7 +325,13 @@ A failure from any required endpoint stops the collection.
 
 The collector also probes remediation tasks and vulnerability changes. These routes were not found in the current public API documentation when the sample was built, so their failure does not stop collection.
 
-After collecting recommendations, the application derives vulnerability recommendation memberships from the machine-vulnerability feed. In daily `targeted` mode, it requests machine references only for non-vulnerability recommendations. `full` mode requests every exposed recommendation, and `auto` uses targeted mode daily with a configurable weekly full reconciliation. Individual recommendation-machine failures are recorded as a partial success instead of failing the whole run.
+After collecting recommendations, the application derives vulnerability
+recommendation memberships from machine-vulnerability evidence. Scheduled runs
+use `targeted` recommendation enrichment and request machine references only
+for non-vulnerability recommendations. Explicit `full` enrichment requests
+every exposed recommendation and is reserved for the manual full-refresh
+operation. Individual recommendation-machine failures are recorded as a
+partial success instead of failing the whole run.
 
 ### Microsoft Graph Secure Score
 
@@ -715,6 +721,77 @@ The Function calls the same `collect-live` command path used manually. It:
 5. Creates a local history bundle containing all curated datasets and the SLA policy.
 6. Uploads immutable raw, curated, policy, and manifest files to ADLS.
 7. Replaces `current/manifest.json` only after immutable upload completes.
+
+### Collection duration and scaling
+
+Collection time is driven by API row counts and request counts, not only by the
+number of endpoint devices. The principal factors are:
+
+- The Defender vulnerability catalog, which can contain hundreds of thousands
+  of CVE records even in a small endpoint environment.
+- Recommendation-to-machine enrichment. Full enrichment performs one
+  `machineReferences` request for every exposed recommendation that requires
+  API lookup. Vulnerability recommendation relationships are also derived
+  locally from machine-vulnerability evidence.
+- Machine-vulnerability finding volume, which generally grows with endpoint
+  count and installed software.
+- Immutable file generation and upload, which grows with the number of
+  published datasets and partitions.
+
+### Baseline, delta, and weekly reconciliation
+
+The default `auto` vulnerability collection model is:
+
+| Situation | Vulnerability collection | Recommendation enrichment |
+|---|---|---|
+| No prior published baseline | Full baseline | Targeted |
+| Normal scheduled run | Delta since the previous published snapshot | Targeted |
+| Configured weekly reconciliation day | Full baseline | Targeted |
+| Prior snapshot is older than Defender's 14-day delta window | Automatic full baseline fallback | Targeted |
+| Operations menu **Force full vulnerability and relationship reconciliation** | Full baseline | Full |
+
+A full baseline retrieves the current machine-vulnerability state and the
+current vulnerability catalog. A delta run uses Defender's documented
+`SoftwareVulnerabilityChangesByMachine` feed to apply `New`, `Updated`, and
+`Fixed` events to the prior immutable current state. Catalog records updated
+since the prior snapshot are merged into the previously published curated CVE
+catalog.
+
+Microsoft recommends a full baseline followed by deltas between full snapshots.
+The delta `sinceTime` can reach no more than 14 days into the past. A periodic
+full reconciliation is retained because it:
+
+- Recovers safely after missed collections or a delta-window gap.
+- Corrects accumulated state if an API page or event was incomplete.
+- Reconciles RBAC group moves that can emit paired `Fixed` and `New` events.
+- Revalidates the exact current absence or presence used by the pending and
+  confirmed-remediation lifecycle.
+- Refreshes catalog state that has no explicit deletion event in the
+  `/api/vulnerabilities` response.
+
+See Microsoft's
+[Export software vulnerabilities assessment per device](https://learn.microsoft.com/en-us/defender-endpoint/api/get-assessment-software-vulnerabilities)
+documentation for the full-plus-delta pull pattern, six-hour source refresh
+cadence, 14-day delta limit, and RBAC duplicate behavior.
+
+The weekly run is therefore a correctness checkpoint, not a weekly download
+performed only to obtain newly published CVEs. Routine deltas provide the
+day-to-day freshness. Operators can force a full vulnerability and
+recommendation relationship reconciliation from the operations menu after a
+suspected gap, configuration change, RBAC reorganization, or data-quality
+incident.
+
+Targeted recommendation enrichment avoids per-recommendation API calls for
+vulnerability recommendations whose machine relationships can be derived from
+machine-vulnerability product mappings. Full relationship enrichment is
+intentionally slower and is not part of the automatic weekly baseline.
+
+Do not estimate a 1,000-device duration by multiplying a small-environment
+duration directly by its device-count ratio. Catalog download and full
+recommendation enrichment are substantial fixed or recommendation-count costs.
+Finding normalization and immutable output do scale with finding volume, so
+large environments should be measured with representative data and monitored
+using the phase progress messages.
 8. Writes current dashboard and CSV outputs.
 
 An upload or collection failure raises an error before current outputs are replaced.

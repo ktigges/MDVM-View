@@ -107,9 +107,10 @@ Environment variables override values loaded from `.env`. When the Functions hos
 | `STORAGE_CONTAINER_NAME` | `dvm-history` | Optional override | Set explicitly | Set explicitly | Immutable raw, curated, policy, and run history |
 | `STORAGE_CURRENT_CONTAINER_NAME` | `dvm-current` | Optional override | Set explicitly | Set explicitly | Current completed-run manifest pointer |
 | `APP_MODE` | `synthetic` | `live`, `synthetic`, or `combined` | `live` | Terraform `app_mode` | Selects data mode for build commands; deployed `combined` mode carries forward explicitly seeded synthetic rows but never generates them |
-| `RECOMMENDATION_ENRICHMENT_MODE` | `auto` | Usually `targeted` | `targeted` for local host testing | `auto` or organization-defined value | Controls recommendation-machine API calls |
+| `RECOMMENDATION_ENRICHMENT_MODE` | `targeted` | `targeted` | `targeted` for local host testing | `targeted` | Controls recommendation-machine API calls; full is operator-requested |
+| `VULNERABILITY_COLLECTION_MODE` | `auto` | `auto` | `auto` | `auto` | Initial/weekly full baseline with deltas between reconciliations |
 | `ENABLE_EXPERIMENTAL_ENDPOINTS` | `false` | Keep disabled | Keep disabled unless testing compatibility | Keep disabled unless explicitly authorized | Enables undocumented Defender compatibility probes such as `/api/remediationTasks`; these are not required for core findings, lifecycle, SLA, recommendations, devices, or Secure Score |
-| `FULL_ENRICHMENT_WEEKDAY` | `6` | Optional | Optional | Required when enrichment is `auto` | Weekly full-reconciliation day, Monday `0` through Sunday `6` |
+| `FULL_COLLECTION_WEEKDAY` | `6` | Optional | Optional | Required when collection mode is `auto` | Weekly full vulnerability reconciliation day, Monday `0` through Sunday `6` |
 | `COLLECTION_SCHEDULE` | `0 0 5 * * *` | Not used by direct CLI commands | Temporary test schedule | Production NCRONTAB schedule | Timer-trigger schedule |
 | `SYNTHETIC_SEED` | `24017` | Optional | Not needed for live Function test | Not needed | Reproducible sample data |
 | `SYNTHETIC_MONTHS` | `6` | Optional | Not needed for live Function test | Not needed | Sample history depth |

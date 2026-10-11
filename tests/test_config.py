@@ -1,13 +1,15 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from vulnerability_view.config import Settings
+from vulnerability_view.dataprep_cli import _resolve_collection_mode
 
 
 ENVIRONMENT_KEYS = (
     "AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "DEFENDER_API_BASE_URL",
     "AZURE_SUBSCRIPTION_ID", "AZURE_MANAGEMENT_GROUP_ID", "AZURE_RESOURCE_GROUP", "AZURE_LOCATION", "STORAGE_ACCOUNT_NAME",
     "STORAGE_CONTAINER_NAME", "STORAGE_CURRENT_CONTAINER_NAME", "APP_MODE", "SYNTHETIC_SEED", "SYNTHETIC_MONTHS", "SYNTHETIC_DEVICE_COUNT",
-    "RECOMMENDATION_ENRICHMENT_MODE", "ENABLE_EXPERIMENTAL_ENDPOINTS", "FULL_ENRICHMENT_WEEKDAY", "DASHBOARD_DATA_SOURCE", "DASHBOARD_STATIC_DIR", "DASHBOARD_CACHE_SECONDS",
+    "RECOMMENDATION_ENRICHMENT_MODE", "VULNERABILITY_COLLECTION_MODE", "ENABLE_EXPERIMENTAL_ENDPOINTS", "FULL_COLLECTION_WEEKDAY", "DASHBOARD_DATA_SOURCE", "DASHBOARD_STATIC_DIR", "DASHBOARD_CACHE_SECONDS",
     "DASHBOARD_AUTH_ENABLED",
     "DASHBOARD_DATA_BROWSER_ENABLED", "DASHBOARD_DATA_BROWSER_ROLE",
     "DASHBOARD_RECOMMENDATION_TRACKING_ENABLED", "DASHBOARD_RECOMMENDATION_TRACKING_ROLE",
@@ -39,14 +41,15 @@ def test_exported_environment_overrides_dotenv(monkeypatch, tmp_path: Path):
     assert settings.tenant_id == "tenant-from-shell"
 
 
-def test_enrichment_defaults_to_daily_targeted_with_weekly_full():
+def test_collection_defaults_to_targeted_deltas_with_weekly_full_reconciliation():
     settings = Settings()
 
     assert settings.app_mode == "live"
     assert settings.storage_container_name == "dvm-history"
-    assert settings.recommendation_enrichment_mode == "auto"
+    assert settings.recommendation_enrichment_mode == "targeted"
+    assert settings.vulnerability_collection_mode == "auto"
     assert settings.enable_experimental_endpoints is False
-    assert settings.full_enrichment_weekday == 6
+    assert settings.full_collection_weekday == 6
     assert settings.dashboard_data_source == "local"
     assert settings.dashboard_static_dir == ""
     assert settings.dashboard_cache_seconds == 30
@@ -57,6 +60,38 @@ def test_enrichment_defaults_to_daily_targeted_with_weekly_full():
     assert settings.dashboard_recommendation_tracking_role == "Recommendation.Tracker"
     assert settings.dashboard_recommendation_tracking_container == "dvm-workflow"
     assert settings.synthetic_device_count == 2500
+
+
+def test_collection_mode_uses_initial_and_weekly_full_with_daily_delta():
+    settings = Settings(full_collection_weekday=6)
+    sunday = datetime(2026, 10, 11, 5, tzinfo=UTC)
+    saturday_snapshot = sunday - timedelta(hours=12)
+    existing = {
+        "findings": [{"DataOrigin": "Live", "SnapshotTimeUtc": saturday_snapshot.isoformat()}],
+        "vulnerabilities": [{"CveId": "CVE-1"}],
+    }
+
+    assert _resolve_collection_mode(settings, {}, as_of=sunday)[0] == "full"
+    assert _resolve_collection_mode(settings, existing, as_of=sunday)[0] == "full"
+    existing["findings"][0]["SnapshotTimeUtc"] = sunday.isoformat()
+    assert _resolve_collection_mode(settings, existing, as_of=sunday + timedelta(hours=12))[0] == "delta"
+    assert _resolve_collection_mode(settings, existing, as_of=sunday + timedelta(days=1))[0] == "delta"
+
+
+def test_collection_mode_rejects_forced_delta_outside_defender_window():
+    settings = Settings()
+    current = datetime(2026, 10, 20, tzinfo=UTC)
+    existing = {
+        "findings": [{"DataOrigin": "Live", "SnapshotTimeUtc": (current - timedelta(days=15)).isoformat()}],
+        "vulnerabilities": [{"CveId": "CVE-1"}],
+    }
+
+    try:
+        _resolve_collection_mode(settings, existing, "delta", current)
+    except ValueError as error:
+        assert "14-day" in str(error)
+    else:
+        raise AssertionError("stale forced delta should fail")
 
 
 def test_synthetic_device_count_can_be_configured(monkeypatch, tmp_path: Path):

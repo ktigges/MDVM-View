@@ -2,6 +2,18 @@ const state={catalog:null,dataset:"findings",offset:0,limit:50,query:"",selected
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
 const fmt=value=>Number(value||0).toLocaleString();
+let reauthenticationStarted=false;
+
+async function apiFetch(path,options){
+  const response=await fetch(path,options);
+  if(response.status!==401)return response;
+  if(!reauthenticationStarted){
+    reauthenticationStarted=true;
+    const returnPath=`${location.pathname}${location.search}${location.hash}`;
+    location.assign(`/.auth/login/aad?post_login_redirect_uri=${encodeURIComponent(returnPath)}`);
+  }
+  throw new Error("Microsoft Entra sign-in expired; redirecting to sign in.");
+}
 
 function columns(rows){
   const preferred=["FindingKey","RecommendationName","CveId","Severity","DeviceName","FindingStatus","SlaStatus","DataOrigin","SnapshotTimeUtc","CollectionRunId"];
@@ -40,7 +52,7 @@ async function loadRows(){
   if(state.query)parameters.set("query",state.query);
   $("dataBrowserMetadata").textContent="Loading curated records.";
   try{
-    const response=await fetch(`/api/data-browser/${encodeURIComponent(state.dataset)}?${parameters}`,{cache:"no-store"});
+    const response=await apiFetch(`/api/data-browser/${encodeURIComponent(state.dataset)}?${parameters}`,{cache:"no-store"});
     if(!response.ok)throw new Error(`Dataset request failed: ${response.status}`);
     renderRows(await response.json());
   }catch(error){
@@ -52,7 +64,7 @@ async function loadRows(){
 
 async function loadCatalog(){
   try{
-    const response=await fetch("/api/data-browser/catalog",{cache:"no-store"});
+    const response=await apiFetch("/api/data-browser/catalog",{cache:"no-store"});
     if(!response.ok){const payload=await response.json().catch(()=>null);throw new Error(payload?.detail||`Catalog request failed: ${response.status}`);}
     state.catalog=await response.json();
     const dataset=$("dataBrowserDataset");

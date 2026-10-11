@@ -85,6 +85,38 @@ az account set --subscription "<subscription-id>"
 az account show --query "{name:name,id:id,tenantId:tenantId}" --output table
 ```
 
+These commands and the deployment menus run as the currently signed-in Azure
+CLI identity. The operator needs the documented deployment permissions in the
+customer tenant and subscription. The scripts and deployed application do not
+store that user's credentials or use them for normal application processing.
+After deployment, viewer authentication uses the Entra application/service
+principal and Azure resource and data access uses the Function and Web App
+managed identities.
+
+## Streamlined complete deployment
+
+After setting every customer-specific value and signing in to the correct
+tenant and subscription, option 1 in either interactive menu performs the
+complete initial deployment:
+
+```bash
+./infra/deployment-menu.sh
+```
+
+```powershell
+.\infra\deployment-menu.ps1
+```
+
+Select `1) Complete initial deployment or update`. The workflow plans and
+shows the cumulative `webapp` Terraform stage, which includes the foundation,
+Function, and Web App. Review the displayed plan and type `APPLY` only when it
+contains the intended customer resources and no deletion or replacement of
+protected history storage. The workflow then deploys and verifies both code
+packages and offers to run the first live collection.
+
+Use the three separate stages below instead when the customer requires
+independent review or approval before adding the Function or Web App.
+
 ## Stage 1: foundation
 
 This creates:

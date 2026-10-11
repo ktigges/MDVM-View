@@ -694,7 +694,8 @@ Terraform configures these Function application settings:
 | `AzureWebJobsStorage__credential` | Fixed to `managedidentity` |
 | `COLLECTION_SCHEDULE` | `collection_schedule` |
 | `DEFENDER_API_BASE_URL` | `https://api.security.microsoft.com` |
-| `FULL_ENRICHMENT_WEEKDAY` | `full_enrichment_weekday` |
+| `VULNERABILITY_COLLECTION_MODE` | `vulnerability_collection_mode` |
+| `FULL_COLLECTION_WEEKDAY` | `full_collection_weekday` |
 | `RECOMMENDATION_ENRICHMENT_MODE` | `recommendation_enrichment_mode` |
 | `ENABLE_EXPERIMENTAL_ENDPOINTS` | `enable_experimental_endpoints`; keep `false` unless explicitly testing undocumented compatibility routes |
 | `APP_MODE` | `app_mode`; deployed values are `live` or `combined`. `live` publishes only collected Defender data; `combined` carries retained synthetic rows into new live runs. Local build commands also support `synthetic` |

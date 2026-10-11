@@ -109,7 +109,7 @@ def test_executive_sla_heading_describes_its_metrics():
     html = Path("dashboard/index.html").read_text()
 
     assert "SLA RESULTS AND CURRENT RISK" in html
-    assert "Confirmed fixes against SLA and critical findings still open" in html
+    assert "Observed remediation against SLA and critical findings still detected" in html
     assert "How finding remediation is performing" not in html
 
 
@@ -169,7 +169,7 @@ def test_dashboard_distinguishes_sla_targets_and_task_due_dates():
 
     assert "Selected-period finding results against severity-based SLA targets" in html
     assert 'id="slaPolicySummary"' in html
-    assert 'fetch("/api/sla-policy")' in javascript
+    assert 'apiFetch("/api/sla-policy")' in javascript
     assert "Current dataset policy" in javascript
     assert "Targets start at the collector's first observation" in javascript
     assert "Weekly remediation task due-date history" in html
@@ -226,7 +226,7 @@ def test_dashboard_exposes_shared_recommendation_work_status_filter():
     assert "TrackingUpdatedUtc" in javascript
     assert "Last updated by ${tracking.updatedByDisplayName}" in javascript
     assert "recommendationWorkStatus" in javascript
-    assert 'const columns=["RecommendationName","RecommendationSeverity"' in javascript
+    assert 'const columns=["ExposureStatus","RecommendationName","RecommendationSeverity"' in javascript
     assert "recommendationTrackingLocalPreview" in javascript
     assert "recommendationWorkSwitch" not in javascript
     assert 'aria-label="Working here:' not in javascript
@@ -291,8 +291,8 @@ def test_dashboard_severity_sla_drilldown_contract():
     )
     assert "showSlaSeverityDetail" in javascript
     assert "sla-severity-link" in javascript
-    assert "Findings fixed within policy SLA" in javascript
-    assert "Findings fixed outside policy SLA" in javascript
+    assert "Remediation observed within policy SLA" in javascript
+    assert "Remediation observed outside policy SLA" in javascript
     assert "FixedFindings:0,OpenFindings:0" in javascript
     assert "fixed on ${fmt(item.fixedMachines.size)} machine" in javascript
     assert "remain open on ${fmt(item.openMachines.size)} machine" in javascript
@@ -348,7 +348,8 @@ def test_dashboard_shows_endpoint_remediation_impact():
     assert "endpointRemediationImpact" in javascript
     assert "ENDPOINT REMEDIATION IMPACT" in javascript
     assert "Before" in javascript
-    assert "Fixed today" in javascript
+    assert "Confirmed" in javascript
+    assert "Pending" in javascript
     assert "Current" in javascript
     assert "Delta" in javascript
     assert ".endpoint-impact" in stylesheet
@@ -425,7 +426,7 @@ def test_dashboard_supports_entity_pivots_for_recommendations_cves_and_machines(
     assert "renderMachinePivot" in javascript
     assert "loadCveDetail" in javascript
     assert "/api/data/cve-details/${encodeURIComponent(key)}.json" in javascript
-    assert "fetch(`/api/data/${name}.json`)" in javascript
+    assert "apiFetch(`/api/data/${name}.json`)" in javascript
     assert 'load("vulnerabilities")' not in javascript
     assert "CVE detail" in javascript
     assert "Collected from Defender vulnerabilities API" in javascript
@@ -497,8 +498,18 @@ def test_lifecycle_entity_selector_and_latest_run_change_filter_are_wired():
     javascript = Path("dashboard/app.js").read_text()
 
     assert "Lifecycle reporting by entity" in html
+    assert 'id="reportingChange"' in html
+    assert '<option value="Fixed" selected>Confirmed fixed</option>' in html
+    assert '<option value="PendingConfirmation">Pending confirmation</option>' in html
+    assert '<option value="PendingVerification">Pending verification</option>' in html
+    assert '<option value="DetectionReturned">Detection returned</option>' in html
+    assert 'id="lifecycleDetailTable"' in html
     assert "function originMatches(row)" in javascript
     assert 'state.reportingEntity=event.target.value;renderLifecycleReporting()' in javascript
+    assert 'state.reportingChange=event.target.value;renderLifecycleReporting()' in javascript
+    assert 'state.reportingChange==="All"||row.EventType===state.reportingChange' in javascript
+    assert 'table("lifecycleDetailTable",columns,detailRows,onSelect)' in javascript
+    assert "Export detail CSV" in html
     assert 'class="latest-run-changes-toggle"' in html
     assert "Show only findings changed since the previous run" in html
     assert "function latestRunChangeMatches(row)" in javascript
@@ -513,6 +524,32 @@ def test_lifecycle_entity_selector_and_latest_run_change_filter_are_wired():
     assert 'id="ownership"' not in html
     assert 'id="assignmentTable"' not in html
     assert "renderOwnership" not in javascript
+
+
+def test_dashboard_reauthenticates_once_when_easy_auth_session_expires():
+    javascript = Path("dashboard/app.js").read_text()
+    evidence_javascript = Path("dashboard/data-evidence.js").read_text()
+
+    for source in (javascript, evidence_javascript):
+        assert "async function apiFetch(path,options)" in source
+        assert "if(response.status!==401)return response" in source
+        assert "if(!reauthenticationStarted)" in source
+        assert 'location.assign(`/.auth/login/aad?post_login_redirect_uri=${encodeURIComponent(returnPath)}`)' in source
+    assert "apiFetch(`/api/data/${name}.json`)" in javascript
+    assert 'apiFetch("/api/auth")' in javascript
+    assert "apiFetch(`/api/data/cve-details/${encodeURIComponent(key)}.json`)" in javascript
+
+
+def test_cve_rows_open_description_and_report_detail_failures():
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert 'title="View CVE description and evidence"' in javascript
+    assert "<span>CVE DESCRIPTION</span>" in javascript
+    assert "detail?.Description" in javascript
+    assert "CVE detail could not be loaded:" in javascript
+    assert "CVE detail request failed:" in javascript
+    assert ".cve-link{" in stylesheet
 
 
 def test_dashboard_shows_global_filters_as_chips_and_clears_selected_work_item():
@@ -626,18 +663,19 @@ def test_dashboard_endpoint_inventory_defines_scope_and_temporal_filtering():
     assert '{name:"devices",key:"devices",label:"device inventory",required:true}' in javascript
     assert "state.devices.filter(device=>" in javascript
     assert "inventoryDeviceMatches(device)" in javascript
-    assert "findingScopeRestrictsInventory=state.newPeriodFilter||state.latestRunChangesOnly" in javascript
+    assert 'findingScopeRestrictsInventory=state.newPeriodFilter||state.latestRunChangesOnly||state.exposureStatus!=="DetectedAndPending"' in javascript
     assert "!findingScopeRestrictsInventory||scopedDevices.has(device.DeviceId)" in javascript
     assert 'state.domains.has(findingDomain(row))' in javascript
     assert 'id="includeDiscoveredAssets" type="checkbox"' in html
     assert "defaultIncludeDiscoveredOnly: false" in Path("dashboard/config.js").read_text()
     assert 'state.includeDiscoveredOnly||device.OnboardingStatus==="Onboarded"' in javascript
-    assert 'coverage=assessed?"Endpoint assessed":item.OpenFindings?"Limited evidence":"Not assessed"' in javascript
+    assert 'coverage=assessed?"Endpoint assessed":item.OpenFindings||item.PendingFindings?"Limited evidence":"Not assessed"' in javascript
     assert '"Health status: Active"' in javascript
     assert "this does not mean active vulnerabilities" in javascript
-    assert '"Unresolved endpoint finding instances"' in javascript
-    assert '["OpenFindings","Critical","High","Medium","Low"].includes(column)&&row.VulnerabilityCoverage==="Not assessed"' in javascript
-    assert '["DeviceName","WorkloadType","InstanceCount","OSPlatform","AssetClass","Subscription","HealthStatus","OnboardingStatus","VulnerabilityCoverage","LastSeenUtc","OpenFindings","Critical","High","Medium","Low"]' in javascript
+    assert '"Detected endpoint findings"' in javascript
+    assert '"Endpoints pending verification"' in javascript
+    assert '["OpenFindings","PendingFindings","Critical","High","Medium","Low"].includes(column)&&row.VulnerabilityCoverage==="Not assessed"' in javascript
+    assert '["DeviceName","WorkloadType","InstanceCount","OSPlatform","AssetClass","Subscription","HealthStatus","OnboardingStatus","VulnerabilityCoverage","LastSeenUtc","OpenFindings","PendingFindings","Critical","High","Medium","Low"]' in javascript
 
 
 def test_dashboard_has_severity_based_finding_and_recommendation_sla_graphs():
@@ -654,11 +692,12 @@ def test_dashboard_has_severity_based_finding_and_recommendation_sla_graphs():
     assert "findingSlaSeverityRows" in javascript
     assert "recommendationSlaSeverityRows" in javascript
     assert 'row.SlaStatus==="OpenWithinSla"' in javascript
-    assert "Open findings within SLA" in javascript
+    assert "Detected within SLA" in javascript
+    assert "Observed remediation pending verification" in javascript
     assert "Open findings overdue" in javascript
-    assert "Findings fixed within SLA" in javascript
-    assert "Findings fixed outside SLA" in javascript
-    assert "Recommendations with overdue findings" in javascript
+    assert "Remediation observed within SLA" in javascript
+    assert "Remediation observed outside SLA" in javascript
+    assert "Recommendations with overdue detections" in javascript
 
 
 def test_dashboard_reports_latest_run_executive_deltas():
@@ -672,11 +711,33 @@ def test_dashboard_reports_latest_run_executive_deltas():
     assert "since previous run" in javascript
     assert "New findings since previous run" in javascript
     assert "Findings fixed since previous run" in javascript
-    assert 'label:"Outside SLA"' in javascript
-    assert 'label:"Fixed since previous run"' in javascript
+    assert 'label:"Detected findings overdue"' in javascript
+    assert 'label:"Confirmed since previous run"' in javascript
     assert "metric-delta" in javascript
     assert ".metric-delta.good" in stylesheet
     assert ".metric-delta.bad" in stylesheet
+
+
+def test_dashboard_separates_detection_confirmation_and_sla_timing():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert 'id="exposureStatusFilter"' in html
+    assert '<option value="DetectedOnly">Detected only</option>' in html
+    assert '<option value="PendingOnly">Pending evidence only</option>' in html
+    assert "SLA results always use the first qualified absence" in html
+    assert 'exposureStatus:"DetectedAndPending"' in javascript
+    assert "PENDING_FINDING_STATUSES" in javascript
+    assert "DETECTED_FINDING_STATUSES" in javascript
+    assert "slaResolved" in javascript
+    assert "EffectiveRemediationUtc" in javascript
+    assert "ConfirmationRunsCompleted" in javascript
+    assert "ConfirmationRunsRequired" in javascript
+    assert 'PendingFindings:pendingRows.length' in javascript
+    assert "SLA remediations pending verification" in javascript
+    assert ".lifecycle-status.PendingConfirmation" in stylesheet
+    assert ".lifecycle-status.PendingVerification" in stylesheet
 
 
 def test_statistics_view_is_presented_as_reporting():
@@ -800,7 +861,7 @@ def test_dashboard_customer_logo_placeholder_is_hidden_by_default():
     assert "$(\"defaultLogo\").hidden=customLogoEnabled" in javascript
     assert 'id="brandLogoButton"' in html
     assert 'accept="image/png,.png"' in html
-    assert 'fetch("/api/branding/logo"' in javascript
+    assert 'apiFetch("/api/branding/logo"' in javascript
     assert "MAX_CUSTOMER_LOGO_BYTES" in javascript
     assert "height:30px;max-width:150px" in stylesheet
     assert "enabled: false" in configuration
@@ -839,6 +900,7 @@ def test_dashboard_freshness_shows_ten_recent_collection_runs():
     assert ".recent-runs-popover{position:absolute;top:calc(100% + 9px);right:0;left:auto;width:min(320px,calc(100vw - 24px));max-height:280px" in stylesheet
     assert ".recent-runs-popover li::before,.recent-runs-popover li::after" in stylesheet
     assert ".recent-runs-popover li>b{border:0!important;border-radius:3px!important" in stylesheet
+    assert ".recent-runs-popover li>span{width:auto!important;height:auto!important;border-radius:0!important;background:transparent!important" in stylesheet
     assert 'id="healthDot"' not in html
     assert '<i class="${statusClass}"' not in javascript
     assert ".recent-runs-popover li>i" not in stylesheet
@@ -917,8 +979,8 @@ def test_reporting_exposes_customer_workflow_help():
 
     assert 'id="openWorkflowHelp"' in html
     assert 'data-view="help"' in html
-    assert 'class="nav-help-group"' in html
-    assert '<span class="nav-help-heading">Help</span>' in html
+    assert 'class="nav-help-group"' not in html
+    assert 'class="nav-help-heading"' not in html
     assert 'id="help" class="story workflow-help-story"' in html
     assert "How to use this dashboard" in html
     assert "Common customer scenarios" in html

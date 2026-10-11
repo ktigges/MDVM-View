@@ -327,7 +327,7 @@ def test_backfill_history_replays_runs_in_order(monkeypatch, tmp_path: Path):
     assert findings[0]["FindingStatus"] == "PendingVerification"
     with gzip.open(tmp_path / "output/history/live-20260922T000000Z/curated/finding-events.json.gz", "rt") as handle:
         events = json.load(handle)
-    assert [event["EventType"] for event in events] == ["New", "PendingVerification", "Open"]
+    assert [event["EventType"] for event in events] == ["New", "PendingVerification", "DetectionReturned"]
 
 
 def test_seed_synthetic_history_builds_six_month_labeled_bundle(monkeypatch, tmp_path: Path):

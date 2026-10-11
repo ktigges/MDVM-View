@@ -38,9 +38,10 @@
   "dashboard_cache_seconds": 300,
   "app_mode": "live",
   "collection_schedule": "0 0 5 * * *",
-  "recommendation_enrichment_mode": "auto",
+  "recommendation_enrichment_mode": "targeted",
+  "vulnerability_collection_mode": "auto",
   "enable_experimental_endpoints": false,
-  "full_enrichment_weekday": 6,
+  "full_collection_weekday": 6,
   "tags": {
     "application": "dvmviewer",
     "environment": "test",
