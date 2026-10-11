@@ -208,6 +208,7 @@ function loadDashboardDatasets(){
 function initialize(){
   [["severityFilter","severity"],["assetClassFilter","assetClass"],["subscriptionFilter","subscription"],["teamFilter","team"]].forEach(([id,key])=>$(id).addEventListener("change",event=>{state[key]=event.target.value;clearSelectedWorkItem();render();}));
   $("exposureStatusFilter").addEventListener("change",event=>{state.exposureStatus=event.target.value;clearSelectedWorkItem();render();});
+  $("pendingOnlyFilter").addEventListener("click",()=>{state.exposureStatus=state.exposureStatus==="PendingOnly"?"DetectedAndPending":"PendingOnly";$("exposureStatusFilter").value=state.exposureStatus;clearSelectedWorkItem();render();});
   $("hideNonReporting").addEventListener("change",event=>{state.hideNonReporting=event.target.checked;$("reportingDays").disabled=!state.hideNonReporting;clearSelectedWorkItem();render();});
   $("reportingDays").addEventListener("change",event=>{state.reportingDays=Number(event.target.value);clearSelectedWorkItem();render();});
   $("includeDiscoveredAssets").addEventListener("change",event=>{state.includeDiscoveredOnly=event.target.checked;clearSelectedWorkItem();render();});
@@ -410,6 +411,8 @@ function render(){
   const rows=filteredFindings(),current=rows.filter(row=>detected(row)||pending(row)),slaRows=filteredFindings(state.newPeriodFilter,false);
   const recommendations=filteredRecommendations();
   const hasComparableRuns=comparableRunSnapshots().length>=2;
+  $("pendingOnlyFilter").setAttribute("aria-pressed",String(state.exposureStatus==="PendingOnly"));
+  $("pendingOnlyFilter").textContent=state.exposureStatus==="PendingOnly"?"Showing pending":"Pending only";
   document.querySelectorAll(".latest-run-changes-toggle").forEach(input=>{input.checked=state.latestRunChangesOnly;input.disabled=!hasComparableRuns;input.title=hasComparableRuns?"New, reopened, or fixed findings between the latest two comparable runs":"Two comparable runs are required";});
   const latest=state.runs.slice().sort((a,b)=>String(b.SnapshotTimeUtc).localeCompare(String(a.SnapshotTimeUtc)))[0];
   $("freshnessText").textContent=latest?formatLocal(latest.SnapshotTimeUtc):"No matching snapshot";

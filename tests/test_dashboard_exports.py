@@ -726,6 +726,8 @@ def test_dashboard_separates_detection_confirmation_and_sla_timing():
     assert 'id="exposureStatusFilter"' in html
     assert '<option value="DetectedOnly">Detected only</option>' in html
     assert '<option value="PendingOnly">Pending evidence only</option>' in html
+    assert 'id="pendingOnlyFilter"' in html
+    assert "Pending only button above" in html
     assert "SLA results always use the first qualified absence" in html
     assert 'exposureStatus:"DetectedAndPending"' in javascript
     assert "PENDING_FINDING_STATUSES" in javascript
@@ -734,10 +736,13 @@ def test_dashboard_separates_detection_confirmation_and_sla_timing():
     assert "EffectiveRemediationUtc" in javascript
     assert "ConfirmationRunsCompleted" in javascript
     assert "ConfirmationRunsRequired" in javascript
+    assert 'state.exposureStatus==="PendingOnly"?"DetectedAndPending":"PendingOnly"' in javascript
     assert 'PendingFindings:pendingRows.length' in javascript
     assert "SLA remediations pending verification" in javascript
     assert ".lifecycle-status.PendingConfirmation" in stylesheet
     assert ".lifecycle-status.PendingVerification" in stylesheet
+    assert ".filterbar .reporting-filter{grid-column:span 4!important}" in stylesheet
+    assert ".pending-filter-shortcut[aria-pressed=\"true\"]" in stylesheet
 
 
 def test_statistics_view_is_presented_as_reporting():

@@ -265,3 +265,25 @@ main{width:100%;max-width:1600px!important;min-width:0;padding:22px clamp(16px,2
 .recent-runs-popover li>span{width:auto!important;height:auto!important;border-radius:0!important;background:transparent!important;grid-row:auto!important}.recent-runs-popover li>b{border-radius:0!important;background:transparent!important}
 .lifecycle-detail-title{border-top:1px solid var(--line)}.lifecycle-detail-wrap{max-height:420px}.cve-link{padding:0;border:0;background:transparent;color:var(--blue);font:inherit;font-weight:800;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .lifecycle-status{display:inline-block;padding:4px 8px;border:1px solid #9fb1bd;border-radius:999px;background:#edf2f5;color:#334d5d;font-size:10px;font-weight:850;white-space:nowrap}.lifecycle-status.Open,.lifecycle-status.Reopened,.lifecycle-status.DetectionReturned{border-color:#c46d79;background:#f9e3e6;color:#8a2633}.lifecycle-status.PendingConfirmation,.lifecycle-status.PendingVerification,.lifecycle-status.AwaitingCorroboration{border-color:#d6a23d;background:#fff1cf;color:#775400}.lifecycle-status.Fixed,.lifecycle-status.Confirmed{border-color:#68a17f;background:#dff0e6;color:#17613f}.lifecycle-status.StaleDevice,.lifecycle-status.Unknown,.lifecycle-status.InsufficientEvidence{border-color:#9aa8b1;background:#edf0f2;color:#4f5f69}.sla-pending{background:#d89a22!important}.sla-evidence-note{margin:0 0 14px;padding:11px 13px;border-left:5px solid #d89a22;background:#fff5dc;color:#684b0b;font-size:12px;font-weight:700}.exposure-status-filter span{max-width:260px}
+
+/* Filter cards use explicit spans so fieldsets never collapse to a one-column sliver. */
+.filterbar .severity-filter{grid-column:span 2!important}.filterbar .exposure-status-filter{grid-column:span 4!important}.filterbar .type-filter{grid-column:span 3!important}.filterbar .classification-filter{grid-column:span 3!important}
+.filterbar .subscription-filter{grid-column:span 3!important}.filterbar .reporting-filter{grid-column:span 4!important}.filterbar .queue-filter{grid-column:span 2!important}.filterbar .search-filter{grid-column:span 3!important}
+.filterbar .new-period-apply{grid-column:span 3!important}.filterbar .latest-run-change-filter{grid-column:span 4!important}.filterbar .domain-filter{grid-column:span 5!important}
+.filterbar .exposure-status-filter span{max-width:none;text-transform:none}.filterbar .exposure-status-filter span strong{color:#775400}.filterbar .reporting-filter>label,.filterbar .latest-run-change-filter>label,.filterbar .new-period-apply>label{min-width:0;align-items:flex-start;white-space:normal;text-transform:none}.filterbar .reporting-filter select{min-width:0}
+.pending-filter-shortcut{border-color:#c58d28!important;background:#fff1cf!important;color:#684b0b!important}.pending-filter-shortcut[aria-pressed="true"]{border-color:#9a6810!important;background:#d89a22!important;color:#1f2933!important;box-shadow:0 0 0 3px rgba(216,154,34,.25)}
+@media(max-width:1450px){
+  .filterbar .severity-filter,.filterbar .type-filter,.filterbar .classification-filter,.filterbar .subscription-filter,.filterbar .reporting-filter,.filterbar .new-period-apply,.filterbar .latest-run-change-filter{grid-column:span 6!important}
+  .filterbar .exposure-status-filter,.filterbar .search-filter,.filterbar .domain-filter{grid-column:span 12!important}
+  .filterbar .queue-filter{grid-column:span 4!important}
+}
+@media(max-width:960px){
+  .filterbar{grid-template-columns:repeat(6,minmax(0,1fr))!important}
+  .filterbar .severity-filter,.filterbar .type-filter,.filterbar .classification-filter,.filterbar .subscription-filter,.filterbar .queue-filter,.filterbar .search-filter,.filterbar .new-period-apply{grid-column:span 3!important}
+  .filterbar .exposure-status-filter,.filterbar .reporting-filter,.filterbar .latest-run-change-filter,.filterbar .domain-filter{grid-column:span 6!important}
+}
+@media(max-width:650px){
+  .filterbar{grid-template-columns:minmax(0,1fr)!important}
+  .filterbar>.severity-filter,.filterbar>.exposure-status-filter,.filterbar>.type-filter,.filterbar>.classification-filter,.filterbar>.subscription-filter,.filterbar>.reporting-filter,.filterbar>.queue-filter,.filterbar>.search-filter,.filterbar>.new-period-apply,.filterbar>.latest-run-change-filter,.filterbar>.domain-filter{grid-column:1!important;width:100%!important}
+  .scope-actions{width:100%;display:grid!important;grid-template-columns:1fr 1fr 1fr}.scope-actions button{width:auto!important;padding:0 8px!important}
+}
