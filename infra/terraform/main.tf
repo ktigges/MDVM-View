@@ -166,7 +166,7 @@ resource "azurerm_storage_container" "current" {
 }
 
 resource "azurerm_storage_container" "dashboard_workflow" {
-  count = var.deploy_web_app ? 1 : 0
+  count = 1
 
   name                  = var.dashboard_recommendation_tracking_container
   storage_account_id    = azurerm_storage_account.history.id

@@ -275,11 +275,11 @@ runs, and Function diagnostics; or run the complete
 initial-deployment/update workflow. The read-only **Operations and
 diagnostics** submenu provides standard 24-hour and extended 72-hour diagnostic
 views without changing Azure resources or data. Option 1
-plans the cumulative `webapp` stage, so on a clean customer environment it
+plans the cumulative `webapp` stage, so on a clean deployment environment it
 creates the foundation, protected history storage, Function infrastructure,
 and Web App before deploying and verifying both code packages. On an existing
 environment, the same cumulative stage preserves all deployed components while
-applying reviewed updates. It does not create customer-specific
+applying reviewed updates. It does not create environment-specific
 `main.tfvars.json` values or perform Azure CLI sign-in; complete those
 prerequisites first.
 
@@ -289,7 +289,7 @@ initial/live collection, which requires typing `COLLECT`.
 
 All deployment, update, and verification operations run under the identity
 currently signed in to Azure CLI. That operator identity must have the required
-customer tenant, subscription, resource, RBAC, and Entra permissions. It is
+target tenant, subscription, resource, RBAC, and Entra permissions. It is
 used only to perform the requested administrative operations: the scripts and
 deployed application do not store the operator's user credentials. Runtime
 viewer authentication uses the deployed Entra application and service

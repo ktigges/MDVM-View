@@ -21,15 +21,57 @@ For the command-by-command internals, tool dependencies, Azure CLI identity
 behavior, Terraform boundaries, and package contents of `infra/deploy.sh`, see
 [Infrastructure and deploy.sh reference](infra/README.md).
 
+## Workstation prerequisites
+
+Install and verify these tools before cloning, configuring, authenticating, or
+starting the deployment menu.
+
+Windows PowerShell:
+
+```powershell
+winget install --exact --id Python.Python.3.14
+winget install --exact --id Microsoft.AzureCLI
+winget install --exact --id Hashicorp.Terraform
+winget install --exact --id Git.Git
+
+py -3.14 -c "import platform; print(platform.python_version(), platform.machine())"
+az version
+terraform version
+git --version
+```
+
+Python must report `AMD64`. If `winget` does not install Azure CLI, use
+Microsoft's [Azure CLI x64 MSI](https://aka.ms/installazurecliwindowsx64),
+close all PowerShell windows, and verify `az version` in a new session.
+
+macOS:
+
+```bash
+brew update
+brew install python@3.14 azure-cli git
+brew tap hashicorp/tap
+brew install hashicorp/tap/terraform
+
+python3.14 --version
+az version
+terraform version
+git --version
+```
+
+The workstation also needs outbound access for Terraform providers, Azure CLI,
+Python package installation, and Azure code deployment. Windows uses the
+menu-created `.venv-win`. On macOS, create `.venv` and install the project after
+cloning and before starting the menu.
+
 ## Before using the menu
 
-The supported customer path is the interactive deployment menu documented in
+The supported deployment path is the interactive deployment menu documented in
 the [project README](README.md#deploy-or-update). Use it for first deployment,
 updates, code-only deployments, verification, collection, and diagnostics.
 
 Before starting the menu:
 
-1. Install the [workstation requirements](#workstation-requirements).
+1. Install the [workstation prerequisites](#workstation-prerequisites).
 2. Confirm the [required operator permissions](#required-operator-permissions).
 3. Copy `infra/terraform/main.tfvars.example.json` to
    `infra/terraform/main.tfvars.json` and replace every example value.
@@ -44,6 +86,12 @@ CLI, Terraform, and Git must already be available as described below.
 
 The detailed commands later in this guide explain what the menu performs and
 provide troubleshooting fallbacks. They are not the normal deployment path.
+
+To remove and rebuild only replaceable application resources while preserving
+the resource group, protected history, workflow container, network perimeter,
+and Terraform state, run `infra/destroy-application.ps1` on Windows or
+`infra/destroy-application.sh` on macOS. The script validates an allowlisted
+Terraform plan and requires four exact confirmations before applying it.
 
 The current menu choices are:
 
@@ -70,7 +118,7 @@ This installs protected history storage and the collection Function. It does
 not deploy the dashboard Web App to Azure. The Web App runs locally and reads
 the collector's current live dataset from Azure Storage.
 
-This is not the recommended customer deployment. Local use is maintained
+This is not the recommended hosted deployment. Local use is maintained
 separately in the [Local development README](docs/local/README.md).
 
 1. Clone the repository and enter its directory:
@@ -80,7 +128,7 @@ separately in the [Local development README](docs/local/README.md).
    cd MDVM-View
    ```
 
-2. Install the [workstation requirements](#workstation-requirements), create a
+2. Install the [workstation prerequisites](#workstation-prerequisites), create a
    virtual environment, and install the project. On Windows, create and
    activate `.venv-win`:
 
@@ -123,14 +171,14 @@ separately in the [Local development README](docs/local/README.md).
    access before starting option 1 so Terraform can grant the collector Reader
    at the configured management group.
 
-   Keep `network_security_perimeter_enabled=true` for the default customer
+   Keep `network_security_perimeter_enabled=true` for the default deployment
    deployment. The initial `network_security_perimeter_allowed_ip_cidrs` value
    is `["0.0.0.0/0"]`, which does not restrict IPv4 source addresses yet.
    Microsoft Entra authentication and Storage RBAC still protect every data
-   request. Replace that value with approved operator CIDRs when the customer
+   request. Replace that value with approved operator CIDRs when the organization
    is ready to restrict source networks.
 
-   The customer's Azure Policy must allow
+   The organization's Azure Policy must allow
    `publicNetworkAccess=SecuredByPerimeter`. A policy that unconditionally
    changes Storage public network access to `Disabled` must be updated or
    exempt the NSP-associated Storage accounts.
@@ -139,7 +187,7 @@ separately in the [Local development README](docs/local/README.md).
    and set these environment variables. Some values intentionally duplicate
    `main.tfvars.json`: Terraform does not read `.env`, and deployed Azure apps
    do not read the workstation's `.env`. The duplication lets local commands
-   target the same customer environment.
+   target the same deployment environment.
 
    ```dotenv
    AUTH_MODE=auto
@@ -170,7 +218,7 @@ separately in the [Local development README](docs/local/README.md).
    `main.tfvars.json` is authoritative for Azure infrastructure and the App
    Settings Terraform generates for the hosted Function and Web App. `.env` is
    authoritative only for local collector, dashboard, and diagnostic
-   processes. When those local processes target the deployed customer
+   processes. When those local processes target the deployed
    environment, keep the following values synchronized:
 
    | `main.tfvars.json` | `.env` setting | What to set locally |
@@ -278,7 +326,7 @@ settings, and collector package.
 
 Follow this order:
 
-1. Confirm [workstation requirements](#workstation-requirements).
+1. Confirm [workstation prerequisites](#workstation-prerequisites).
 2. Confirm [required operator permissions](#required-operator-permissions).
 3. Create and review `infra/terraform/main.tfvars.json`.
 4. Sign in and confirm the target tenant/subscription.
@@ -294,7 +342,7 @@ The stages are cumulative. After the Web App exists, later Terraform plans
 should use the `webapp` stage so the plan preserves the foundation, Function,
 and Web App together.
 
-## Workstation requirements
+## Workstation environment details
 
 The deployment workstation needs:
 
@@ -310,7 +358,7 @@ The deployment workstation needs:
   and code deployment.
 
 For Windows without a `PATH` change, download the official Terraform Windows
-ZIP, verify it according to the customer's software-installation policy, and
+ZIP, verify it according to the organization's software-installation policy, and
 extract `terraform.exe` into the repository root beside `README.md`. Do not put
 it in `infra/terraform/`. The operations CLI checks the repository-local
 executable before checking `PATH`, and `.gitignore` prevents the binary from
@@ -425,7 +473,7 @@ Function, and Web App together. Never apply a plan that deletes the protected
 history account, its retained containers, or their data.
 
 **Required after Web App deployment:** Terraform creates the Enterprise
-Application with assignment required, but it does not choose customer users.
+Application with assignment required, but it does not choose application users.
 Assign authorized users or groups manually at **Microsoft Entra admin center >
 Enterprise applications > DVM Viewer > Users and groups**:
 
@@ -433,13 +481,13 @@ Enterprise applications > DVM Viewer > Users and groups**:
 - Assign **Data Evidence Reader** only to users or groups that may use the
   hidden Data evidence browser.
 - Assign **Dashboard Administrator** only to users or groups allowed to upload
-  and replace customer branding.
+  and replace organization branding.
 
 Terraform does not create an access group and does not manage these
 assignments. Until **Dashboard Viewer** is assigned, users cannot sign in to
 the hosted Web App.
 
-Customer-logo uploads accept PNG files up to 2 MB and 4096 pixels per
+Organization-logo uploads accept PNG files up to 2 MB and 4096 pixels per
 dimension. The dashboard preserves the image aspect ratio and fits it into the
 header automatically. Uploaded versions are appended under `branding/logos/`
 in the protected workflow container with `overwrite=False`; the application
@@ -514,12 +562,12 @@ the protected history account. The Function stage associates the separate
 Function runtime account with the same profile. After each association exists,
 Terraform uses the Azure API provider to set that Storage account's public
 network access to `SecuredByPerimeter`; creating the association alone does not
-change an account that customer policy previously set to `Disabled`.
+change an account that organization policy previously set to `Disabled`.
 
 The NSP provides these benefits without requiring a VNet or private endpoints:
 
 - Centralizes the network boundary for both Storage accounts.
-- Allows customer policy to use
+- Allows organization policy to use
   `publicNetworkAccess=SecuredByPerimeter` instead of unrestricted `Enabled`.
 - Explicitly permits the deployment subscription so the Function, hosted Web
   App, and Azure deployment service can reach Storage.
@@ -542,10 +590,10 @@ Configure the option in `infra/terraform/main.tfvars.json`:
 
 `0.0.0.0/0` intentionally leaves IPv4 source addresses unrestricted during the
 initial deployment. It does not make containers or blobs anonymous. Replace it
-with approved corporate or operator egress CIDRs when the customer is ready to
+with approved corporate or operator egress CIDRs when the organization is ready to
 enforce source-IP restrictions.
 
-The customer Azure Policy must permit
+The organization Azure Policy must permit
 `publicNetworkAccess=SecuredByPerimeter`. A policy that always changes Storage
 public network access to `Disabled` must be updated or exempt the two
 NSP-associated Storage accounts. Otherwise, Function ZIP deployment and
@@ -571,8 +619,8 @@ python -m vulnerability_view.operations_cli deploy function
 python -m vulnerability_view.operations_cli verify function
 ```
 
-Set `network_security_perimeter_enabled=false` only when customer policy allows
-ordinary public Storage access and the customer explicitly chooses not to use
+Set `network_security_perimeter_enabled=false` only when organization policy allows
+ordinary public Storage access and the organization explicitly chooses not to use
 the perimeter.
 
 ## Required operator permissions
@@ -609,7 +657,7 @@ Terraform then grants the collector managed identity:
 - the Storage and monitoring roles listed under
   [Runtime identities and permissions](#runtime-identities-and-permissions).
 
-No collector client secret, customer username, or password is created or stored.
+No collector client secret, operator username, or password is created or stored.
 
 Uploading existing local history requires Storage Blob Data Contributor on the
 history account. The foundation assigns this automatically to the Terraform
@@ -1157,7 +1205,7 @@ Assign:
 - **Dashboard Viewer** to everyone allowed to open the dashboard;
 - **Data Evidence Reader** only to users allowed to use the optional evidence
   browser;
-- **Dashboard Administrator** only to users allowed to upload customer
+- **Dashboard Administrator** only to users allowed to upload organization
   branding.
 
 Shared recommendation status is available to authenticated Dashboard Viewers

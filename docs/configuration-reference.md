@@ -43,7 +43,7 @@ Azure-generated Easy Auth settings as configuration sources.
 `main.tfvars.json` controls Azure infrastructure and hosted App Settings.
 `.env` controls local processes only. Values are intentionally repeated when a
 local collector, dashboard, or diagnostic process needs to target the same
-customer environment. In that case, keep these pairs synchronized:
+deployment environment. In that case, keep these pairs synchronized:
 
 | Terraform input | Local environment variable |
 |---|---|
@@ -113,7 +113,7 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `web_app_name` | Required, globally unique | Dashboard Web App name |
 | `web_app_service_plan_name` | Required | Linux App Service plan name |
 | `web_app_identity_name` | Required | User-assigned identity used by the dashboard |
-| `web_app_sku_name` | `B2` | App Service plan SKU; customer deployments start with B2 |
+| `web_app_sku_name` | `B2` | App Service plan SKU; hosted deployments start with B2 |
 | `web_app_worker_processes` | `1`; from 1 through 4 | Uvicorn worker processes; the default single process keeps one verified-bundle cache |
 | `dashboard_entra_application_name` | `DVM Viewer` | App registration and Enterprise Application display name |
 | `dashboard_data_browser_enabled` | `false` | Enables Data Evidence UI/API and assigns `Data.Evidence.Reader` to the access group |
@@ -141,10 +141,10 @@ After each association is created, Terraform sets the account's
 provider. The association and public-network-access update are separate Azure
 operations, and both are required.
 
-For the initial customer deployment,
+For the initial hosted deployment,
 `network_security_perimeter_allowed_ip_cidrs=["0.0.0.0/0"]` intentionally
 leaves IPv4 sources unrestricted while the perimeter behavior is validated.
-Replace it with approved operator or corporate egress CIDRs later. Customer
+Replace it with approved operator or corporate egress CIDRs later. Organization
 policy must permit `publicNetworkAccess=SecuredByPerimeter`; forcing
 `publicNetworkAccess=Disabled` prevents the no-VNet architecture from operating.
 
@@ -236,7 +236,7 @@ Terraform input rather than changing the generated setting in the portal.
 | `AUTH_MODE` | Fixed to `managed_identity` |
 | `AZURE_CLIENT_ID` | Dashboard user-assigned managed identity |
 | `DASHBOARD_AUTH_ENABLED` | Fixed to `true` in Azure |
-| `DASHBOARD_BRANDING_CONTAINER` | Protected workflow container used for immutable customer-logo versions |
+| `DASHBOARD_BRANDING_CONTAINER` | Protected workflow container used for immutable organization-logo versions |
 | `DASHBOARD_BRANDING_ENABLED` | Fixed to `true` in Azure |
 | `DASHBOARD_BRANDING_ROLE` | `Dashboard.Administrator` |
 | `DASHBOARD_CACHE_SECONDS` | `var.dashboard_cache_seconds` |

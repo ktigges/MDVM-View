@@ -87,7 +87,7 @@ az account show --query "{name:name,id:id,tenantId:tenantId}" --output table
 
 These commands and the deployment menus run as the currently signed-in Azure
 CLI identity. The operator needs the documented deployment permissions in the
-customer tenant and subscription. The scripts and deployed application do not
+target tenant and subscription. The scripts and deployed application do not
 store that user's credentials or use them for normal application processing.
 After deployment, viewer authentication uses the Entra application/service
 principal and Azure resource and data access uses the Function and Web App
@@ -95,7 +95,7 @@ managed identities.
 
 ## Streamlined complete deployment
 
-After setting every customer-specific value and signing in to the correct
+After setting every environment-specific value and signing in to the correct
 tenant and subscription, option 1 in either interactive menu performs the
 complete initial deployment:
 
@@ -110,11 +110,11 @@ complete initial deployment:
 Select `1) Complete initial deployment or update`. The workflow plans and
 shows the cumulative `webapp` Terraform stage, which includes the foundation,
 Function, and Web App. Review the displayed plan and type `APPLY` only when it
-contains the intended customer resources and no deletion or replacement of
+contains the intended deployment resources and no deletion or replacement of
 protected history storage. The workflow then deploys and verifies both code
 packages and offers to run the first live collection.
 
-Use the three separate stages below instead when the customer requires
+Use the three separate stages below instead when the environment requires
 independent review or approval before adding the Function or Web App.
 
 ## Stage 1: foundation
@@ -137,7 +137,7 @@ append-only. Only `dvm-current/current/manifest.json` is replaceable.
 
 The perimeter initially does not restrict IPv4 source addresses. Microsoft
 Entra authentication and Storage data-plane RBAC still protect every request.
-The customer can replace `0.0.0.0/0` with approved operator CIDRs after
+The organization can replace `0.0.0.0/0` with approved operator CIDRs after
 validation. Azure Policy must allow
 `publicNetworkAccess=SecuredByPerimeter`; an unconditional `Disabled` policy is
 not compatible with this no-VNet deployment.

@@ -1,10 +1,10 @@
 # Local development and evaluation
 
-This section is separate from the customer Azure deployment path. It applies
+This section is separate from the hosted Azure deployment path. It applies
 only when running, testing, demonstrating, or replaying Vulnerability View on a
 workstation.
 
-Do not use local instructions to deploy or operate the hosted customer
+Do not use local instructions to deploy or operate the hosted
 application. For Azure deployment and normal operations, return to the
 [project README](../../README.md) and use the interactive deployment menu.
 

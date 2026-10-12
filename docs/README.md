@@ -25,7 +25,7 @@ Use the interactive deployment menu described in the
 
 ### 2. Local development and evaluation
 
-Local work is intentionally separated from customer deployment. Start with the
+Local work is intentionally separated from hosted deployment. Start with the
 [Local development README](local/README.md).
 
 ### 3. Operate

@@ -92,8 +92,8 @@ outside this infrastructure estimate. Confirm those licenses separately.
 |---|---:|---|---|---|
 | Local only | $0 Azure Web App cost | Developer workstation only | UI development | Not a published service |
 | App Service Free F1 | $0 | No production SLA | Short demonstrations | Quotas, no Always On, not production |
-| Linux Basic B1, one instance | about **$13.14/month** | Single instance | Lower-capacity development or temporary cost fallback | No autoscale or deployment slots; less memory and CPU than the customer baseline |
-| Linux Basic B2, one instance | about **$25.55/month** | Single instance | **Recommended customer baseline** | No autoscale or deployment slots; recover by redeploying |
+| Linux Basic B1, one instance | about **$13.14/month** | Single instance | Lower-capacity development or temporary cost fallback | No autoscale or deployment slots; less memory and CPU than the deployment baseline |
+| Linux Basic B2, one instance | about **$25.55/month** | Single instance | **Recommended deployment baseline** | No autoscale or deployment slots; recover by redeploying |
 | Linux Standard S1, one instance | about **$69.35/month** | Single instance | Workloads specifically needing Standard features | Current Central US retail price is higher than P0v3; compare before selecting |
 | Linux Premium v3 P0v3, one instance | about **$62.05/month** | Single instance | Feature/performance upgrade | No instance redundancy by itself |
 | Linux Premium v3 P0v3, two instances | about **$124.10/month** | Instance redundancy | Small production deployment | Both instances are billed continuously |
@@ -247,7 +247,7 @@ Official references:
 
 Use for a low-cost pilot with a small known audience.
 
-- Recommended customer starting capacity in this design.
+- Recommended starting capacity in this design.
 - Supports the existing FastAPI application with minimal change.
 - Supports App Service Authentication and managed identity.
 - One warm process preserves the in-memory verified-bundle cache.
@@ -357,7 +357,7 @@ protected storage provides data durability.
 - No Front Door or private endpoint.
 - Accept instance and regional interruption.
 
-**Published viewer, recommended customer baseline**
+**Published viewer, recommended deployment baseline**
 
 - One B2 Web App.
 - One Central US deployment.

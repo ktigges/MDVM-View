@@ -3,6 +3,8 @@ from pathlib import Path
 
 SHELL_MENU = Path("infra/deployment-menu.sh")
 POWERSHELL_MENU = Path("infra/deployment-menu.ps1")
+SHELL_TEARDOWN = Path("infra/destroy-application.sh")
+POWERSHELL_TEARDOWN = Path("infra/destroy-application.ps1")
 
 
 def menu_sources() -> tuple[str, str]:
@@ -123,3 +125,34 @@ def test_powershell_menu_bootstraps_clean_windows_clone():
     assert '-m pip install --disable-pip-version-check -e "${RootDirectory}[dev]"' in powershell
     assert "importlib.util.find_spec('vulnerability_view.operations_cli')" in powershell
     assert "Vulnerability View is not importable" in powershell
+
+
+def test_application_teardown_scripts_require_four_confirmations_and_preserve_history():
+    shell = SHELL_TEARDOWN.read_text(encoding="utf-8")
+    powershell = POWERSHELL_TEARDOWN.read_text(encoding="utf-8")
+
+    for command in ("deployment-preflight", "teardown-plan", "teardown-show", "teardown-apply"):
+        assert f"run_cli {command}" in shell
+        assert f"Invoke-OperationsCli {command}" in powershell
+    for confirmation in (
+        "REVIEWED PLAN",
+        "REMOVE REPLACEABLE APPLICATION",
+        "Confirmation 1 of 4",
+        "Confirmation 2 of 4",
+        "Confirmation 3 of 4",
+        "Confirmation 4 of 4",
+    ):
+        assert confirmation in shell
+        assert confirmation in powershell
+    for retained in (
+        "Protected history account",
+        "History container",
+        "Current-pointer container",
+        "Protected workflow container",
+        "local Terraform state",
+    ):
+        assert retained in shell
+        assert retained in powershell
+    for forbidden in ("az group delete", "terraform destroy", "-destroy"):
+        assert forbidden not in shell.lower()
+        assert forbidden not in powershell.lower()

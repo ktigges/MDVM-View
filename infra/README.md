@@ -159,7 +159,7 @@ Do not commit `main.tfvars.json`, Terraform state, saved plans, packages, or loc
 operator notes.
 
 On Windows, the operations CLI first checks for `terraform.exe` in the
-repository root and then checks `PATH`. This allows a customer to use an
+repository root and then checks `PATH`. This allows an operator to use an
 approved standalone Terraform executable without changing the system or user
 `PATH`. Keep the executable at the repository root, not in `infra/terraform/`;
 it is excluded from Git.
@@ -192,11 +192,11 @@ The Terraform stages are cumulative:
    runtime storage, schedule, and monitoring;
 3. `webapp` — foundation and Function plus the authenticated dashboard.
 
-For a streamlined initial customer deployment after configuration and Azure
+For a streamlined initial deployment after configuration and Azure
 CLI sign-in, select option 1 in `deployment-menu.sh` or
 `deployment-menu.ps1`. It plans and applies the cumulative `webapp` stage,
 deploys and verifies both code packages, and optionally starts the first live
-collection. Use the separate stages when the customer requires independent
+collection. Use the separate stages when the environment requires independent
 review or approval at each infrastructure boundary.
 
 The Function stage grants its managed identity Reader once at

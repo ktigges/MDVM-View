@@ -20,30 +20,15 @@ Vulnerability View.
 
 ## Deploy or update
 
-Use the interactive deployment menu for every normal customer deployment,
+Use the interactive deployment menu for every normal deployment,
 update, verification, collection, and diagnostic operation.
 
-Before the first deployment, complete the one-time
-[workstation, permissions, and configuration preparation](DEPLOY.md#before-using-the-menu).
-This establishes the required tools, customer-specific Terraform values, and
-Azure CLI sign-in.
+### 1. Install workstation prerequisites
 
-Then start the menu from the repository root.
+Complete this step before cloning, configuring, or running the deployment
+menu. The menu does not install Python, Azure CLI, Terraform, or Git.
 
-macOS or Linux:
-
-```bash
-./infra/deployment-menu.sh
-```
-
-Windows:
-
-```powershell
-.\infra\deployment-menu.ps1
-```
-
-On a clean Windows clone, install the system prerequisites before starting the
-menu. Use Python 3.14 x64 for the customer workstation:
+Windows PowerShell uses Python 3.14 x64:
 
 ```powershell
 winget install --exact --id Python.Python.3.14
@@ -52,13 +37,65 @@ winget install --exact --id Hashicorp.Terraform
 winget install --exact --id Git.Git
 ```
 
-Close and reopen PowerShell after installation, run `az login`, and then start
-the menu. Confirm that Python reports `AMD64`, not `ARM64`, with
-`python -c "import platform; print(platform.python_version(), platform.machine())"`.
-The menu does not install Python, Azure CLI, Terraform, or Git. It does create
-`.venv-win`, install Vulnerability View and its Python deployment dependencies,
-and run the selected infrastructure, application deployment, or verification
-workflow.
+If `winget` does not install Azure CLI, use Microsoft's
+[Azure CLI x64 MSI](https://aka.ms/installazurecliwindowsx64). Close and reopen
+PowerShell after installation, then verify every prerequisite:
+
+```powershell
+py -3.14 -c "import platform; print(platform.python_version(), platform.machine())"
+az version
+terraform version
+git --version
+```
+
+Python must report `AMD64`, not `ARM64`.
+
+macOS uses Homebrew:
+
+```bash
+brew update
+brew install python@3.14 azure-cli git
+brew tap hashicorp/tap
+brew install hashicorp/tap/terraform
+python3.14 --version
+az version
+terraform version
+git --version
+```
+
+See the complete
+[workstation prerequisites](DEPLOY.md#workstation-prerequisites) for version,
+network, local-state, and alternative-installation requirements.
+
+### 2. Clone or update the repository
+
+For a new deployment workstation:
+
+```bash
+git clone https://github.com/ktigges/MDVM-View.git
+cd MDVM-View
+git branch --show-current
+```
+
+The release branch should be `latest`. On an existing deployment clone:
+
+```bash
+git switch latest
+git pull --ff-only
+```
+
+On macOS, create the project environment before running the menu:
+
+```bash
+python3.14 -m venv .venv
+./.venv/bin/python -m pip install -e '.[dev]'
+```
+
+On Windows, the PowerShell menu creates `.venv-win`, installs Vulnerability
+View and its Python deployment dependencies, and verifies the operations CLI
+before showing the menu.
+
+### 3. Configure the target environment
 
 Before the first deployment, create both environment-specific configuration
 files from their tracked examples:
@@ -71,7 +108,7 @@ Copy-Item .\.env.example .\.env
 Some values intentionally appear in both files. `main.tfvars.json` is
 authoritative for Azure infrastructure and the hosted Function and Web App;
 `.env` controls only local commands and local application processes. When a
-local process targets the deployed customer environment, copy the same tenant,
+local process targets the deployed environment, copy the same tenant,
 subscription, management-group, resource-group, location, history Storage, and
 collection-policy values into the corresponding `.env` settings. Do not put
 the Function runtime storage account in `.env`. Neither environment-specific
@@ -79,15 +116,15 @@ file is committed. See the
 [configuration overlap table](DEPLOY.md#terraform-and-env-overlap) before
 running the menu.
 
-At minimum, replace or confirm these customer-specific values in
+At minimum, replace or confirm these environment-specific values in
 `infra/terraform/main.tfvars.json` before selecting option 1:
 
 | Terraform setting | Required value |
 |---|---|
 | `subscription_id` | Subscription GUID where the application resources will be deployed |
-| `tenant_id` | Customer Microsoft Entra tenant GUID |
-| `collector_management_group_id` | Actual management-group ID; use the tenant GUID for Tenant Root Group, never `customer-management-group-id` |
-| `resource_group_name` | Customer deployment resource-group name |
+| `tenant_id` | Target Microsoft Entra tenant GUID |
+| `collector_management_group_id` | Actual management-group ID; use the tenant GUID for Tenant Root Group and replace the template placeholder |
+| `resource_group_name` | Deployment resource-group name |
 | `location` | Approved Azure region |
 | `history_storage_account_name` | Globally unique protected-history Storage account name |
 | `function_runtime_storage_account_name` | Globally unique replaceable Function runtime Storage account name |
@@ -102,7 +139,7 @@ configured management group. Microsoft Entra Global Administrator alone is not
 enough; use Owner, Role Based Access Control Administrator, or User Access
 Administrator at that management-group scope.
 
-For a production customer, have an existing Azure RBAC administrator grant the
+For a production environment, have an existing Azure RBAC administrator grant the
 deployment identity **Role Based Access Control Administrator** or **User
 Access Administrator** at only the required management-group scope. For a
 net-new test tenant where the signed-in Global Administrator cannot create the
@@ -130,7 +167,7 @@ activate it before deployment and refresh the Azure CLI token afterward.
 
 The deployment menu reads `main.tfvars.json` directly and does not require
 `.env` merely to run Terraform. For local live collection, local dashboard
-testing, or local diagnostics against the same deployed customer environment,
+testing, or local diagnostics against the same deployed environment,
 set at least these values in `.env`:
 
 | `.env` setting | Required value |
@@ -152,6 +189,30 @@ Leave `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` empty for the normal
 `AUTH_MODE=auto` workflow. Local processes use the current `az login`; hosted
 applications use Terraform-configured managed identities.
 
+### 4. Authenticate and start the menu
+
+Sign in and confirm the intended tenant and subscription:
+
+```bash
+az login --tenant "<tenant-guid>"
+az account set --subscription "<subscription-guid>"
+az account show --output table
+```
+
+Then start the menu from the repository root.
+
+macOS:
+
+```bash
+./infra/deployment-menu.sh
+```
+
+Windows:
+
+```powershell
+.\infra\deployment-menu.ps1
+```
+
 Choose the menu entry that describes the work being performed. For a first
 installation or complete update, use **Complete initial deployment or update**.
 Before Terraform planning begins, options 1 and 2 run a deployment permission
@@ -169,6 +230,82 @@ specialized roles separately when required.
 
 See the [Azure deployment guide](DEPLOY.md) for prerequisites, permissions,
 configuration, identities, networking, and protected-history boundaries.
+
+### Repeat a first-time deployment safely
+
+If a collection has run, do not delete the existing resource group to start
+over. It contains the protected history Storage account, and deleting the group
+would delete retained evidence. Create a parallel environment instead.
+
+If this is an intentionally disposable test installation, no collection has
+ever run, the history containers contain no retained run data, and deletion of
+the exact resource group has been explicitly approved, a manual clean reinstall
+is possible. Do not delete the local clone first. Its Terraform state identifies
+objects that live outside the resource group:
+
+- The dashboard Microsoft Entra application and Enterprise Application.
+- The collector Reader role assignment at management-group or subscription
+  scope.
+- Defender and Microsoft Graph app-role assignments associated with the
+  collector identity.
+
+Record and remove the approved test objects at their actual scopes, then remove
+the resource group, and only then discard the local clone. Pull `latest` into a
+new folder, recreate the two environment-specific configuration files, sign in,
+and run option 1. Deleting only the resource group and local clone can leave
+orphaned directory objects and duplicate application registrations.
+
+To preserve an existing environment while testing a completely new first-time
+deployment:
+
+1. Clone `latest` into a new local folder so it has separate Terraform state.
+2. Create new `.env` and `infra/terraform/main.tfvars.json` files from the
+   examples.
+3. Use a new resource-group name and new globally unique history Storage,
+   Function runtime Storage, Function App, and Web App names.
+4. Keep the original protected-history resource group and Storage account
+   unchanged.
+5. Run menu option 1 from the new clone and validate the parallel environment.
+
+If the goal is only to retest application publishing, keep the existing
+environment and use option 3 or 4. Decommissioning any old test environment is
+a separate reviewed operation; never delete a resource group that contains
+retained DVM history without explicit approval of that exact target and a
+history-preservation plan.
+
+### Safely remove and rebuild the application
+
+The application teardown scripts remove the replaceable Function, Web App,
+Function runtime Storage, identities, monitoring resources, dashboard directory
+application, and related assignments. They preserve the resource group,
+protected history Storage and containers, protected workflow container,
+network-perimeter foundation, and local Terraform state.
+
+Windows:
+
+```powershell
+.\infra\destroy-application.ps1
+```
+
+macOS:
+
+```bash
+./infra/destroy-application.sh
+```
+
+The scripts run the deployment permission preflight, create and machine-validate
+a Terraform teardown plan, display the complete plan, and require four exact
+confirmations:
+
+1. `REVIEWED PLAN`
+2. The exact resource-group name
+3. The exact Web App name
+4. `REMOVE REPLACEABLE APPLICATION`
+
+The plan is rejected if it creates, updates, replaces, or deletes anything
+outside the explicit replaceable-application allowlist. After teardown, run
+deployment-menu option 1 to recreate and publish the Function and Web App on
+the preserved foundation.
 
 ## Normal operations
 
@@ -321,6 +458,6 @@ the local [Azure cost calculator](tools/calculator.html) and the official
 [Azure Pricing Calculator](https://azure.microsoft.com/pricing/calculator/).
 
 Local dashboard use, sample replay, development, testing, and source-control
-procedures are intentionally separated from the customer deployment path. See
+procedures are intentionally separated from the hosted deployment path. See
 the [Local development README](docs/local/README.md) only when performing local
 or development work.

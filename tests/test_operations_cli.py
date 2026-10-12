@@ -348,6 +348,66 @@ def test_web_app_uses_configurable_worker_processes():
     assert example["web_app_worker_processes"] == 1
 
 
+def test_workflow_container_is_part_of_protected_foundation():
+    terraform = Path("infra/terraform/main.tf").read_text()
+
+    workflow = terraform.split('resource "azurerm_storage_container" "dashboard_workflow" {', 1)[1].split(
+        'resource "azurerm_network_security_perimeter_association" "history_storage" {',
+        1,
+    )[0]
+    assert "count = 1" in workflow
+    assert "prevent_destroy = true" in workflow
+
+
+def test_application_teardown_plan_allows_only_replaceable_deletes(monkeypatch, tmp_path: Path):
+    plan = tmp_path / "application-teardown.tfplan"
+    plan.write_text("reviewed")
+    plan_json = {
+        "resource_changes": [
+            {
+                "address": 'azurerm_linux_web_app.dashboard["dashboard"]',
+                "change": {"actions": ["delete"]},
+            },
+            {
+                "address": "azurerm_storage_account.history",
+                "change": {"actions": ["no-op"]},
+            },
+        ],
+    }
+    monkeypatch.setattr(operations_cli, "APPLICATION_TEARDOWN_PLAN", plan)
+    monkeypatch.setattr(
+        operations_cli,
+        "_tf",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout=json.dumps(plan_json)),
+    )
+
+    assert operations_cli._validate_application_teardown_plan() == [
+        'azurerm_linux_web_app.dashboard["dashboard"]'
+    ]
+
+
+def test_application_teardown_plan_rejects_foundation_change(monkeypatch, tmp_path: Path):
+    plan = tmp_path / "application-teardown.tfplan"
+    plan.write_text("reviewed")
+    plan_json = {
+        "resource_changes": [
+            {
+                "address": "azurerm_storage_account.history",
+                "change": {"actions": ["delete"]},
+            },
+        ],
+    }
+    monkeypatch.setattr(operations_cli, "APPLICATION_TEARDOWN_PLAN", plan)
+    monkeypatch.setattr(
+        operations_cli,
+        "_tf",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout=json.dumps(plan_json)),
+    )
+
+    with pytest.raises(RuntimeError, match="outside the replaceable application allowlist"):
+        operations_cli._validate_application_teardown_plan()
+
+
 def test_webapp_apply_reconciles_function_storage_before_access(monkeypatch, tmp_path: Path):
     calls: list[str] = []
     plan = tmp_path / "webapp.tfplan"

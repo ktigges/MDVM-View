@@ -1116,7 +1116,7 @@ def test_reporting_exposes_customer_workflow_help():
     assert '$("openWorkflowHelp").addEventListener("click",()=>activateView("help"))' in javascript
     assert ".workflow-help-story .workflow-help-body{padding:0}" in stylesheet
     assert "Reporting" in workflow
-    assert "## Common customer scenarios" in workflow
+    assert "## Common operating scenarios" in workflow
 
 
 def test_data_evidence_is_a_separate_diagnostic_page():

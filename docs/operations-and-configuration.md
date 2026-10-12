@@ -320,7 +320,7 @@ descendants API to inventory subscriptions in that group and nested groups,
 including subscriptions added later.
 
 ```json
-"collector_management_group_id": "customer-management-group-id"
+"collector_management_group_id": "target-management-group-id"
 ```
 
 The identity running Terraform must have permission to create role assignments
