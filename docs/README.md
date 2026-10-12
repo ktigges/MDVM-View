@@ -1,6 +1,6 @@
 # Documentation
 
-> **Last modified:** 2026-09-28
+> **Last modified:** 2026-10-12
 > **Purpose:** Provide one ordered entry point for installation, operations, troubleshooting, application logic, and deep reference material.
 
 Return to the [project README](../README.md) for the product overview and
@@ -69,6 +69,7 @@ Local work is intentionally separated from customer deployment. Start with the
 | Deploy Web App code | [Azure deployment: deploy the dashboard Web App](../DEPLOY.md#deploy-the-authenticated-dashboard-web-app) |
 | Collect data now | [Operations and monitoring](operations-and-configuration.md) |
 | Follow the daily remediation process | [Daily vulnerability remediation workflow](daily-vulnerability-remediation-workflow.md) |
+| Build or export the management report | [Daily workflow: Executive Snapshot](daily-vulnerability-remediation-workflow.md#7-build-the-executive-snapshot) |
 | Check active progress or failed runs | [Troubleshooting](troubleshooting.md#4-collector-progress-failure-and-memory) |
 | Find a command | [Command reference](command-reference.md) |
 | Find a setting | [Configuration reference](configuration-reference.md) |

@@ -11,6 +11,8 @@ It helps answer:
 - Which machines, CVEs, and recommendations are involved?
 - Which remediation was observed within or outside SLA?
 - Which findings are pending confirmation or returned after remediation?
+- What does management need to know about SLA exposure, workload movement, and
+  where risk is concentrated?
 
 The application reads Defender data. It does not change Defender findings or
 perform remediation. Optional recommendation work status exists only inside
@@ -66,6 +68,29 @@ smallest deployment option that matches the change:
 Direct CLI, Terraform, and Azure commands are not the normal operating path.
 Use the [command reference](docs/command-reference.md) only for troubleshooting,
 automation, or an individually required operation.
+
+## Dashboard flow
+
+The navigation follows the way the work is normally reviewed:
+
+1. **Summary** shows current exposure, SLA results, Secure Score, and the
+   highest-impact recommendations.
+2. **Recommendations** and **Prioritize** group finding instances into work
+   that can be assigned and completed.
+3. **Vulnerabilities** and **Endpoint assets** provide the detailed CVE,
+   finding, and machine evidence.
+4. **Remediate** shows SLA and remediation outcomes.
+5. **Reporting** compares lifecycle changes by finding, machine, CVE, or
+   recommendation and exports the filtered detail.
+6. **Executive Snapshot** produces a separate management view for a selected
+   timeframe, subscription, and operating team. It can be printed or saved as
+   PDF and exported to CSV.
+7. **How to use** keeps the daily workflow available inside the application.
+
+Executive Snapshot can show either finding instances or recommendation
+workload. Recommendation workload is a rollup of linked finding evidence. It
+does not create a separate recommendation SLA clock; the displayed SLA result
+still comes from finding deadlines.
 
 ## How the application works
 

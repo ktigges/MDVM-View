@@ -462,6 +462,8 @@ def test_dashboard_has_independent_exportable_executive_snapshot():
     stylesheet = Path("dashboard/styles.css").read_text()
 
     assert 'data-view="executiveSnapshot"' in html
+    assert '<span class="nav-label">Summary</span>' in html
+    assert html.index('data-view="executiveSnapshot"') > html.index('data-view="trend"')
     assert "Executive SLA Snapshot" in html
     assert 'id="executiveSnapshotPeriod"' in html
     assert 'id="executiveSnapshotStart"' in html
@@ -511,7 +513,7 @@ def test_dashboard_has_independent_exportable_executive_snapshot():
     assert "projected backlog" not in javascript.lower()
     assert ".executive-concentration-row" in stylesheet
     assert ".executive-sla-meter" in stylesheet
-    assert 'order: ["executive", "executiveSnapshot"' in configuration
+    assert 'order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "executiveSnapshot", "help"]' in configuration
     assert "body.executive-snapshot-print .story:not(#executiveSnapshot)" in stylesheet
     assert "@media print" in stylesheet
 
@@ -887,7 +889,7 @@ def test_dashboard_connects_executive_workload_sla_and_recommendation_impact():
     assert "RECOMMENDATION INVENTORY" not in html
     assert "<h2>Recommendation inventory and workflow</h2>" in html
     assert 'selectEntity("recommendation",id,true)' in javascript
-    assert 'order: ["executive", "executiveSnapshot", "recommendations", "priority", "overview", "workstations", "sla", "trend", "help"]' in configuration
+    assert 'order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "executiveSnapshot", "help"]' in configuration
 
 
 def test_dashboard_executive_summary_uses_readable_visual_hierarchy():

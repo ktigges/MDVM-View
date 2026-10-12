@@ -1,6 +1,6 @@
 # Publishing and Azure cost options
 
-> **Last modified:** 2026-09-27
+> **Last modified:** 2026-10-12
 > **Purpose:** Compare Web App hosting, security, scale, availability, and Azure cost options.
 
 The editable standalone estimator is
@@ -291,7 +291,7 @@ rarely used environments. It is not the first recommendation because:
 - every new replica must reload and verify the current bundle;
 - authentication, ingress, health, and scaling require a different deployment
   design;
-- the current App Service identity-header framework would need validation
+- the current App Service identity-header mechanism would need validation
   against Container Apps authentication behavior;
 - private networking and log ingestion can dominate a very small compute bill.
 

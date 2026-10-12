@@ -1,6 +1,6 @@
 # Azure deployment guide
 
-> **Last modified:** 2026-10-08
+> **Last modified:** 2026-10-12
 > **Purpose:** Deploy and validate protected storage, the collector Function, and the authenticated dashboard Web App, with explicit operator and runtime identity boundaries.
 
 The deployment is staged so retained DVM history stays independent of
@@ -39,6 +39,25 @@ Before starting the menu:
 
 The detailed commands later in this guide explain what the menu performs and
 provide troubleshooting fallbacks. They are not the normal deployment path.
+
+The current menu choices are:
+
+| Choice | Use it for |
+|---|---|
+| 1. Complete initial deployment or update | Apply the full infrastructure, Function, and Web App path |
+| 2. Plan, review, and apply Web App infrastructure | Restore or change the App Service plan, Always On, identity, authentication, or Web App settings |
+| 3. Deploy and verify Function code | Publish collector changes without changing infrastructure |
+| 4. Deploy and verify Web App code | Publish dashboard or dashboard-server changes without running a collection |
+| 5. Invoke a live collection and verify Function | Refresh source data after confirming that another collection is not active |
+| 6. Verify Function and Web App | Check the deployed applications without publishing code |
+| 7. Operations and diagnostics | Review runs, logs, collection status, and advanced operations |
+| 8. Show saved Web App plan | Reopen the saved Terraform plan before deciding whether to apply it |
+| 9. Exit | Leave the menu without making a change |
+
+For example, if Azure Policy has changed the test Web App from B2 to B1, use
+choice 2 to review and restore the Terraform settings. If only dashboard code
+changed, use choice 4. A Web App deployment does not require a Function
+deployment or a new collection.
 
 ## Local collector-only alternative
 

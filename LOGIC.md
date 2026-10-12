@@ -311,7 +311,64 @@ text, asset domains, and optional work status.
 Statistics and detail pivots retain the same global scope unless a metric
 explicitly describes an unfiltered source count.
 
-## 10. Deployment effects
+## 10. Executive Snapshot
+
+Executive Snapshot is a separate management report. It does not replace the
+operational Reporting screen.
+
+The report uses its own UTC timeframe and local subscription and operating-team
+selectors. Severity, asset classification, recommendation type, domain,
+reporting-age, origin, and search filters still apply. The report compares the
+selected period with the immediately preceding equal period.
+
+### Finding-level SLA position
+
+The SLA meter always uses completed finding outcomes:
+
+```text
+Finding SLA compliance =
+  Fixed within SLA /
+  (Fixed within SLA + Fixed outside SLA)
+```
+
+Findings without a finite SLA due date are not included in that percentage.
+The target marker is 90%. Recommendation workload mode does not change the
+meter, R/Y/G result, or finding deadlines.
+
+The status is:
+
+1. **Red** when a Critical finding is overdue or compliance is below 75%.
+2. **Yellow** when an open overdue or Critical finding remains, or compliance
+   is below 90%.
+3. **Green** when neither condition applies and compliance is at least 90%.
+
+If no completed finding has a usable SLA result in the period, the meter says
+that there are no completed finding-level SLA outcomes instead of creating a
+percentage.
+
+### Recommendation workload
+
+The recommendation universe is the union of findings fixed during the selected
+period and findings open at period end, grouped by `RecommendationId`.
+
+- **Fully remediated:** at least one linked finding was fixed during the period
+  and no linked finding is open at period end.
+- **Partially remediated:** at least one linked finding was fixed during the
+  period and at least one linked finding remains open.
+- **Still open:** linked findings remain open and no linked finding was fixed
+  during the period.
+- **With outside-SLA findings:** at least one linked finding was fixed after
+  its due date or remains open after its due date.
+
+This is a workload rollup, not a recommendation SLA clock. A recommendation
+can contain finding instances with different first-seen times, due dates,
+machines, CVEs, and outcomes.
+
+PDF output uses the currently selected representation. CSV output is
+finding-level evidence in Finding instances mode and one row per recommendation
+workload in Recommendation workload mode.
+
+## 11. Deployment effects
 
 | Operation | Code changes | Infrastructure/settings | Creates a dataset run |
 |---|---:|---:|---:|
