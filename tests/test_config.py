@@ -17,6 +17,14 @@ ENVIRONMENT_KEYS = (
 )
 
 
+def test_dotenv_example_uses_supported_collection_settings():
+    dotenv = Path(".env.example").read_text(encoding="utf-8")
+
+    assert "VULNERABILITY_COLLECTION_MODE=auto" in dotenv
+    assert "FULL_COLLECTION_WEEKDAY=6" in dotenv
+    assert "FULL_ENRICHMENT_WEEKDAY" not in dotenv
+
+
 def test_settings_loads_dotenv_and_trims_values(monkeypatch, tmp_path: Path):
     for key in ENVIRONMENT_KEYS:
         monkeypatch.delenv(key, raising=False)

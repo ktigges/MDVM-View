@@ -60,6 +60,25 @@ The menu does not install Python, Azure CLI, Terraform, or Git. It does create
 and run the selected infrastructure, application deployment, or verification
 workflow.
 
+Before the first deployment, create both environment-specific configuration
+files from their tracked examples:
+
+```powershell
+Copy-Item .\infra\terraform\main.tfvars.example.json .\infra\terraform\main.tfvars.json
+Copy-Item .\.env.example .\.env
+```
+
+Some values intentionally appear in both files. `main.tfvars.json` is
+authoritative for Azure infrastructure and the hosted Function and Web App;
+`.env` controls only local commands and local application processes. When a
+local process targets the deployed customer environment, copy the same tenant,
+subscription, management-group, resource-group, location, history Storage, and
+collection-policy values into the corresponding `.env` settings. Do not put
+the Function runtime storage account in `.env`. Neither environment-specific
+file is committed. See the
+[configuration overlap table](DEPLOY.md#terraform-and-env-overlap) before
+running the menu.
+
 Choose the menu entry that describes the work being performed. For a first
 installation or complete update, use **Complete initial deployment or update**.
 Review every Terraform plan and approve it only when it contains the expected

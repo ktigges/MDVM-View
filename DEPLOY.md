@@ -129,7 +129,10 @@ separately in the [Local development README](docs/local/README.md).
    exempt the NSP-associated Storage accounts.
 
 4. Before signing in, planning, or deploying, copy `.env.example` to `.env`
-   and set these environment variables:
+   and set these environment variables. Some values intentionally duplicate
+   `main.tfvars.json`: Terraform does not read `.env`, and deployed Azure apps
+   do not read the workstation's `.env`. The duplication lets local commands
+   target the same customer environment.
 
    ```dotenv
    AUTH_MODE=auto
@@ -155,23 +158,44 @@ separately in the [Local development README](docs/local/README.md).
    Recommendation tracking is optional dashboard-only collaboration state and
    should remain false unless explicitly required.
 
-   Use these value sources:
+   ### Terraform and `.env` overlap
+
+   `main.tfvars.json` is authoritative for Azure infrastructure and the App
+   Settings Terraform generates for the hosted Function and Web App. `.env` is
+   authoritative only for local collector, dashboard, and diagnostic
+   processes. When those local processes target the deployed customer
+   environment, keep the following values synchronized:
+
+   | `main.tfvars.json` | `.env` setting | What to set locally |
+   |---|---|---|
+   | `tenant_id` | `AZURE_TENANT_ID` | Same tenant GUID for local live collection; may remain empty for deployment and the local dashboard when `az login` supplies identity |
+   | `subscription_id` | `AZURE_SUBSCRIPTION_ID` | Same subscription GUID when a local collector or diagnostic command requires subscription context; deployment commands read Terraform directly |
+   | `collector_management_group_id` | `AZURE_MANAGEMENT_GROUP_ID` | Same management-group ID for local live collection; not the display name or full resource path |
+   | `resource_group_name` | `AZURE_RESOURCE_GROUP` | Same resource-group name for local commands that require it |
+   | `location` | `AZURE_LOCATION` | Same Azure region |
+   | `history_storage_account_name` | `STORAGE_ACCOUNT_NAME` | Same protected history account; never use `function_runtime_storage_account_name` |
+   | `history_container_name` | `STORAGE_CONTAINER_NAME` | Same immutable history container |
+   | `current_container_name` | `STORAGE_CURRENT_CONTAINER_NAME` | Same current-pointer container |
+   | `app_mode` | `APP_MODE` | Same mode when local collection must reproduce hosted behavior |
+   | `recommendation_enrichment_mode` | `RECOMMENDATION_ENRICHMENT_MODE` | Same enrichment mode |
+   | `vulnerability_collection_mode` | `VULNERABILITY_COLLECTION_MODE` | Same collection mode |
+   | `enable_experimental_endpoints` | `ENABLE_EXPERIMENTAL_ENDPOINTS` | Same Boolean value |
+   | `full_collection_weekday` | `FULL_COLLECTION_WEEKDAY` | Same weekday, Monday `0` through Sunday `6` |
+   | `collection_schedule` | `COLLECTION_SCHEDULE` | Same six-field UTC schedule when testing timer behavior locally |
+   | `dashboard_cache_seconds` | `DASHBOARD_CACHE_SECONDS` | Use the hosted value to reproduce cache behavior; a deliberate local override is allowed |
+   | `dashboard_recommendation_tracking_enabled` | `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | Same feature choice when testing tracking locally |
+   | `dashboard_recommendation_tracking_container` | `DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER` | Same workflow container when local tracking is enabled |
+
+   These `.env` settings are local-only or intentionally differ from hosted
+   Azure:
 
    | `.env` setting | Value to use |
    |---|---|
    | `AUTH_MODE` | `auto` |
-   | `AZURE_TENANT_ID` | Leave empty; use the tenant from `az login` |
    | `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | Leave both empty |
-   | `AZURE_SUBSCRIPTION_ID` | Leave empty; Terraform reads `subscription_id` from `main.tfvars.json` |
-   | `AZURE_MANAGEMENT_GROUP_ID` | Leave empty; Terraform sets it on the collector from `collector_management_group_id` |
-   | `AZURE_RESOURCE_GROUP` | Leave empty; deployment commands use the Terraform value |
-   | `STORAGE_ACCOUNT_NAME` | `history_storage_account_name` from `main.tfvars.json` |
-   | `STORAGE_CONTAINER_NAME` | `history_container_name`, normally `dvm-history` |
-   | `STORAGE_CURRENT_CONTAINER_NAME` | `current_container_name`, normally `dvm-current` |
-   | `APP_MODE` | `live` |
    | `DASHBOARD_DATA_SOURCE` | `azure` |
    | `DASHBOARD_AUTH_ENABLED` | `false` locally |
-   | `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | `false` unless explicitly required |
+   | `DASHBOARD_STATIC_DIR` | Leave empty unless testing a nonstandard local asset path |
 
    After Terraform apply, confirm the Storage values with:
 
