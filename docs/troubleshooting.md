@@ -345,4 +345,4 @@ tenant identifiers into tickets or chat.
 - [Azure deployment guide](../DEPLOY.md)
 - [Operations and monitoring](operations-and-configuration.md)
 - [Command reference](command-reference.md)
-- [Data structure and retention](data.md)
+- [Data structure and retention](data/)

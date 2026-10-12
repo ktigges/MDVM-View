@@ -1,6 +1,6 @@
 # Data collection and dashboard workflow
 
-> **Last modified:** 2026-09-27
+> **Last modified:** 2026-10-12
 > **Purpose:** Explain how Defender observations become retained evidence, lifecycle records, SLA results, and dashboard views.
 
 ## Scope

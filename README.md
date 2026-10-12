@@ -98,10 +98,10 @@ documents:
 
 - [Dashboard and collection logic](LOGIC.md) — finding identity, priority,
   lifecycle, remediation, reopening, SLA, filtering, and reporting rules.
-- [Data collection and dashboard workflow](docs/data-collection-and-workflow.md)
+- [Data collection and dashboard workflow](docs/data-collection-and-workflow/)
   — APIs, pagination, retries, full/delta behavior, normalization, scaling, and
   end-to-end processing.
-- [Data structure and retention](docs/data.md) — raw and curated schemas,
+- [Data structure and retention](docs/data/) — raw and curated schemas,
   manifests, replay, storage paths, published datasets, and lineage.
 - [Daily remediation workflow](docs/daily-vulnerability-remediation-workflow.md)
   — how operators use pending, fixed, SLA, machine, CVE, and recommendation
@@ -119,7 +119,7 @@ Every successful collection creates a new retained run.
 - Replacing application infrastructure must preserve the history Storage
   account.
 
-See [Data structure and retention](docs/data.md) for the complete storage
+See [Data structure and retention](docs/data/) for the complete storage
 contract.
 
 ## Authentication and authorization
@@ -142,8 +142,8 @@ Start with the document that matches the task:
 |---|---|
 | Deploy or update Azure | [Azure deployment guide](DEPLOY.md) |
 | Understand calculations and lifecycle | [Dashboard and collection logic](LOGIC.md) |
-| Understand data collection and processing | [Data collection and workflow](docs/data-collection-and-workflow.md) |
-| Understand schemas and retained Storage | [Data structure and retention](docs/data.md) |
+| Understand data collection and processing | [Data collection and workflow](docs/data-collection-and-workflow/) |
+| Understand schemas and retained Storage | [Data structure and retention](docs/data/) |
 | Operate the dashboard | [Daily remediation workflow](docs/daily-vulnerability-remediation-workflow.md) |
 | Troubleshoot or run an individual command | [Command reference](docs/command-reference.md) |
 | Configure a setting | [Configuration reference](docs/configuration-reference.md) |

@@ -53,9 +53,9 @@ Local work is intentionally separated from customer deployment. Start with the
 
 1. [Dashboard and collection logic](../LOGIC.md) — concise source of truth for
    lifecycle, priority, SLA, recommendation ordering, filters, and work status
-2. [Data collection and dashboard workflow](data-collection-and-workflow.md) —
+2. [Data collection and dashboard workflow](data-collection-and-workflow/) —
    end-to-end collector and user workflow
-3. [Data structure and retention](data.md) — detailed schema, lineage,
+3. [Data structure and retention](data/) — detailed schema, lineage,
    manifests, overwrite rules, and history semantics
 
 ## Find a document by task
@@ -74,7 +74,7 @@ Local work is intentionally separated from customer deployment. Start with the
 | Find a setting | [Configuration reference](configuration-reference.md) |
 | Understand fixed/reopened logic | [Dashboard and collection logic](../LOGIC.md#6-finding-completion-and-reopening) |
 | Understand SLA clocks | [Dashboard and collection logic](../LOGIC.md#5-sla-targeting) |
-| Understand retention and purge behavior | [Data structure and retention](data.md) |
+| Understand retention and purge behavior | [Data structure and retention](data/) |
 | Estimate Azure cost | [Publishing and Azure cost options](web-app-deployment-recommendations.md#calculator-worksheet) |
 | Collect or replay sample data | [Collect and replay a sample](sample-replay.md) |
 
@@ -89,8 +89,8 @@ The long reference documents are intentionally retained:
 - `command-reference.md` answers “what command do I run?”
 - `configuration-reference.md` answers “what does this setting do?”
 - `LOGIC.md` answers “how is this result calculated?”
-- `data-collection-and-workflow.md` explains end-to-end behavior.
-- `data.md` is the detailed data contract and lineage reference.
+- `data-collection-and-workflow/README.md` explains end-to-end behavior.
+- `data/README.md` is the detailed data contract and lineage reference.
 - `environment-and-deployment.md` and
   `web-app-deployment-recommendations.md` retain design rationale and options;
   they are not first-run procedures.

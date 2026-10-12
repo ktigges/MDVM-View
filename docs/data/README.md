@@ -1,6 +1,6 @@
 # Data structure, collection runs, and history
 
-> **Last modified:** 2026-09-27
+> **Last modified:** 2026-10-12
 > **Purpose:** Define collected data, run processing, retention, change detection, and SLA calculations.
 
 ## Collection flow
