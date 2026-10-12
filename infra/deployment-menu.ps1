@@ -120,6 +120,8 @@ function Confirm-Value {
 }
 
 function Invoke-WebAppPlanApply {
+    Write-Host "Checking Azure identity, scope, and deployment permissions."
+    Invoke-OperationsCli deployment-preflight
     Write-Host "Planning the cumulative Web App stage: foundation, Function, and Web App infrastructure."
     Invoke-OperationsCli plan webapp
     Invoke-OperationsCli show webapp

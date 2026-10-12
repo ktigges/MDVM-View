@@ -42,6 +42,8 @@ confirm_value() {
 }
 
 plan_apply_webapp() {
+  printf 'Checking Azure identity, scope, and deployment permissions.\n'
+  run_cli deployment-preflight
   printf 'Planning the cumulative Web App stage: foundation, Function, and Web App infrastructure.\n'
   run_cli plan webapp
   run_cli show webapp

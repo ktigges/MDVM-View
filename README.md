@@ -102,6 +102,32 @@ configured management group. Microsoft Entra Global Administrator alone is not
 enough; use Owner, Role Based Access Control Administrator, or User Access
 Administrator at that management-group scope.
 
+For a production customer, have an existing Azure RBAC administrator grant the
+deployment identity **Role Based Access Control Administrator** or **User
+Access Administrator** at only the required management-group scope. For a
+net-new test tenant where the signed-in Global Administrator cannot create the
+collector Reader assignment:
+
+1. In the Azure portal, open **Microsoft Entra ID > Properties**.
+2. Set **Access management for Azure resources** to **Yes** and save.
+3. Refresh the Azure CLI token and restore the intended subscription:
+
+   ```powershell
+   az logout
+   az login --tenant "<tenant-guid>"
+   az account set --subscription "<subscription-guid>"
+   az account show --output table
+   ```
+
+4. Rerun deployment-menu option 1. Terraform will retain successfully created
+   resources and retry the failed role assignment; do not delete or reset the
+   partial deployment.
+5. After deployment succeeds, set **Access management for Azure resources**
+   back to **No** when the temporary root-scope elevation is no longer needed.
+
+If the required Azure role is assigned through Privileged Identity Management,
+activate it before deployment and refresh the Azure CLI token afterward.
+
 The deployment menu reads `main.tfvars.json` directly and does not require
 `.env` merely to run Terraform. For local live collection, local dashboard
 testing, or local diagnostics against the same deployed customer environment,
@@ -128,6 +154,12 @@ applications use Terraform-configured managed identities.
 
 Choose the menu entry that describes the work being performed. For a first
 installation or complete update, use **Complete initial deployment or update**.
+Before Terraform planning begins, options 1 and 2 run a deployment permission
+preflight. It verifies the active Azure CLI tenant and subscription, access to
+the configured management group, effective resource and role-assignment write
+permissions, and an active Global Administrator or Privileged Role
+Administrator directory role. The menu stops with the missing scope or action
+when a requirement is not met.
 Review every Terraform plan and approve it only when it contains the expected
 changes and preserves retained history.
 

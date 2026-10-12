@@ -162,6 +162,88 @@ def test_values_reject_template_identity_placeholders(monkeypatch, tmp_path):
     assert "tenant_id" not in message
 
 
+def test_action_allowed_combines_contributor_and_role_administrator_permissions():
+    permissions = [
+        {
+            "actions": ["*"],
+            "notActions": ["Microsoft.Authorization/*/Write"],
+        },
+        {
+            "actions": ["Microsoft.Authorization/roleAssignments/write"],
+            "notActions": [],
+        },
+    ]
+
+    assert operations_cli._action_allowed(permissions, "Microsoft.Web/sites/write")
+    assert operations_cli._action_allowed(
+        permissions,
+        "Microsoft.Authorization/roleAssignments/write",
+    )
+    assert not operations_cli._action_allowed(
+        permissions[:1],
+        "Microsoft.Authorization/roleAssignments/write",
+    )
+
+
+def test_deployment_preflight_validates_context_permissions_and_directory_role(monkeypatch, capsys):
+    values = {
+        "tenant_id": "tenant-id",
+        "subscription_id": "subscription-id",
+        "collector_management_group_id": "management-group-id",
+    }
+    calls = []
+
+    def fake_azure_json(label, *args):
+        calls.append(args)
+        if args[:2] == ("account", "show"):
+            return {
+                "tenantId": "tenant-id",
+                "id": "subscription-id",
+                "user": {"name": "operator@example.com"},
+            }
+        if args[:3] == ("account", "management-group", "show"):
+            return {"name": "management-group-id"}
+        if "graph.microsoft.com" in args[-1]:
+            return {"value": [{"displayName": "Privileged Role Administrator"}]}
+        return {"value": [{"actions": ["*"], "notActions": []}]}
+
+    monkeypatch.setattr(operations_cli, "_values", lambda: values)
+    monkeypatch.setattr(operations_cli, "_azure_json", fake_azure_json)
+
+    operations_cli.deployment_preflight()
+
+    output = capsys.readouterr().out
+    assert "Deployment permission preflight passed for operator@example.com." in output
+    assert any("management-group-id" in call for call in calls)
+
+
+def test_deployment_preflight_rejects_missing_management_group_role_write(monkeypatch):
+    values = {
+        "tenant_id": "tenant-id",
+        "subscription_id": "subscription-id",
+        "collector_management_group_id": "management-group-id",
+    }
+
+    def fake_azure_json(label, *args):
+        if args[:2] == ("account", "show"):
+            return {
+                "tenantId": "tenant-id",
+                "id": "subscription-id",
+                "user": {"name": "operator@example.com"},
+            }
+        if args[:3] == ("account", "management-group", "show"):
+            return {"name": "management-group-id"}
+        if "managementGroups" in args[-1]:
+            return {"value": [{"actions": ["*/read"], "notActions": []}]}
+        return {"value": [{"actions": ["*"], "notActions": []}]}
+
+    monkeypatch.setattr(operations_cli, "_values", lambda: values)
+    monkeypatch.setattr(operations_cli, "_azure_json", fake_azure_json)
+
+    with pytest.raises(RuntimeError, match="roleAssignments/write"):
+        operations_cli.deployment_preflight()
+
+
 def test_function_version_prefers_override_then_values(monkeypatch):
     monkeypatch.setenv("FUNCTION_VERSION", "release/one")
     assert operations_cli._function_version({"function_version": "values-version"}) == "release-one"
