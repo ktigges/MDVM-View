@@ -99,3 +99,13 @@ def test_deployment_menus_do_not_expose_destructive_operations():
 
     assert " destroy " not in f" {shell.lower()} "
     assert " destroy " not in f" {powershell.lower()} "
+
+
+def test_powershell_menu_preserves_python_executable_as_one_value():
+    _, powershell = menu_sources()
+
+    assert "[pscustomobject]@{ Executable = $candidate; Prefix = @() }" in powershell
+    assert "[pscustomobject]@{ Executable = $py.Source; Prefix = @(\"-3\") }" in powershell
+    assert "$executable = $PythonCommand.Executable" in powershell
+    assert "$prefix = @($PythonCommand.Prefix)" in powershell
+    assert "$PythonCommand[0]" not in powershell

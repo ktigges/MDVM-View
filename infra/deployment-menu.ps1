@@ -8,7 +8,7 @@ $RootDirectory = Split-Path -Parent $PSScriptRoot
 
 function Resolve-PythonCommand {
     if ($env:PYTHON) {
-        return @($env:PYTHON)
+        return [pscustomobject]@{ Executable = $env:PYTHON; Prefix = @() }
     }
 
     $candidates = @(
@@ -18,18 +18,18 @@ function Resolve-PythonCommand {
     )
     foreach ($candidate in $candidates) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-            return @($candidate)
+            return [pscustomobject]@{ Executable = $candidate; Prefix = @() }
         }
     }
 
     $python = Get-Command python -ErrorAction SilentlyContinue
     if ($python) {
-        return @($python.Source)
+        return [pscustomobject]@{ Executable = $python.Source; Prefix = @() }
     }
 
     $py = Get-Command py -ErrorAction SilentlyContinue
     if ($py) {
-        return @($py.Source, "-3")
+        return [pscustomobject]@{ Executable = $py.Source; Prefix = @("-3") }
     }
 
     throw "Python was not found. Create .venv-win or set PYTHON to the interpreter path."
@@ -42,8 +42,8 @@ function Invoke-OperationsCli {
 
     Push-Location $RootDirectory
     try {
-        $executable = $PythonCommand[0]
-        $prefix = @($PythonCommand | Select-Object -Skip 1)
+        $executable = $PythonCommand.Executable
+        $prefix = @($PythonCommand.Prefix)
         & $executable @prefix -m vulnerability_view.operations_cli @CliArguments | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Command failed with exit code $LASTEXITCODE."
