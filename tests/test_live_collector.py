@@ -163,7 +163,7 @@ def test_live_normalization_uses_collector_first_observation_for_sla():
     assert row["FirstSeenUtc"] == ""
     assert row["FirstObservedUtc"] == "2026-09-16T00:00:00Z"
     assert row["SlaStartUtc"] == "2026-09-16T00:00:00Z"
-    assert row["SlaPolicyVersion"] == "vulnerability-view-2026-09-21"
+    assert row["SlaPolicyVersion"] == "vulnerability-view-2026-10-12"
     assert row["SlaStatus"] == "OpenWithinSla"
     assert row["AssignedEngineer"] == ""
 

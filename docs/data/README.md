@@ -707,13 +707,18 @@ Policies are read from `config/sla-policies.json`:
 
 | Policy | Condition | Days |
 |---|---|---:|
-| `CriticalKnownExploit` | Critical with known exploit | 7 |
-| `Critical` | Critical | 14 |
-| `High` | High | 30 |
-| `Medium` | Medium | 60 |
-| `Low` | Low | 90 |
+| `CriticalKnownExploit` | Critical with known exploit | 4 |
+| `Critical` | Critical | 2 |
+| `High` | High | 7 |
+| `Medium` | Medium | 30 |
+| `Low` | Low | 60 |
 
 If several rules match, the shortest SLA is selected.
+
+`complianceTargetPercent` is a separate optional Executive Snapshot reporting
+target. It does not change any finding due date. The checked-in value is
+`null`, which reports actual compliance without claiming an approved
+percentage target.
 
 ### Due date
 

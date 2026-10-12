@@ -226,6 +226,7 @@ File: `config/sla-policies.json`
 |---|---|
 | `schemaVersion` | Policy document schema |
 | `policyVersion` | Version copied into findings and retained run metadata |
+| `complianceTargetPercent` | Optional approved Executive Snapshot compliance target; use `null` to report actual performance without a target, or a number greater than 0 through 100 |
 | `lifecycle.fixedConfirmationRuns` | Consecutive absent runs required before a finding becomes fixed |
 | `lifecycle.deviceFreshnessHours` | Device freshness window used when interpreting absence |
 | `policies[].policyName` | Stable policy label |
@@ -234,7 +235,9 @@ File: `config/sla-policies.json`
 | `policies[].slaDays` | Days from SLA start to due time |
 
 Changing this file affects newly processed runs. Prior immutable runs retain
-their original policy file and policy version.
+their original policy file and policy version. A new
+`complianceTargetPercent` therefore appears in Executive Snapshot after a
+collection publishes the updated policy.
 
 ## 8. Dashboard presentation
 

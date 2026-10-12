@@ -332,21 +332,21 @@ Finding SLA compliance =
 ```
 
 Findings without a finite SLA due date are not included in that percentage.
-The target marker is 90%. Recommendation workload mode does not change the
-meter, R/Y/G result, or finding deadlines.
+`complianceTargetPercent` in the retained SLA policy is optional.
+Recommendation workload mode does not change the meter or finding deadlines.
 
-The combined meter shows the percentage and its position against the 90%
-target. It does not assign one overall red, yellow, or green label to the
-report.
+When no approved percentage is configured, the meter shows actual compliance
+with a neutral color and no target marker or percentage-point variance. When a
+target is configured, the marker appears at that percentage and the fill color
+moves continuously from red near 0%, through orange and yellow, to green at
+the configured target. Values above the target remain green.
 
 Critical, High, Medium, and Low are calculated separately using the same
-finding-level formula:
-
-1. **Red** when that severity is below 75%.
-2. **Yellow** when that severity is at least 75% but below 90%.
-3. **Green** when that severity is at least 90%.
-4. **Neutral** when that severity has no completed finding with a finite SLA
-   due date in the period.
+finding-level formula. Their tile colors identify severity, not performance:
+Critical is red, High is orange, Medium is yellow, and Low is green, matching
+the Open risk by severity chart. The displayed percentage is the SLA result. A
+dash is shown when that severity has no completed finding with a finite SLA due
+date in the period.
 
 The severity cards also show within-SLA fixes, outside-SLA fixes, and open
 overdue findings. Open overdue counts are supporting risk context. They do not

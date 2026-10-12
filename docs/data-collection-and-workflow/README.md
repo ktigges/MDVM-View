@@ -531,6 +531,11 @@ Possible SLA states are:
 
 Live SLA starts at the first snapshot in which this collector observes the device-level finding. Defender's CVE `firstDetected` value is retained separately as source metadata. The policy is versioned and stored with each durable run, but the current values remain sample settings rather than adopted operating policy.
 
+The same retained policy may optionally include
+`complianceTargetPercent` for Executive Snapshot reporting. That percentage
+does not change `SlaDueUtc` or a finding's SLA state. When it is `null`, the
+dashboard reports actual compliance without a target marker.
+
 ## Finding lifecycle and reconciliation
 
 Reconciliation compares the current finding keys with previous live finding keys.

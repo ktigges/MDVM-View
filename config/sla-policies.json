@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
-  "policyVersion": "vulnerability-view-2026-09-21",
+  "policyVersion": "vulnerability-view-2026-10-12",
+  "complianceTargetPercent": 85,
   "lifecycle": {
     "fixedConfirmationRuns": 2,
     "deviceFreshnessHours": 48
