@@ -335,12 +335,22 @@ Findings without a finite SLA due date are not included in that percentage.
 The target marker is 90%. Recommendation workload mode does not change the
 meter, R/Y/G result, or finding deadlines.
 
-The status is:
+The combined meter shows the percentage and its position against the 90%
+target. It does not assign one overall red, yellow, or green label to the
+report.
 
-1. **Red** when a Critical finding is overdue or compliance is below 75%.
-2. **Yellow** when an open overdue or Critical finding remains, or compliance
-   is below 90%.
-3. **Green** when neither condition applies and compliance is at least 90%.
+Critical, High, Medium, and Low are calculated separately using the same
+finding-level formula:
+
+1. **Red** when that severity is below 75%.
+2. **Yellow** when that severity is at least 75% but below 90%.
+3. **Green** when that severity is at least 90%.
+4. **Neutral** when that severity has no completed finding with a finite SLA
+   due date in the period.
+
+The severity cards also show within-SLA fixes, outside-SLA fixes, and open
+overdue findings. Open overdue counts are supporting risk context. They do not
+change the completed-remediation compliance percentage.
 
 If no completed finding has a usable SLA result in the period, the meter says
 that there are no completed finding-level SLA outcomes instead of creating a

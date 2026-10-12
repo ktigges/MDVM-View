@@ -471,6 +471,7 @@ def test_dashboard_has_independent_exportable_executive_snapshot():
     assert 'id="executiveSnapshotSubscription"' in html
     assert 'id="executiveSnapshotOwner"' in html
     assert 'id="executiveSnapshotUnit"' in html
+    assert 'aria-label="Finding-level SLA compliance by severity"' in html
     assert '<option value="findings">Finding instances</option>' in html
     assert '<option value="recommendations">Recommendation workload</option>' in html
     assert 'id="executiveSlaMeterValue"' in html
@@ -487,12 +488,13 @@ def test_dashboard_has_independent_exportable_executive_snapshot():
     assert "function exportExecutiveSnapshotCsv()" in javascript
     assert 'executiveSnapshotPeriod:"30days"' in javascript
     assert 'executiveSnapshotUnit:"findings"' in javascript
-    assert "criticalOverdue>0" in javascript
     assert "compliance<75" in javascript
     assert "compliance<90" in javascript
-    assert "RED · Elevated SLA exposure" in javascript
-    assert "YELLOW · SLA exposure to monitor" in javascript
-    assert "GREEN · SLA exposure within target" in javascript
+    assert "Elevated SLA exposure" not in javascript
+    assert 'statusCard.className="executive-severity-status-grid"' in javascript
+    assert "<small>SLA compliance</small>" in javascript
+    assert "row.SLAComplianceValue<75" in javascript
+    assert "row.SLAComplianceValue<90" in javascript
     assert "Management action required" not in javascript
     assert '"Pending evidence"' in javascript
     assert '"Open more than 90 days"' in javascript
@@ -513,6 +515,7 @@ def test_dashboard_has_independent_exportable_executive_snapshot():
     assert "projected backlog" not in javascript.lower()
     assert ".executive-concentration-row" in stylesheet
     assert ".executive-sla-meter" in stylesheet
+    assert ".executive-severity-status-grid" in stylesheet
     assert 'order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "executiveSnapshot", "help"]' in configuration
     assert "body.executive-snapshot-print .story:not(#executiveSnapshot)" in stylesheet
     assert "@media print" in stylesheet
