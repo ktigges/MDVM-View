@@ -741,7 +741,7 @@ def test_dashboard_separates_detection_confirmation_and_sla_timing():
     assert "SLA remediations pending verification" in javascript
     assert ".lifecycle-status.PendingConfirmation" in stylesheet
     assert ".lifecycle-status.PendingVerification" in stylesheet
-    assert ".filterbar .reporting-filter{grid-column:span 4!important}" in stylesheet
+    assert ".filterbar .exposure-status-filter{grid-column:1/span 6!important;grid-row:2}" in stylesheet
     assert ".pending-filter-shortcut[aria-pressed=\"true\"]" in stylesheet
 
 
@@ -964,16 +964,42 @@ def test_dashboard_supports_new_vulnerability_period_analysis_and_filtering():
     assert "function firstObservedMatches(row)" in javascript
     assert "function fixedInPeriodMatches(row)" in javascript
     assert "function renderNewActivity()" in javascript
-    assert "rows=scoped.filter(firstObservedMatches)" in javascript
-    assert "fixedRows=scoped.filter(fixedInPeriodMatches)" in javascript
+    assert "firstSeenScope=range?filteredFindings(false,true,false):[]" in javascript
+    assert "remediationScope=range?filteredFindings(false,false,false):[]" in javascript
+    assert "rows=firstSeenScope.filter(firstObservedMatches)" in javascript
+    assert "fixedRows=remediationScope.filter(fixedInPeriodMatches)" in javascript
     assert 'id="fixedWindowFindingCount"' in html
     assert 'id="fixedWindowCveCount"' in html
     assert 'id="fixedWindowMachineCount"' in html
     assert 'id="fixedWindowRecommendationCount"' in html
-    assert 'class="window-metric" tabindex="0"' in html
+    assert 'class="window-metric" data-fixed-view="overview"' in html
+    assert 'class="window-metric" data-fixed-view="workstations"' in html
+    assert 'class="window-metric" data-fixed-view="recommendations"' in html
+    assert 'document.querySelectorAll("[data-fixed-view]")' in javascript
+    assert "state.remediationPeriodFilter=true" in javascript
+    assert "state.exposureStatus=\"All\"" in javascript
+    assert "Remediation observed" in javascript
+    assert ".filterbar .severity-filter{grid-column:1/span 2!important;grid-row:1}" in stylesheet
+    assert ".filterbar .latest-run-change-filter{grid-column:1/span 6!important;grid-row:4}" in stylesheet
     assert ".window-metric:hover,.new-activity-metrics .window-metric:focus-visible" in stylesheet
+    assert "cursor:pointer" in stylesheet
     assert "counts use each finding's first-seen or fixed timestamp inside this UTC window" in javascript
     assert ".new-activity-bar{" in stylesheet
+
+
+def test_reporting_exposes_weekly_operational_workflow():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert 'id="weeklyWorkflowCards"' in html
+    assert 'id="weeklyRiskTable"' in html
+    assert "Machines with risk still open at period end" in html
+    assert "function renderWeeklyWorkflow(current,previous)" in javascript
+    assert "EndingRiskMachines:new Set(endingRows.map" in javascript
+    assert "NewlyAffectedMachines:new Set(newRows.map" in javascript
+    assert 'table("weeklyRiskTable"' in javascript
+    assert ".weekly-workflow-cards{grid-template-columns:repeat(4" in stylesheet
 
 
 def test_reporting_exposes_customer_workflow_help():

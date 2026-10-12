@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from zipfile import ZipFile
 
+import pytest
+
 from vulnerability_view import operations_cli
 
 
@@ -176,6 +178,7 @@ def test_webapp_deployment_restarts_only_after_kudu_completes(monkeypatch, tmp_p
 
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     monkeypatch.setattr(operations_cli, "_values", lambda: {"dashboard_version": "2026.10.09.3"})
+    monkeypatch.setattr(operations_cli, "_dashboard_source_version", lambda: "2026.10.09.3")
     monkeypatch.setattr(
         operations_cli,
         "_tf_output",
@@ -195,6 +198,20 @@ def test_webapp_deployment_restarts_only_after_kudu_completes(monkeypatch, tmp_p
     start_index = next(index for index, call in enumerate(calls) if call[:2] == ("webapp", "start"))
     assert calls[deploy_index][calls[deploy_index].index("--restart") + 1] == "false"
     assert deploy_index < settings_index < start_index
+
+
+def test_webapp_deployment_rejects_mismatched_source_version(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(operations_cli, "_values", lambda: {"dashboard_version": "2026.10.11.3"})
+    monkeypatch.setattr(operations_cli, "_dashboard_source_version", lambda: "2026.10.11.6")
+    monkeypatch.setattr(
+        operations_cli,
+        "_tf_output",
+        lambda name: {"resource_group_name": "rg-test", "web_app_name": "app-test"}[name],
+    )
+
+    with pytest.raises(RuntimeError, match="Dashboard version mismatch"):
+        operations_cli.deploy_webapp()
 
 
 def test_web_app_uses_configurable_worker_processes():
@@ -410,6 +427,7 @@ def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatc
     output = capsys.readouterr().out
     assert "Reading Web App deployment version" in output
     assert "Authentication gate check: HTTP 302" in output
+    assert "Web App verification passed" in output
 
 
 def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys):
@@ -442,4 +460,6 @@ def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys):
 
     operations_cli.verify("webapp")
 
-    assert "Authentication gate check: HTTP 401 -> Bearer" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Authentication gate check: HTTP 401 -> Bearer" in output
+    assert "Web App verification passed" in output

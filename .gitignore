@@ -19,6 +19,10 @@ htmlcov/
 local.settings.json
 LOCAL-NOTES.txt
 bump-version.sh
+infra/github-workflow-menu.sh
+infra/github-workflow-menu.ps1
+src/vulnerability_view/github_workflow_cli.py
+build/lib/vulnerability_view/github_workflow_cli.py
 Function-App.txt
 AGENTS.md
 config/vulnerability-view.json

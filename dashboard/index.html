@@ -10,7 +10,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
   <link rel="icon" type="image/png" href="favicon.png?v=20261009-2216">
-  <link rel="stylesheet" href="styles.css?v=20261011-2000">
+  <link rel="stylesheet" href="styles.css?v=20261012-0230">
 </head>
 <body>
   <header class="topbar">
@@ -85,18 +85,18 @@
     </div>
   </section>
   <section id="filterBar" class="filterbar" aria-label="Dashboard filters">
-    <label class="severity-filter">Severity / task priority<select id="severityFilter"><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
-    <label class="exposure-status-filter">Exposure status<select id="exposureStatusFilter"><option value="DetectedAndPending">Detected and pending</option><option value="DetectedOnly">Detected only</option><option value="PendingOnly">Pending evidence only</option><option value="ConfirmedFixed">Confirmed fixed only</option><option value="All">All lifecycle states</option></select><span><strong>To filter pending:</strong> choose Pending evidence only here or use the Pending only button above. Amber badges distinguish Pending confirmation from Pending verification. SLA results always use the first qualified absence.</span></label>
-    <label id="recommendationTrackingFilterLabel" hidden>Filter recommendations by dashboard status<select id="recommendationTrackingFilter"><option value="All">All dashboard statuses</option><option value="NeedsAttention">Needs attention</option><option value="Untracked">Only untracked / not started</option><option value="InProgress">Only in progress</option><option value="NeedsReassignment">Only needs reassignment</option><option value="ReadyForValidation">Only marked fixed · awaiting collection</option><option value="Confirmed">Only confirmed fixed</option><option value="StillDetected">Only still detected after validation</option></select><span>This dropdown only filters the list. It does not show or change the selected recommendation's status.</span></label>
-    <fieldset class="type-filter"><legend>Recommendation type</legend><div class="filter-check-options"><label><input type="checkbox" name="recommendationType" value="Vulnerability" checked>Vulnerability</label><label><input type="checkbox" name="recommendationType" value="Misconfiguration">Misconfiguration</label></div></fieldset>
-    <label class="classification-filter">Asset classification<select id="assetClassFilter"><option value="All">All classifications</option><option value="AzureCloud">Azure / Cloud</option><option value="TraditionalIT">Traditional IT</option><option value="Unknown">Unknown</option></select><span>Azure resource metadata → Defender machine tag → inventory fallback</span></label>
-    <label class="subscription-filter">Subscription<select id="subscriptionFilter"><option value="All">All subscriptions</option><option value="NoSubscription">No subscription</option></select><span>Derived from Defender machine resource metadata</span></label>
-    <fieldset class="reporting-filter"><legend>Device reporting</legend><label><input id="hideNonReporting" type="checkbox">Hide non-reporting devices</label><select id="reportingDays" aria-label="Device reporting timeframe"><option value="7">Last reported within 7 days</option><option value="14">Last reported within 14 days</option><option value="30">Last reported within 30 days</option><option value="60">Last reported within 60 days</option><option value="90">Last reported within 90 days</option></select><span>Uses LastSeenUtc from the current dataset; retained evidence is not deleted</span></fieldset>
-    <label class="queue-filter">Operating queue (derived)<select id="teamFilter"><option>All</option></select><span>Inferred from asset evidence, not a Defender assignment</span></label>
-    <label class="search-filter">Find items<input id="searchFilter" type="search" placeholder="CVE, recommendation, machine..."></label>
-    <fieldset class="new-period-apply"><legend>First-seen filter</legend><label><input id="applyNewPeriodFilter" type="checkbox">Limit workspace to findings first seen in this window</label></fieldset>
-    <fieldset class="latest-run-change-filter"><legend>Run-to-run changes</legend><label><input class="latest-run-changes-toggle" type="checkbox">Show only findings changed since the previous run</label><span>Includes new, reopened, or fixed findings</span></fieldset>
-    <fieldset class="domain-filter"><legend>Asset domains</legend><div class="filter-check-options"><label><input type="checkbox" name="assetDomain" value="Devices" checked>Devices</label><label><input type="checkbox" name="assetDomain" value="Cloud" checked>Cloud</label><label><input type="checkbox" name="assetDomain" value="SaaS Apps">SaaS Apps</label><label><input type="checkbox" name="assetDomain" value="Identities">Identities</label><label><input type="checkbox" name="assetDomain" value="Data">Data</label></div></fieldset>
+    <label class="severity-filter compact-filter">Severity / task priority<select id="severityFilter"><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
+    <fieldset class="type-filter compact-filter"><legend>Recommendation type</legend><div class="filter-check-options"><label><input type="checkbox" name="recommendationType" value="Vulnerability" checked>Vulnerability</label><label><input type="checkbox" name="recommendationType" value="Misconfiguration">Misconfiguration</label></div></fieldset>
+    <label class="subscription-filter compact-filter">Subscription<select id="subscriptionFilter"><option value="All">All subscriptions</option><option value="NoSubscription">No subscription</option></select><span>Derived from Defender machine resource metadata</span></label>
+    <label class="queue-filter compact-filter">Operating queue (derived)<select id="teamFilter"><option>All</option></select><span>Inferred from asset evidence, not a Defender assignment</span></label>
+    <label class="search-filter compact-filter">Find items<input id="searchFilter" type="search" placeholder="CVE, recommendation, machine..."></label>
+    <label class="exposure-status-filter descriptive-filter">Exposure status<select id="exposureStatusFilter"><option value="DetectedAndPending">Detected and pending</option><option value="DetectedOnly">Detected only</option><option value="PendingOnly">Pending evidence only</option><option value="ConfirmedFixed">Confirmed fixed only</option><option value="All">All lifecycle states</option></select><span><strong>To filter pending:</strong> choose Pending evidence only here or use the Pending only button above. Amber badges distinguish Pending confirmation from Pending verification. SLA results always use the first qualified absence.</span></label>
+    <label class="classification-filter descriptive-filter">Asset classification<select id="assetClassFilter"><option value="All">All classifications</option><option value="AzureCloud">Azure / Cloud</option><option value="TraditionalIT">Traditional IT</option><option value="Unknown">Unknown</option></select><span>Azure resource metadata → Defender machine tag → inventory fallback</span></label>
+    <fieldset class="reporting-filter descriptive-filter"><legend>Device reporting</legend><label><input id="hideNonReporting" type="checkbox">Hide non-reporting devices</label><select id="reportingDays" aria-label="Device reporting timeframe"><option value="7">Last reported within 7 days</option><option value="14">Last reported within 14 days</option><option value="30">Last reported within 30 days</option><option value="60">Last reported within 60 days</option><option value="90">Last reported within 90 days</option></select><span>Uses LastSeenUtc from the current dataset; retained evidence is not deleted</span></fieldset>
+    <fieldset class="new-period-apply descriptive-filter"><legend>First-seen filter</legend><label><input id="applyNewPeriodFilter" type="checkbox">Limit workspace to findings first seen in this window</label></fieldset>
+    <fieldset class="latest-run-change-filter descriptive-filter"><legend>Run-to-run changes</legend><label><input class="latest-run-changes-toggle" type="checkbox">Show only findings changed since the previous run</label><span>Includes new, reopened, or fixed findings</span></fieldset>
+    <fieldset class="domain-filter descriptive-filter"><legend>Asset domains</legend><div class="filter-check-options"><label><input type="checkbox" name="assetDomain" value="Devices" checked>Devices</label><label><input type="checkbox" name="assetDomain" value="Cloud" checked>Cloud</label><label><input type="checkbox" name="assetDomain" value="SaaS Apps">SaaS Apps</label><label><input type="checkbox" name="assetDomain" value="Identities">Identities</label><label><input type="checkbox" name="assetDomain" value="Data">Data</label></div></fieldset>
+    <label id="recommendationTrackingFilterLabel" class="descriptive-filter" hidden>Filter recommendations by dashboard status<select id="recommendationTrackingFilter"><option value="All">All dashboard statuses</option><option value="NeedsAttention">Needs attention</option><option value="Untracked">Only untracked / not started</option><option value="InProgress">Only in progress</option><option value="NeedsReassignment">Only needs reassignment</option><option value="ReadyForValidation">Only marked fixed · awaiting collection</option><option value="Confirmed">Only confirmed fixed</option><option value="StillDetected">Only still detected after validation</option></select><span>This dropdown only filters the list. It does not show or change the selected recommendation's status.</span></label>
   </section>
   </div>
 
@@ -120,10 +120,10 @@
       <section class="new-activity-metric-group corrected" aria-labelledby="correctedMetricLabel">
         <strong id="correctedMetricLabel">Remediation observed in the same window</strong>
         <div class="new-activity-metrics corrected-metrics">
-          <div class="window-metric" tabindex="0" title="Finding instances whose first qualified absence occurred inside the selected window"><strong id="fixedWindowFindingCount">0</strong><span>remediation observations</span></div>
-          <div class="window-metric" tabindex="0" title="Distinct CVEs represented by finding instances fixed inside the selected window"><strong id="fixedWindowCveCount">0</strong><span>distinct CVEs with fixes</span></div>
-          <div class="window-metric" tabindex="0" title="Machines with at least one finding fixed inside the selected window; they may still have other open findings"><strong id="fixedWindowMachineCount">0</strong><span>machines with fixes</span></div>
-          <div class="window-metric" tabindex="0" title="Recommendations with at least one finding fixed inside the selected window"><strong id="fixedWindowRecommendationCount">0</strong><span>recommendations with fixes</span></div>
+          <button type="button" class="window-metric" data-fixed-view="overview" title="Apply the remediation window and open these finding instances"><strong id="fixedWindowFindingCount">0</strong><span>remediation observations</span></button>
+          <button type="button" class="window-metric" data-fixed-view="overview" title="Apply the remediation window and open these CVEs"><strong id="fixedWindowCveCount">0</strong><span>distinct CVEs with fixes</span></button>
+          <button type="button" class="window-metric" data-fixed-view="workstations" title="Apply the remediation window and open matching endpoint devices"><strong id="fixedWindowMachineCount">0</strong><span>machines with fixes</span></button>
+          <button type="button" class="window-metric" data-fixed-view="recommendations" title="Apply the remediation window and open matching recommendations"><strong id="fixedWindowRecommendationCount">0</strong><span>recommendations with fixes</span></button>
         </div>
       </section>
     </div>
@@ -252,6 +252,17 @@
           <button id="applyStatisticsPeriod" type="button">Apply range</button>
         </div>
       </section>
+      <section class="panel weekly-workflow" aria-labelledby="weeklyWorkflowTitle">
+        <div class="panel-title"><div><h3 id="weeklyWorkflowTitle">Weekly vulnerability workflow</h3><span id="weeklyWorkflowContext">Fixed work, remaining exposure, and machines still carrying risk in the selected comparison window</span></div></div>
+        <div id="weeklyWorkflowCards" class="metric-grid weekly-workflow-cards"></div>
+        <div class="weekly-workflow-guide">
+          <span><strong>1. Validate progress</strong> Review confirmed fixes and pending evidence below. Confirmation may occur later, but SLA timing uses the first qualified absence.</span>
+          <span><strong>2. Work remaining risk</strong> Use the machine table to identify endpoints that still have detected findings, then click a row for its CVEs and recommendations.</span>
+          <span><strong>3. Explain the change</strong> Compare this period with the preceding period, then use lifecycle detail to show exactly which findings, machines, CVEs, or recommendations changed.</span>
+        </div>
+        <div class="panel-title weekly-risk-title"><div><h3>Machines with risk still open at period end</h3><span id="weeklyRiskContext">Distinct machines with unresolved finding instances</span></div></div>
+        <div class="table-wrap weekly-risk-wrap"><table id="weeklyRiskTable"></table></div>
+      </section>
       <section class="panel lifecycle-reporting" aria-labelledby="lifecycleReportingTitle">
         <div class="panel-title"><div><h3 id="lifecycleReportingTitle">Lifecycle reporting by entity</h3><span>Counts and detail are explicitly separated into findings, machines, CVEs, and recommendations</span></div><div class="reporting-actions"><label>Entity<select id="reportingEntity"><option value="findings">Findings</option><option value="machines">Machines</option><option value="cves">CVEs</option><option value="recommendations">Recommendations</option></select></label><label>Change<select id="reportingChange"><option value="Fixed" selected>Confirmed fixed</option><option value="PendingConfirmation">Pending confirmation</option><option value="PendingVerification">Pending verification</option><option value="DetectionReturned">Detection returned</option><option value="New">New</option><option value="Reopened">Reopened after confirmation</option><option value="All">All changes</option></select></label><button id="exportReportingCsv" type="button">Export detail CSV</button></div></div>
         <p id="lifecycleCoverage" class="coverage-note"></p>
@@ -304,7 +315,7 @@
   <aside id="recommendationPreview" class="recommendation-preview" role="status" hidden></aside>
   <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
   <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
-  <script src="config.js?v=20261011-2000"></script>
-  <script src="app.js?v=20261011-2000"></script>
+  <script src="config.js?v=20261012-0230"></script>
+  <script src="app.js?v=20261012-0230"></script>
 </body>
 </html>

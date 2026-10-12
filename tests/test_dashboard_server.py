@@ -381,6 +381,26 @@ def test_dashboard_authentication_accepts_valid_easy_auth_identity(monkeypatch, 
     assert json.loads(body)["user"]["objectId"] == "object-id"
 
 
+@pytest.mark.parametrize(
+    "role",
+    ["Data.Evidence.Reader", "Recommendation.Tracker", "Dashboard.Administrator"],
+)
+def test_dashboard_authentication_requires_viewer_role_for_all_general_access(monkeypatch, tmp_path: Path, role: str):
+    monkeypatch.setenv("WEBSITE_HOSTNAME", "dashboard.azurewebsites.net")
+    (tmp_path / "dashboard").mkdir()
+    (tmp_path / "dashboard/index.html").write_text("dashboard", encoding="utf-8")
+    app = create_app(Settings(dashboard_auth_enabled=True), project_root=tmp_path)
+    header = (b"x-ms-client-principal", encoded_principal([role]).encode())
+
+    for path in ("/", "/api/auth", "/api/status", "/api/data/findings.json"):
+        status, body = asgi_get(app, path, [header])
+        assert status == 403
+        assert json.loads(body)["detail"] == "Dashboard.Viewer role is required"
+
+    health_status, _ = asgi_get(app, "/api/health", [header])
+    assert health_status == 200
+
+
 def test_decode_app_service_principal_rejects_invalid_header(monkeypatch, tmp_path: Path):
     with pytest.raises(ValueError, match="principal header"):
         decode_app_service_principal("not-base64")
@@ -762,7 +782,10 @@ def test_branding_api_requires_dashboard_administrator_and_serves_uploaded_png(m
         (b"content-length", str(len(VALID_PNG)).encode()),
     ]
     admin_headers = [
-        (b"x-ms-client-principal", encoded_principal(["Dashboard.Administrator"]).encode()),
+        (
+            b"x-ms-client-principal",
+            encoded_principal(["Dashboard.Viewer", "Dashboard.Administrator"]).encode(),
+        ),
         (b"content-type", b"image/png"),
         (b"content-length", str(len(VALID_PNG)).encode()),
     ]
@@ -805,7 +828,10 @@ def test_branding_api_rejects_non_png_and_invalid_png(monkeypatch, tmp_path: Pat
         project_root=tmp_path,
         dashboard_branding_store=FakeDashboardBrandingStore(),
     )
-    principal = (b"x-ms-client-principal", encoded_principal(["Dashboard.Administrator"]).encode())
+    principal = (
+        b"x-ms-client-principal",
+        encoded_principal(["Dashboard.Viewer", "Dashboard.Administrator"]).encode(),
+    )
 
     wrong_type_status, _, _ = asgi_response(
         app,

@@ -296,13 +296,29 @@ tf_deploy() {
       fi
 
       rm -f "$package"
+      require_command python3
+      local source_dashboard_version
+      source_dashboard_version="$(python3 - "$ROOT_DIR/dashboard/config.js" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+match = re.search(r'version:\s*"([^"]+)"', Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not match:
+    raise SystemExit("Could not read the dashboard version from dashboard/config.js")
+print(match.group(1))
+PY
+)"
+      if [[ -z "${DASHBOARD_VERSION:-}" && "$source_dashboard_version" != "$dashboard_version" ]]; then
+        echo "Dashboard version mismatch: dashboard/config.js is $source_dashboard_version, but infra/terraform/main.tfvars.json is $dashboard_version." >&2
+        echo "Run ./bump-version.sh web or synchronize both files before deployment." >&2
+        exit 1
+      fi
       (
         cd "$ROOT_DIR"
         zip -q -r "$package" dashboard requirements.txt pyproject.toml src \
           -x '*/__pycache__/*' '*.pyc' 'dashboard/data/*' 'dashboard/calculator.html' 'dashboard/tools/*'
       )
-
-      require_command python3
       local asset_version revised_package ui_revision
       ui_revision="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
       asset_version="${ui_revision//[-:TZ]/}"
