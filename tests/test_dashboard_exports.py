@@ -424,6 +424,11 @@ def test_dashboard_supports_entity_pivots_for_recommendations_cves_and_machines(
     assert "renderRecommendationPivot" in javascript
     assert "renderCvePivot" in javascript
     assert "renderMachinePivot" in javascript
+    assert 'selectEntity("machine",id,true)' in javascript
+    assert 'id="pivotContext"' in html
+    assert "Close detail returns to" in javascript
+    assert 'id="pivotRecommendationNav"' in html
+    assert 'id="pivotHandoffNote"' in html
     assert "loadCveDetail" in javascript
     assert "/api/data/cve-details/${encodeURIComponent(key)}.json" in javascript
     assert "apiFetch(`/api/data/${name}.json`)" in javascript
