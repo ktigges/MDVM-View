@@ -288,10 +288,15 @@ def test_web_package_stamps_version_revision_and_cache_keys(tmp_path: Path):
 
 def test_webapp_deployment_restarts_only_after_kudu_completes(monkeypatch, tmp_path: Path):
     calls: list[tuple[object, ...]] = []
+    deployment_reads = 0
 
     def fake_az(*args, **kwargs):
+        nonlocal deployment_reads
         calls.append(args)
-        stdout = "previous-deployment\n" if args[:4] == ("webapp", "log", "deployment", "list") else ""
+        stdout = ""
+        if args[:4] == ("webapp", "log", "deployment", "list"):
+            deployment_reads += 1
+            stdout = "previous-deployment\n" if deployment_reads == 1 else "new-deployment\t4\n"
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
@@ -316,6 +321,7 @@ def test_webapp_deployment_restarts_only_after_kudu_completes(monkeypatch, tmp_p
     start_index = next(index for index, call in enumerate(calls) if call[:2] == ("webapp", "start"))
     assert calls[deploy_index][calls[deploy_index].index("--restart") + 1] == "false"
     assert deploy_index < settings_index < start_index
+    assert deployment_reads == 2
 
 
 def test_webapp_deployment_rejects_mismatched_source_version(monkeypatch, tmp_path: Path):
@@ -581,3 +587,51 @@ def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "Authentication gate check: HTTP 401 -> Bearer" in output
     assert "Web App verification passed" in output
+
+
+def test_webapp_startup_retries_transient_response(monkeypatch, capsys):
+    class Response:
+        def __init__(self, status_code, headers=None):
+            self.status_code = status_code
+            self.headers = headers or {}
+
+        def close(self):
+            return None
+
+    responses = [
+        Response(503),
+        Response(302, {"location": "https://login.microsoftonline.com/example"}),
+    ]
+    sleeps = []
+    monkeypatch.setattr(operations_cli.requests, "get", lambda *args, **kwargs: responses.pop(0))
+    monkeypatch.setattr(operations_cli.time, "sleep", sleeps.append)
+
+    response = operations_cli._get_webapp_response_with_retry(
+        "https://app-test.example/",
+        attempts=3,
+        delay_seconds=2,
+    )
+
+    assert response.status_code == 302
+    assert sleeps == [2]
+    assert "Web App is still starting (HTTP 503)" in capsys.readouterr().out
+
+
+def test_webapp_startup_reports_persistent_unavailability(monkeypatch):
+    class Response:
+        status_code = 503
+        headers = {}
+
+        @staticmethod
+        def close():
+            return None
+
+    monkeypatch.setattr(operations_cli.requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda *_: None)
+
+    with pytest.raises(RuntimeError, match="remained unavailable after 6 seconds"):
+        operations_cli._get_webapp_response_with_retry(
+            "https://app-test.example/",
+            attempts=3,
+            delay_seconds=2,
+        )

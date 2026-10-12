@@ -129,6 +129,7 @@ Until then the dashboard correctly continues serving the prior complete run.
 |---|---|
 | Upload returns 403 | Grant Storage Blob Data Contributor to the collector or authorized local publisher at the history-account scope. |
 | Dashboard Azure mode returns 503 | Confirm the current manifest exists and the reader identity has Storage Blob Data Reader. |
+| First Web App publish returns 502, 503, or 504 before the sign-in redirect | The ZIP deployment or application container may still be starting. The deployment menu waits for Kudu success and retries transient startup responses for five minutes. If the response persists, inspect the newest Kudu deployment and App Service application logs; do not delete or recreate retained Storage. |
 | Subscription selector omits a subscription | Confirm it is nested under `collector_management_group_id`, the collector has inherited Reader, and the next collection completed after the subscription was added. |
 | Old history remains after switching to live mode | Expected. The current pointer changes; immutable prior synthetic or combined runs remain retained. |
 | 365-day immutability did not purge data | Expected. Immutability is a minimum no-change period, not expiration or automatic deletion. |
