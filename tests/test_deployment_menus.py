@@ -5,6 +5,8 @@ SHELL_MENU = Path("infra/deployment-menu.sh")
 POWERSHELL_MENU = Path("infra/deployment-menu.ps1")
 SHELL_TEARDOWN = Path("infra/destroy-application.sh")
 POWERSHELL_TEARDOWN = Path("infra/destroy-application.ps1")
+SHELL_FULL_TEARDOWN = Path("infra/destroy-test-environment.sh")
+POWERSHELL_FULL_TEARDOWN = Path("infra/destroy-test-environment.ps1")
 
 
 def menu_sources() -> tuple[str, str]:
@@ -156,3 +158,33 @@ def test_application_teardown_scripts_require_four_confirmations_and_preserve_hi
     for forbidden in ("az group delete", "terraform destroy", "-destroy"):
         assert forbidden not in shell.lower()
         assert forbidden not in powershell.lower()
+
+
+def test_full_test_teardown_scripts_require_four_confirmations_and_delete_exact_group():
+    shell = SHELL_FULL_TEARDOWN.read_text(encoding="utf-8")
+    powershell = POWERSHELL_FULL_TEARDOWN.read_text(encoding="utf-8")
+
+    for command in (
+        "deployment-preflight",
+        "teardown-plan --allow-empty",
+        "teardown-show --allow-empty",
+        "teardown-apply --allow-empty",
+    ):
+        assert f"run_cli {command}" in shell
+        assert f"Invoke-OperationsCli {command}" in powershell
+    for confirmation in (
+        "DELETE TEST ENVIRONMENT",
+        "PERMANENTLY DELETE",
+        "Confirmation 1 of 4",
+        "Confirmation 2 of 4",
+        "Confirmation 3 of 4",
+        "Confirmation 4 of 4",
+    ):
+        assert confirmation in shell
+        assert confirmation in powershell
+    assert 'az group delete --subscription "$subscription_id" --name "$resource_group" --yes' in shell
+    assert "az group delete --subscription $SubscriptionId --name $ResourceGroup --yes" in powershell
+    assert "az group exists" in shell
+    assert "az group exists" in powershell
+    assert "terraform destroy" not in shell.lower()
+    assert "terraform destroy" not in powershell.lower()

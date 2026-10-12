@@ -93,6 +93,15 @@ and Terraform state, run `infra/destroy-application.ps1` on Windows or
 `infra/destroy-application.sh` on macOS. The script validates an allowlisted
 Terraform plan and requires four exact confirmations before applying it.
 
+For an explicitly approved disposable test environment only,
+`infra/destroy-test-environment.ps1` and
+`infra/destroy-test-environment.sh` perform the application teardown and then
+permanently delete the exact configured resource group, protected history, and
+every remaining resource. They verify the configured subscription, enumerate
+the target, require four exact confirmations, and verify that the resource
+group no longer exists. Never use the full test teardown for retained
+production history.
+
 The current menu choices are:
 
 | Choice | Use it for |
@@ -500,13 +509,13 @@ purposes:
 
 | Terraform variable | Example | Purpose | Application setting |
 |---|---|---|---|
-| `history_storage_account_name` | `stdvmviewerhist001` | Retains immutable raw responses, curated datasets, run manifests, and the current manifest pointer. This is application data and must survive Function replacement. | `STORAGE_ACCOUNT_NAME` |
-| `function_runtime_storage_account_name` | `stdvmviewerfunc001` | Stores Azure Functions host state and deployment packages. It is operational infrastructure, not vulnerability history. | Managed by Terraform through `AzureWebJobsStorage__*`; do not put this account in `.env`. |
+| `history_storage_account_name` | `stdvmhistreplace123` | Retains immutable raw responses, curated datasets, run manifests, and the current manifest pointer. This is application data and must survive Function replacement. | `STORAGE_ACCOUNT_NAME` |
+| `function_runtime_storage_account_name` | `stdvmfuncreplace123` | Stores Azure Functions host state and deployment packages. It is operational infrastructure, not vulnerability history. | Managed by Terraform through `AzureWebJobsStorage__*`; do not put this account in `.env`. |
 
 For the supplied example values, local application configuration is:
 
 ```dotenv
-STORAGE_ACCOUNT_NAME=stdvmviewerhist001
+STORAGE_ACCOUNT_NAME=stdvmhistreplace123
 STORAGE_CONTAINER_NAME=dvm-history
 STORAGE_CURRENT_CONTAINER_NAME=dvm-current
 ```

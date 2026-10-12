@@ -140,13 +140,14 @@ def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: P
     assert operations_cli._require("terraform") == str(terraform)
 
 
-def test_values_reject_template_identity_placeholders(monkeypatch, tmp_path):
+def test_values_reject_template_identity_and_naming_placeholders(monkeypatch, tmp_path):
     values = tmp_path / "main.tfvars.json"
     values.write_text(
         json.dumps({
             "subscription_id": "00000000-0000-0000-0000-000000000000",
             "tenant_id": "customer-tenant",
             "collector_management_group_id": "customer-management-group-id",
+            "history_storage_account_name": "stdvmhistreplace123",
         }),
         encoding="utf-8",
     )
@@ -159,7 +160,30 @@ def test_values_reject_template_identity_placeholders(monkeypatch, tmp_path):
     message = str(error.value)
     assert "subscription_id" in message
     assert "collector_management_group_id" in message
+    assert "history_storage_account_name" in message
     assert "tenant_id" not in message
+
+
+def test_values_reject_all_example_naming_placeholders(monkeypatch):
+    example = Path("infra/terraform/main.tfvars.example.json")
+    monkeypatch.setattr(operations_cli, "TF_VARS", example)
+
+    with pytest.raises(RuntimeError) as error:
+        operations_cli._values()
+
+    message = str(error.value)
+    for setting in (
+        "resource_group_name",
+        "project_name",
+        "history_storage_account_name",
+        "function_runtime_storage_account_name",
+        "function_app_name",
+        "web_app_name",
+        "web_app_service_plan_name",
+        "web_app_identity_name",
+        "dashboard_entra_application_name",
+    ):
+        assert setting in message
 
 
 def test_action_allowed_combines_contributor_and_role_administrator_permissions():
@@ -405,6 +429,25 @@ def test_application_teardown_plan_rejects_foundation_change(monkeypatch, tmp_pa
     )
 
     with pytest.raises(RuntimeError, match="outside the replaceable application allowlist"):
+        operations_cli._validate_application_teardown_plan()
+
+
+def test_application_teardown_plan_can_allow_empty_for_full_test_deletion(monkeypatch, tmp_path: Path):
+    plan = tmp_path / "application-teardown.tfplan"
+    plan.write_text("reviewed")
+    monkeypatch.setattr(operations_cli, "APPLICATION_TEARDOWN_PLAN", plan)
+    monkeypatch.setattr(
+        operations_cli,
+        "_tf",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps({"resource_changes": []}),
+        ),
+    )
+
+    assert operations_cli._validate_application_teardown_plan(allow_empty=True) == []
+    with pytest.raises(RuntimeError, match="contains no replaceable application resources"):
         operations_cli._validate_application_teardown_plan()
 
 

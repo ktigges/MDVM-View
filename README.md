@@ -134,6 +134,32 @@ At minimum, replace or confirm these environment-specific values in
 | `web_app_identity_name` | Dashboard managed-identity name |
 | `network_security_perimeter_allowed_ip_cidrs` | Approved source CIDRs, or the documented initial `0.0.0.0/0` value while perimeter behavior is validated |
 
+#### Choose unique deployment names
+
+Before running option 1, replace `replace123` everywhere in
+`main.tfvars.json` with one short, consistent suffix for this deployment, such
+as `a1b2c3`. Use lowercase letters and numbers so the same suffix is valid in
+Storage account names. Do not use an email address, tenant name, organization
+name, or other sensitive identifier. The deployment preflight rejects the
+unchanged template naming placeholders.
+
+| Setting | Required uniqueness |
+|---|---|
+| `resource_group_name` | Unique within the selected subscription. Use a new name for a parallel environment; reusing a name targets that existing resource group. |
+| `project_name` plus `environment` | Must not collide with generated Function plan, identity, Log Analytics, or Application Insights names in the resource group. |
+| `history_storage_account_name` | Globally unique across Azure. Never point a new environment at an existing protected-history account. |
+| `function_runtime_storage_account_name` | Globally unique across Azure. |
+| `function_app_name` | Globally unique across Azure because it forms an `azurewebsites.net` hostname. |
+| `web_app_name` | Globally unique across Azure because it forms an `azurewebsites.net` hostname. |
+| `web_app_service_plan_name` | Unique within the resource group. |
+| `web_app_identity_name` | Unique within the resource group. |
+| `dashboard_entra_application_name` | Microsoft Entra permits duplicate display names, but use a distinct name so operators can identify the correct App Registration and Enterprise Application. |
+| `history_container_name`, `current_container_name`, `dashboard_recommendation_tracking_container` | Each must be distinct within the history Storage account. These names can be reused in a different Storage account. |
+
+The `.env` file does not create another set of Azure resources. Copy the exact
+resource-group, history Storage account, and container names from
+`main.tfvars.json`; do not add a different prefix or suffix only in `.env`.
+
 The deployment identity must also be able to create role assignments at the
 configured management group. Microsoft Entra Global Administrator alone is not
 enough; use Owner, Role Based Access Control Administrator, or User Access
@@ -306,6 +332,43 @@ The plan is rejected if it creates, updates, replaces, or deletes anything
 outside the explicit replaceable-application allowlist. After teardown, run
 deployment-menu option 1 to recreate and publish the Function and Web App on
 the preserved foundation.
+
+### Permanently delete a disposable test environment
+
+Do not use this workflow for an environment containing history that must be
+retained. After a human has approved deletion of the exact resource group and
+all history inside it, the separate test-only scripts remove Terraform-managed
+application and directory resources and then delete the configured resource
+group:
+
+Windows:
+
+```powershell
+.\infra\destroy-test-environment.ps1
+```
+
+macOS:
+
+```bash
+./infra/destroy-test-environment.sh
+```
+
+The script verifies that Azure CLI is using the subscription configured in
+`main.tfvars.json`, displays the application teardown plan and every resource
+currently in the resource group, and requires four exact confirmations:
+
+1. `DELETE TEST ENVIRONMENT`
+2. The exact subscription ID
+3. The exact resource-group name
+4. `PERMANENTLY DELETE <resource-group-name>`
+
+It then removes any remaining Terraform-managed Function, Web App, identities,
+Microsoft Entra objects, and cross-scope assignments before running an exact
+resource-group deletion. This permanently deletes the protected history
+Storage account, every container, all immutable and current history, and every
+other resource in that group. The script verifies that Azure reports the
+resource group absent. Local configuration and Terraform state files remain;
+the script does not recursively delete the local repository.
 
 ## Normal operations
 
