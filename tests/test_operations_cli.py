@@ -140,6 +140,28 @@ def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: P
     assert operations_cli._require("terraform") == str(terraform)
 
 
+def test_values_reject_template_identity_placeholders(monkeypatch, tmp_path):
+    values = tmp_path / "main.tfvars.json"
+    values.write_text(
+        json.dumps({
+            "subscription_id": "00000000-0000-0000-0000-000000000000",
+            "tenant_id": "customer-tenant",
+            "collector_management_group_id": "customer-management-group-id",
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(operations_cli, "TF_DIR", tmp_path)
+    monkeypatch.setattr(operations_cli, "TF_VARS", values)
+
+    with pytest.raises(RuntimeError) as error:
+        operations_cli._values()
+
+    message = str(error.value)
+    assert "subscription_id" in message
+    assert "collector_management_group_id" in message
+    assert "tenant_id" not in message
+
+
 def test_function_version_prefers_override_then_values(monkeypatch):
     monkeypatch.setenv("FUNCTION_VERSION", "release/one")
     assert operations_cli._function_version({"function_version": "values-version"}) == "release-one"

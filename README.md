@@ -79,6 +79,53 @@ file is committed. See the
 [configuration overlap table](DEPLOY.md#terraform-and-env-overlap) before
 running the menu.
 
+At minimum, replace or confirm these customer-specific values in
+`infra/terraform/main.tfvars.json` before selecting option 1:
+
+| Terraform setting | Required value |
+|---|---|
+| `subscription_id` | Subscription GUID where the application resources will be deployed |
+| `tenant_id` | Customer Microsoft Entra tenant GUID |
+| `collector_management_group_id` | Actual management-group ID; use the tenant GUID for Tenant Root Group, never `customer-management-group-id` |
+| `resource_group_name` | Customer deployment resource-group name |
+| `location` | Approved Azure region |
+| `history_storage_account_name` | Globally unique protected-history Storage account name |
+| `function_runtime_storage_account_name` | Globally unique replaceable Function runtime Storage account name |
+| `function_app_name` | Globally unique Function App name |
+| `web_app_name` | Globally unique Web App name |
+| `web_app_service_plan_name` | App Service plan name |
+| `web_app_identity_name` | Dashboard managed-identity name |
+| `network_security_perimeter_allowed_ip_cidrs` | Approved source CIDRs, or the documented initial `0.0.0.0/0` value while perimeter behavior is validated |
+
+The deployment identity must also be able to create role assignments at the
+configured management group. Microsoft Entra Global Administrator alone is not
+enough; use Owner, Role Based Access Control Administrator, or User Access
+Administrator at that management-group scope.
+
+The deployment menu reads `main.tfvars.json` directly and does not require
+`.env` merely to run Terraform. For local live collection, local dashboard
+testing, or local diagnostics against the same deployed customer environment,
+set at least these values in `.env`:
+
+| `.env` setting | Required value |
+|---|---|
+| `AUTH_MODE` | `auto` |
+| `AZURE_TENANT_ID` | Same value as `tenant_id` |
+| `AZURE_SUBSCRIPTION_ID` | Same value as `subscription_id` |
+| `AZURE_MANAGEMENT_GROUP_ID` | Same value as `collector_management_group_id` |
+| `AZURE_RESOURCE_GROUP` | Same value as `resource_group_name` |
+| `AZURE_LOCATION` | Same value as `location` |
+| `STORAGE_ACCOUNT_NAME` | Same value as `history_storage_account_name`, never the Function runtime account |
+| `STORAGE_CONTAINER_NAME` | Same value as `history_container_name`, normally `dvm-history` |
+| `STORAGE_CURRENT_CONTAINER_NAME` | Same value as `current_container_name`, normally `dvm-current` |
+| `APP_MODE` | `live` |
+| `DASHBOARD_DATA_SOURCE` | `azure` |
+| `DASHBOARD_AUTH_ENABLED` | `false` for local hosting |
+
+Leave `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` empty for the normal
+`AUTH_MODE=auto` workflow. Local processes use the current `az login`; hosted
+applications use Terraform-configured managed identities.
+
 Choose the menu entry that describes the work being performed. For a first
 installation or complete update, use **Complete initial deployment or update**.
 Review every Terraform plan and approve it only when it contains the expected

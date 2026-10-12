@@ -116,6 +116,13 @@ separately in the [Local development README](docs/local/README.md).
    `collector_management_group_id` contain the same GUID. Do not enter the
    display name `Tenant Root Group`.
 
+   The identity running Terraform must also be Owner, Role Based Access
+   Control Administrator, or User Access Administrator at that management
+   group scope. Microsoft Entra Global Administrator alone does not grant
+   `Microsoft.Authorization/roleAssignments/write` in Azure RBAC. Confirm this
+   access before starting option 1 so Terraform can grant the collector Reader
+   at the configured management group.
+
    Keep `network_security_perimeter_enabled=true` for the default customer
    deployment. The initial `network_security_perimeter_allowed_ip_cidrs` value
    is `["0.0.0.0/0"]`, which does not restrict IPv4 source addresses yet.
