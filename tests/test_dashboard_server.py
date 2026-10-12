@@ -382,6 +382,35 @@ def test_dashboard_authentication_accepts_valid_easy_auth_identity(monkeypatch, 
 
 
 @pytest.mark.parametrize(
+    ("role_type", "claim_type"),
+    [
+        ("roles", "roles"),
+        (
+            "http://schemas.microsoft.com/ws/2008/06/identity/claims/role",
+            "http://schemas.microsoft.com/ws/2008/06/identity/claims/role",
+        ),
+        ("http://schemas.microsoft.com/ws/2008/06/identity/claims/role", "roles"),
+        ("roles", "http://schemas.microsoft.com/ws/2008/06/identity/claims/role"),
+    ],
+)
+def test_decode_app_service_principal_accepts_supported_role_claim_forms(role_type: str, claim_type: str):
+    principal = {
+        "auth_typ": "aad",
+        "role_typ": role_type,
+        "claims": [
+            {"typ": claim_type, "val": "Dashboard.Viewer"},
+            {"typ": claim_type, "val": "Dashboard.Administrator"},
+        ],
+    }
+    encoded = base64.b64encode(json.dumps(principal).encode()).decode()
+
+    assert decode_app_service_principal(encoded)["roles"] == [
+        "Dashboard.Viewer",
+        "Dashboard.Administrator",
+    ]
+
+
+@pytest.mark.parametrize(
     "role",
     ["Data.Evidence.Reader", "Recommendation.Tracker", "Dashboard.Administrator"],
 )

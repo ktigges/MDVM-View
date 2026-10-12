@@ -8,32 +8,25 @@ shortest start paths.
 
 ## Recommended reading order
 
-### 1. Install the collector and run the Web App locally
+### 1. Deploy or update the hosted application
 
-Use one canonical full guide and one shorter checklist:
+Use the interactive deployment menu described in the
+[project README](../README.md#deploy-or-update). Supporting references are:
 
-1. [Collector and local Web App customer quick start](../DEPLOY.md#collector-and-local-web-app-customer-quick-start)
-   — protected storage, collector Function, managed identity, and local Web App
-   connection
-2. [Greenfield Azure deployment](greenfield-deployment.md) — concise
-   three-stage operator checklist
-3. [Azure deployment guide](../DEPLOY.md) — complete requirements,
-   permissions, protected storage, Function, optional hosted Web App, data
-   collection, and teardown boundaries
-4. [Environment and deployment design](environment-and-deployment.md) —
+1. [Azure deployment guide](../DEPLOY.md) — prerequisites, permissions,
+   configuration, protected storage, Function, hosted Web App, and safety
+   boundaries
+2. [Greenfield Azure deployment](greenfield-deployment.md) — concise operator
+   checklist
+3. [Environment and deployment design](environment-and-deployment.md) —
    design decisions, environment separation, and production-readiness gates
-5. [Publishing and Azure cost options](web-app-deployment-recommendations.md) —
+4. [Publishing and Azure cost options](web-app-deployment-recommendations.md) —
    hosting alternatives, scale, availability, networking, monitoring, and cost
 
-### 2. Local evaluation and local datasets
+### 2. Local development and evaluation
 
-Use this separate path when working without the deployed Azure collector:
-
-1. [Local evaluation and local datasets](local-evaluation.md)
-2. [Collect and replay a sample](sample-replay.md), when a snapshot must be
-   reproduced in another local environment
-3. [Development, demonstration, and source control](development.md), when
-   changing or presenting the UI
+Local work is intentionally separated from customer deployment. Start with the
+[Local development README](local/README.md).
 
 ### 3. Operate
 
@@ -42,8 +35,8 @@ Use this separate path when working without the deployed Azure collector:
 2. [Operations and monitoring](operations-and-configuration.md) —
    credentials, managed identities, dashboard access, current-run evidence, and
    operational interfaces
-3. [Command reference](command-reference.md) — exact commands, effects, and
-   when to use them
+3. [Command reference](command-reference.md) — troubleshooting, automation,
+   and individually required commands
 4. [Complete configuration reference](configuration-reference.md) — every
    Terraform input, environment variable, JSON key, presentation setting, and
    script override

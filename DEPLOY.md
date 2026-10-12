@@ -15,18 +15,39 @@ For the complete inventory of Terraform inputs, runtime environment variables,
 JSON keys, generated Azure App Settings, SLA controls, presentation settings,
 and script overrides, see
 [Complete configuration reference](docs/configuration-reference.md).
-For all supported local, collection, deployment, validation, and diagnostic
-commands, including when each is safe to use, see
+For troubleshooting, automation, or an individually required command, see the
 [Command reference](docs/command-reference.md).
 For the command-by-command internals, tool dependencies, Azure CLI identity
 behavior, Terraform boundaries, and package contents of `infra/deploy.sh`, see
 [Infrastructure and deploy.sh reference](infra/README.md).
 
-## Collector and local Web App customer quick start
+## Before using the menu
+
+The supported customer path is the interactive deployment menu documented in
+the [project README](README.md#deploy-or-update). Use it for first deployment,
+updates, code-only deployments, verification, collection, and diagnostics.
+
+Before starting the menu:
+
+1. Install the [workstation requirements](#workstation-requirements).
+2. Confirm the [required operator permissions](#required-operator-permissions).
+3. Copy `infra/terraform/main.tfvars.example.json` to
+   `infra/terraform/main.tfvars.json` and replace every example value.
+4. Sign in to the intended Azure tenant and subscription.
+5. Start `./infra/deployment-menu.sh` on macOS/Linux or
+   `.\infra\deployment-menu.ps1` on Windows.
+
+The detailed commands later in this guide explain what the menu performs and
+provide troubleshooting fallbacks. They are not the normal deployment path.
+
+## Local collector-only alternative
 
 This installs protected history storage and the collection Function. It does
 not deploy the dashboard Web App to Azure. The Web App runs locally and reads
 the collector's current live dataset from Azure Storage.
+
+This is not the recommended customer deployment. Local use is maintained
+separately in the [Local development README](docs/local/README.md).
 
 1. Clone the repository and enter its directory:
 

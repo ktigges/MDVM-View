@@ -999,6 +999,8 @@ def test_reporting_exposes_weekly_operational_workflow():
     assert "EndingRiskMachines:new Set(endingRows.map" in javascript
     assert "NewlyAffectedMachines:new Set(newRows.map" in javascript
     assert 'table("weeklyRiskTable"' in javascript
+    assert 'riskRows,row=>pivotToMachine(row)' in javascript
+    assert 'riskRows,row=>showDetail(row.Representative)' not in javascript
     assert ".weekly-workflow-cards{grid-template-columns:repeat(4" in stylesheet
 
 
@@ -1072,6 +1074,6 @@ def test_cost_calculator_is_local_only():
     assert 'id="collectionsPerDay" type="number" min="0" step=".1" value="2"' in calculator
     assert "The application does not delete retained raw or curated evidence." in calculator
     assert "The bounded option changes estimates only; it does not configure deletion." in calculator
-    assert "$31.43" in readme
-    assert "$364.39" in readme
+    assert "[Azure cost calculator](tools/calculator.html)" in readme
+    assert "Every deployed Azure resource can incur charges." in readme
     assert "[Azure Pricing Calculator](https://azure.microsoft.com/pricing/calculator/)" in readme

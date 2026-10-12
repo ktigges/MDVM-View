@@ -829,7 +829,7 @@ function renderWeeklyWorkflow(current,previous){
     [current.NewlyAffectedMachines,"Newly affected machines",`${fmt(current.New)} findings first observed during the period`,"new"],
   ].map(([value,label,detail,tone])=>`<article class="weekly-workflow-card ${tone}"><strong>${fmt(value)}</strong><span>${esc(label)}</span><small>${esc(detail)}</small></article>`).join("");
   $("weeklyRiskContext").textContent=`${fmt(riskRows.length)} machines with ${fmt(current.EndingOpen)} findings still open at the end of ${current.Period.toLowerCase()}; click a machine for detailed evidence`;
-  table("weeklyRiskTable",["DeviceName","OpenFindings","Critical","High","Medium","Low","Cves","Recommendations","OldestDetectionUtc"],riskRows,row=>showDetail(row.Representative));
+  table("weeklyRiskTable",["DeviceName","OpenFindings","Critical","High","Medium","Low","Cves","Recommendations","OldestDetectionUtc"],riskRows,row=>pivotToMachine(row));
 }
 /** Render statistics period for the dashboard. */
 function renderStatisticsPeriod(points){
