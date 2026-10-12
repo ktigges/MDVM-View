@@ -42,9 +42,23 @@ Windows:
 .\infra\deployment-menu.ps1
 ```
 
-On a clean Windows clone, the PowerShell menu creates `.venv-win` and installs
-Vulnerability View and its deployment dependencies when they are missing.
-Python 3.12 or newer must already be installed.
+On a clean Windows clone, install the system prerequisites before starting the
+menu. Use Python 3.14 x64 for the customer workstation:
+
+```powershell
+winget install --exact --id Python.Python.3.14
+winget install --exact --id Microsoft.AzureCLI
+winget install --exact --id Hashicorp.Terraform
+winget install --exact --id Git.Git
+```
+
+Close and reopen PowerShell after installation, run `az login`, and then start
+the menu. Confirm that Python reports `AMD64`, not `ARM64`, with
+`python -c "import platform; print(platform.python_version(), platform.machine())"`.
+The menu does not install Python, Azure CLI, Terraform, or Git. It does create
+`.venv-win`, install Vulnerability View and its Python deployment dependencies,
+and run the selected infrastructure, application deployment, or verification
+workflow.
 
 Choose the menu entry that describes the work being performed. For a first
 installation or complete update, use **Complete initial deployment or update**.
