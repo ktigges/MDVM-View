@@ -104,8 +104,18 @@ def test_deployment_menus_do_not_expose_destructive_operations():
 def test_powershell_menu_preserves_python_executable_as_one_value():
     _, powershell = menu_sources()
 
-    assert "[pscustomobject]@{ Executable = $candidate; Prefix = @() }" in powershell
     assert "[pscustomobject]@{ Executable = $py.Source; Prefix = @(\"-3\") }" in powershell
     assert "$executable = $PythonCommand.Executable" in powershell
     assert "$prefix = @($PythonCommand.Prefix)" in powershell
     assert "$PythonCommand[0]" not in powershell
+
+
+def test_powershell_menu_bootstraps_clean_windows_clone():
+    _, powershell = menu_sources()
+
+    assert 'if ($isWindowsHost) { ".venv-win" } else { ".venv" }' in powershell
+    assert 'if ($isWindowsHost) { "Scripts\\python.exe" } else { "bin/python" }' in powershell
+    assert "-m venv $virtualEnvironment" in powershell
+    assert '-m pip install --disable-pip-version-check -e "${RootDirectory}[dev]"' in powershell
+    assert "importlib.util.find_spec('vulnerability_view.operations_cli')" in powershell
+    assert "Vulnerability View is not importable" in powershell

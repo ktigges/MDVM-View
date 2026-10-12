@@ -37,6 +37,11 @@ Before starting the menu:
 5. Start `./infra/deployment-menu.sh` on macOS/Linux or
    `.\infra\deployment-menu.ps1` on Windows.
 
+On a clean Windows clone, the PowerShell menu creates `.venv-win`, installs the
+project and deployment dependencies, and verifies that the operations CLI is
+importable before showing deployment operations. Python 3.12 or newer, Azure
+CLI, Terraform, and Git must already be available as described below.
+
 The detailed commands later in this guide explain what the menu performs and
 provide troubleshooting fallbacks. They are not the normal deployment path.
 

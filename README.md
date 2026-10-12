@@ -42,6 +42,10 @@ Windows:
 .\infra\deployment-menu.ps1
 ```
 
+On a clean Windows clone, the PowerShell menu creates `.venv-win` and installs
+Vulnerability View and its deployment dependencies when they are missing.
+Python 3.12 or newer must already be installed.
+
 Choose the menu entry that describes the work being performed. For a first
 installation or complete update, use **Complete initial deployment or update**.
 Review every Terraform plan and approve it only when it contains the expected

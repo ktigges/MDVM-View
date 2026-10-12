@@ -6,22 +6,7 @@ param()
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
 
-function Resolve-PythonCommand {
-    if ($env:PYTHON) {
-        return [pscustomobject]@{ Executable = $env:PYTHON; Prefix = @() }
-    }
-
-    $candidates = @(
-        (Join-Path $RootDirectory ".venv-win\Scripts\python.exe"),
-        (Join-Path $RootDirectory ".venv\Scripts\python.exe"),
-        (Join-Path $RootDirectory ".venv/bin/python")
-    )
-    foreach ($candidate in $candidates) {
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-            return [pscustomobject]@{ Executable = $candidate; Prefix = @() }
-        }
-    }
-
+function Resolve-SystemPythonCommand {
     $python = Get-Command python -ErrorAction SilentlyContinue
     if ($python) {
         return [pscustomobject]@{ Executable = $python.Source; Prefix = @() }
@@ -32,10 +17,59 @@ function Resolve-PythonCommand {
         return [pscustomobject]@{ Executable = $py.Source; Prefix = @("-3") }
     }
 
-    throw "Python was not found. Create .venv-win or set PYTHON to the interpreter path."
+    throw "Python was not found. Install Python 3.12 or newer, or set PYTHON to the interpreter path."
 }
 
-$PythonCommand = Resolve-PythonCommand
+function Test-OperationsCliImport {
+    param([Parameter(Mandatory)]$Command)
+
+    $prefix = @($Command.Prefix)
+    & $Command.Executable @prefix -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('vulnerability_view') and importlib.util.find_spec('vulnerability_view.operations_cli') else 1)" *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+function Initialize-PythonCommand {
+    $isWindowsHost = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+    $virtualEnvironmentName = if ($isWindowsHost) { ".venv-win" } else { ".venv" }
+    $virtualPythonPath = if ($isWindowsHost) { "Scripts\python.exe" } else { "bin/python" }
+    $virtualEnvironment = Join-Path $RootDirectory $virtualEnvironmentName
+    $virtualPython = Join-Path $virtualEnvironment $virtualPythonPath
+
+    if ($env:PYTHON) {
+        $command = [pscustomobject]@{ Executable = $env:PYTHON; Prefix = @() }
+    }
+    elseif (Test-Path -LiteralPath $virtualPython -PathType Leaf) {
+        $command = [pscustomobject]@{ Executable = $virtualPython; Prefix = @() }
+    }
+    else {
+        $bootstrap = Resolve-SystemPythonCommand
+        $bootstrapPrefix = @($bootstrap.Prefix)
+        Write-Host "Creating the deployment environment at $virtualEnvironment."
+        & $bootstrap.Executable @bootstrapPrefix -m venv $virtualEnvironment | Out-Host
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $virtualPython -PathType Leaf)) {
+            throw "Failed to create the deployment environment at $virtualEnvironment."
+        }
+        $command = [pscustomobject]@{ Executable = $virtualPython; Prefix = @() }
+    }
+
+    if (-not (Test-OperationsCliImport -Command $command)) {
+        $prefix = @($command.Prefix)
+        Write-Host "Installing Vulnerability View and its deployment dependencies."
+        & $command.Executable @prefix -m pip install --disable-pip-version-check -e "${RootDirectory}[dev]" | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install Vulnerability View into $($command.Executable)."
+        }
+    }
+
+    if (-not (Test-OperationsCliImport -Command $command)) {
+        throw "Vulnerability View is not importable from $($command.Executable) after installation."
+    }
+
+    Write-Host "Deployment Python: $($command.Executable)"
+    return $command
+}
+
+$PythonCommand = Initialize-PythonCommand
 
 function Invoke-OperationsCli {
     param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$CliArguments)
