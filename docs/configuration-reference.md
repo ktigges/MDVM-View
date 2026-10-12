@@ -78,8 +78,8 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `web_app_name` | Required, globally unique | Dashboard Web App name |
 | `web_app_service_plan_name` | Required | Linux App Service plan name |
 | `web_app_identity_name` | Required | User-assigned identity used by the dashboard |
-| `web_app_sku_name` | `B1` | App Service plan SKU |
-| `web_app_worker_processes` | `1`; from 1 through 4 | Uvicorn worker processes; use `2` with B2 for the expected 10–20-user workload |
+| `web_app_sku_name` | `B2` | App Service plan SKU; customer deployments start with B2 |
+| `web_app_worker_processes` | `1`; from 1 through 4 | Uvicorn worker processes; the default single process keeps one verified-bundle cache |
 | `dashboard_entra_application_name` | `DVM Viewer` | App registration and Enterprise Application display name |
 | `dashboard_data_browser_enabled` | `false` | Enables Data Evidence UI/API and assigns `Data.Evidence.Reader` to the access group |
 | `dashboard_recommendation_tracking_enabled` | `false` | Enables shared dashboard-local work-status UI/API |

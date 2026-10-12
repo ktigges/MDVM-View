@@ -444,6 +444,78 @@ def test_dashboard_supports_entity_pivots_for_recommendations_cves_and_machines(
     assert ".pivot-details" in stylesheet
 
 
+def test_finding_lifecycle_badges_explain_their_meaning():
+    javascript = Path("dashboard/app.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert "function findingLifecycleDescription(status)" in javascript
+    assert "Defender currently reports this vulnerability on the endpoint." in javascript
+    assert 'class="lifecycle-status ${esc(value)} lifecycle-tooltip"' in javascript
+    assert 'data-tooltip="${esc(description)}"' in javascript
+    assert ".lifecycle-tooltip:hover::after,.lifecycle-tooltip:focus-visible::after" in stylesheet
+
+
+def test_dashboard_has_independent_exportable_executive_snapshot():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+    configuration = Path("dashboard/config.js").read_text()
+    stylesheet = Path("dashboard/styles.css").read_text()
+
+    assert 'data-view="executiveSnapshot"' in html
+    assert "Executive SLA Snapshot" in html
+    assert 'id="executiveSnapshotPeriod"' in html
+    assert 'id="executiveSnapshotStart"' in html
+    assert 'id="executiveSnapshotEnd"' in html
+    assert 'id="executiveSnapshotSubscription"' in html
+    assert 'id="executiveSnapshotOwner"' in html
+    assert 'id="executiveSnapshotUnit"' in html
+    assert '<option value="findings">Finding instances</option>' in html
+    assert '<option value="recommendations">Recommendation workload</option>' in html
+    assert 'id="executiveSlaMeterValue"' in html
+    assert 'id="executiveSlaMeterText"' in html
+    assert 'id="printExecutiveSnapshot"' in html
+    assert 'id="exportExecutiveSnapshotCsv"' in html
+    assert 'id="executiveSubscriptionConcentration"' in html
+    assert 'id="executiveOwnerConcentration"' in html
+    assert "function renderExecutiveSnapshot()" in javascript
+    assert "function executiveSnapshotPeriods(latestDate)" in javascript
+    assert "function executiveSnapshotScope()" in javascript
+    assert "function executiveRecommendationWorkload(current,scopeRows)" in javascript
+    assert "function printExecutiveSnapshot()" in javascript
+    assert "function exportExecutiveSnapshotCsv()" in javascript
+    assert 'executiveSnapshotPeriod:"30days"' in javascript
+    assert 'executiveSnapshotUnit:"findings"' in javascript
+    assert "criticalOverdue>0" in javascript
+    assert "compliance<75" in javascript
+    assert "compliance<90" in javascript
+    assert "RED · Elevated SLA exposure" in javascript
+    assert "YELLOW · SLA exposure to monitor" in javascript
+    assert "GREEN · SLA exposure within target" in javascript
+    assert "Management action required" not in javascript
+    assert '"Pending evidence"' in javascript
+    assert '"Open more than 90 days"' in javascript
+    assert "Data current through" in javascript
+    assert "function syncExecutiveSnapshotFilters()" in javascript
+    assert "function renderExecutiveConcentration(" in javascript
+    assert '"Reopened finding rate"' in javascript
+    assert '"Endpoint reporting freshness"' in javascript
+    assert '"Observed remediation velocity"' in javascript
+    assert '"Fully remediated"' in javascript
+    assert '"Partially remediated"' in javascript
+    assert '"Still open"' in javascript
+    assert '"With outside-SLA findings"' in javascript
+    assert "The SLA percentage and color remain based on finding deadlines." in javascript
+    assert "not a separate recommendation SLA clock" in javascript
+    assert 'ReportRepresentation:recommendationMode?"Recommendation workload":"Finding instances"' in javascript
+    assert "estimated days" not in javascript.lower()
+    assert "projected backlog" not in javascript.lower()
+    assert ".executive-concentration-row" in stylesheet
+    assert ".executive-sla-meter" in stylesheet
+    assert 'order: ["executive", "executiveSnapshot"' in configuration
+    assert "body.executive-snapshot-print .story:not(#executiveSnapshot)" in stylesheet
+    assert "@media print" in stylesheet
+
+
 def test_dashboard_renders_only_active_heavy_view():
     javascript = Path("dashboard/app.js").read_text()
 
@@ -815,7 +887,7 @@ def test_dashboard_connects_executive_workload_sla_and_recommendation_impact():
     assert "RECOMMENDATION INVENTORY" not in html
     assert "<h2>Recommendation inventory and workflow</h2>" in html
     assert 'selectEntity("recommendation",id,true)' in javascript
-    assert 'order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "help"]' in configuration
+    assert 'order: ["executive", "executiveSnapshot", "recommendations", "priority", "overview", "workstations", "sla", "trend", "help"]' in configuration
 
 
 def test_dashboard_executive_summary_uses_readable_visual_hierarchy():

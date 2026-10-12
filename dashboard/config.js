@@ -5,8 +5,8 @@
  */
 
 window.VULNERABILITY_VIEW_CONFIG = {
-  version: "2026.10.12.2",
-  revision: "2026-10-12T03:11:02Z",
+  version: "2026.10.12.7",
+  revision: "2026-10-12T14:36:32Z",
   branding: {
     eyebrow: "VULNERABILITY VIEW",
     title: "Microsoft Vulnerability Management",
@@ -22,7 +22,7 @@ window.VULNERABILITY_VIEW_CONFIG = {
     density: "comfortable",
   },
   navigation: {
-    order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "help"],
+    order: ["executive", "executiveSnapshot", "recommendations", "priority", "overview", "workstations", "sla", "trend", "help"],
     hidden: [],
   },
   filters: {

@@ -210,7 +210,7 @@ invocation and do not start a one-shot run while the timer is running.
 
 The optional cumulative Web App stage creates:
 
-- one Linux B1 App Service plan and Web App;
+- one Linux B2 App Service plan and Web App;
 - one user-assigned managed identity with Storage Blob Data Reader;
 - one single-tenant Entra application and Enterprise Application named `DVM Viewer`;
 - `Dashboard.Viewer` and `Data.Evidence.Reader` app roles;

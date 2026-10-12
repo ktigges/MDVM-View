@@ -36,7 +36,7 @@ Keep the collector and dashboard as separate workloads:
   Always Ready instances. Re-evaluate memory and cadence after measured runs.
 - **Dashboard:** publish the existing FastAPI application to one Linux Azure
   Web App.
-- **Published dashboard:** use one Basic B1 instance in one region.
+- **Published dashboard:** use one Basic B2 instance in one region.
 - **Recovery:** redeploy the application from Terraform and the immutable
   application package. Do not pay for idle standby compute.
 - **Data:** retain LRS for the lowest cost while preserving the existing
@@ -92,8 +92,8 @@ outside this infrastructure estimate. Confirm those licenses separately.
 |---|---:|---|---|---|
 | Local only | $0 Azure Web App cost | Developer workstation only | UI development | Not a published service |
 | App Service Free F1 | $0 | No production SLA | Short demonstrations | Quotas, no Always On, not production |
-| Linux Basic B1, one instance | about **$13.14/month** | Single instance | **Recommended lowest-cost published viewer** | No autoscale or deployment slots; recover by redeploying |
-| Linux Basic B2, one instance | about **$25.55/month** | Single instance | Recommended for approximately 10–20 concurrent dashboard users with two Uvicorn workers | No autoscale or deployment slots; each worker maintains its own in-memory cache |
+| Linux Basic B1, one instance | about **$13.14/month** | Single instance | Lower-capacity development or temporary cost fallback | No autoscale or deployment slots; less memory and CPU than the customer baseline |
+| Linux Basic B2, one instance | about **$25.55/month** | Single instance | **Recommended customer baseline** | No autoscale or deployment slots; recover by redeploying |
 | Linux Standard S1, one instance | about **$69.35/month** | Single instance | Workloads specifically needing Standard features | Current Central US retail price is higher than P0v3; compare before selecting |
 | Linux Premium v3 P0v3, one instance | about **$62.05/month** | Single instance | Feature/performance upgrade | No instance redundancy by itself |
 | Linux Premium v3 P0v3, two instances | about **$124.10/month** | Instance redundancy | Small production deployment | Both instances are billed continuously |
@@ -243,11 +243,11 @@ Official references:
 
 ## Dashboard hosting options
 
-### Option 1: Linux App Service Basic B1
+### Option 1: Linux App Service Basic B2
 
 Use for a low-cost pilot with a small known audience.
 
-- Lowest useful continuously hosted price in this design.
+- Recommended customer starting capacity in this design.
 - Supports the existing FastAPI application with minimal change.
 - Supports App Service Authentication and managed identity.
 - One warm process preserves the in-memory verified-bundle cache.
@@ -339,7 +339,7 @@ protected storage provides data durability.
 
 | Layer | Low-cost choice | Higher-resilience choice | Cost effect |
 |---|---|---|---|
-| Web compute | One B1 or P0v3 instance | Two instances | Approximately multiplies App Service compute by two |
+| Web compute | One B2 or P0v3 instance | Two instances | Approximately multiplies App Service compute by two |
 | Availability zone | No zone redundancy | Zone-redundant Premium v3 plan | Bills the required minimum instance count |
 | Region | One Central US deployment | Second-region Web App and failover route | Roughly duplicates compute and supporting resources |
 | History storage | LRS | ZRS, GRS/RA-GRS, or GZRS/RA-GZRS | Higher per-GB and transaction prices |
@@ -349,7 +349,7 @@ protected storage provides data durability.
 
 ### Suggested service levels
 
-**Pilot**
+**Lower-capacity pilot**
 
 - One B1 Web App.
 - Existing Flex collector.
@@ -357,9 +357,9 @@ protected storage provides data durability.
 - No Front Door or private endpoint.
 - Accept instance and regional interruption.
 
-**Published viewer, recommended**
+**Published viewer, recommended customer baseline**
 
-- One B1 Web App.
+- One B2 Web App.
 - One Central US deployment.
 - LRS history and Function runtime storage.
 - Direct App Service endpoint with Entra authentication.
@@ -643,7 +643,7 @@ high-availability settings.
   operational schedule.
 - Two Standard LRS storage accounts.
 - 365-day immutable history.
-- Linux App Service B1, one instance.
+- Linux App Service B2, one instance.
 - Application Insights and Log Analytics at measured ingestion.
 - No Front Door, private endpoints, NAT Gateway, Redis, backup, or second
   region.
@@ -694,9 +694,9 @@ For every scenario, enter:
 - Add Azure Cost Management budgets at 50%, 80%, and 100% of the adopted
   monthly estimate.
 - Tag resources with environment, owner, application, and cost center.
-- Keep development on B1 or local hosting.
+- Use local hosting or B1 only when intentionally accepting lower development capacity.
 - Do not enable Always Ready for the scheduled collector.
-- Start and remain on one B1 instance unless measurements or a required
+- Start and remain on one B2 instance unless measurements or a required
   platform feature justify P0v3.
 - Cap autoscale at three until load testing supports a higher limit.
 - Sample routine telemetry and alert on ingestion growth.

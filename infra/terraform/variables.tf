@@ -184,7 +184,7 @@ variable "deploy_function" {
 }
 
 variable "deploy_web_app" {
-  description = "Create the B1 Linux dashboard Web App, read-only identity, Easy Auth application, and group assignments."
+  description = "Create the B2 Linux dashboard Web App, read-only identity, Easy Auth application, and group assignments."
   type        = bool
   default     = false
 }
@@ -207,7 +207,7 @@ variable "web_app_identity_name" {
 variable "web_app_sku_name" {
   description = "Linux App Service SKU for the dashboard."
   type        = string
-  default     = "B1"
+  default     = "B2"
 }
 
 variable "web_app_worker_processes" {

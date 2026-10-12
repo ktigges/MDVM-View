@@ -10,7 +10,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
   <link rel="icon" type="image/png" href="favicon.png?v=20261009-2216">
-  <link rel="stylesheet" href="styles.css?v=20261012-0310">
+  <link rel="stylesheet" href="styles.css?v=20261012-1440">
 </head>
 <body>
   <header class="topbar">
@@ -62,6 +62,7 @@
       </button>
     </div>
     <button class="active" data-view="executive"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg></span><span class="nav-label">Executive</span></button>
+    <button data-view="executiveSnapshot"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5zM9 16v-4m4 4V8m4 8v-6"/></svg></span><span class="nav-label">Executive Snapshot</span></button>
     <button data-view="overview"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4zm0 4v10m-4-5h8"/></svg></span><span class="nav-label">Vulnerabilities</span></button>
     <button data-view="workstations"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></span><span class="nav-label">Endpoint assets</span></button>
     <button data-view="recommendations"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4h6l1 2h3v15H5V6h3l1-2zm0 7h6m-6 4h6"/></svg></span><span class="nav-label">Recommendations</span></button>
@@ -185,6 +186,42 @@
       <div class="subsection-heading"><div><span>GLOBAL VULNERABILITY SLA · FINDING-LEVEL RESULTS</span><h3>Defender-confirmed finding fixes against severity SLA windows</h3></div><p>Every value below counts finding instances: one CVE detected on one machine.</p></div>
       <div class="panel sla-severity-panel"><div class="table-wrap"><table id="executiveSlaBreakdown"></table></div></div>
       <div id="overviewSlaCards" class="metric-grid compact sla-summary"></div>
+    </section>
+    <section id="executiveSnapshot" class="story executive-snapshot">
+      <div class="executive-snapshot-header">
+        <div><span>MANAGEMENT REPORT</span><h2>Executive SLA Snapshot</h2><p id="executiveSnapshotContext">Select a reporting timeframe to summarize remediation performance and remaining risk.</p></div>
+        <div class="executive-snapshot-actions">
+          <label>Subscription<select id="executiveSnapshotSubscription"><option value="All">All subscriptions</option><option value="NoSubscription">No subscription</option></select></label>
+          <label>Operating owner<select id="executiveSnapshotOwner"><option value="All">All operating teams</option></select></label>
+          <label>Show as<select id="executiveSnapshotUnit"><option value="findings">Finding instances</option><option value="recommendations">Recommendation workload</option></select></label>
+          <label>Timeframe<select id="executiveSnapshotPeriod"><option value="7days">Latest 7 days</option><option value="30days" selected>Latest 30 days</option><option value="90days">Latest 90 days</option><option value="month">Month to date</option><option value="custom">Custom range</option></select></label>
+          <span id="executiveSnapshotCustom" class="executive-snapshot-custom" hidden><label>Start<input id="executiveSnapshotStart" type="date"></label><label>End<input id="executiveSnapshotEnd" type="date"></label><button id="applyExecutiveSnapshot" type="button">Apply</button></span>
+          <button id="printExecutiveSnapshot" class="primary-action" type="button">Print / Save PDF</button>
+          <button id="exportExecutiveSnapshotCsv" type="button">Export detail CSV</button>
+        </div>
+      </div>
+      <section class="executive-status-band">
+        <article id="executiveSnapshotStatus" class="executive-status yellow"><span>OVERALL SLA STATUS</span><strong>Calculating</strong><p>Loading selected-period evidence.</p></article>
+        <div id="executiveSnapshotKpis" class="executive-kpi-grid"></div>
+      </section>
+      <section class="executive-sla-position" aria-labelledby="executiveSlaPositionTitle">
+        <div><span>FINDING-LEVEL SLA POSITION</span><h3 id="executiveSlaPositionTitle">Performance against the 90% reporting target</h3><p id="executiveSnapshotUnitNote">Each value represents one vulnerability finding on one machine.</p></div>
+        <div class="executive-sla-meter-wrap"><div class="executive-sla-meter"><i id="executiveSlaMeterValue"></i><b aria-hidden="true"></b></div><div class="executive-sla-meter-labels"><span>0%</span><strong id="executiveSlaMeterText">Calculating</strong><span>100%</span></div></div>
+      </section>
+      <p id="executiveSnapshotNarrative" class="executive-narrative"></p>
+      <div class="executive-snapshot-grid">
+        <article class="panel executive-chart-panel"><div class="panel-title"><div><h3>Exposure movement</h3><span>New, fixed, and ending-open finding instances</span></div></div><div id="executiveSnapshotTrend" class="executive-trend-chart"></div></article>
+        <article class="panel executive-chart-panel"><div class="panel-title"><div><h3>Open risk by severity</h3><span>Finding instances unresolved at period end</span></div></div><div id="executiveSnapshotSeverity" class="executive-severity-chart"></div></article>
+      </div>
+      <div class="executive-snapshot-grid executive-concentration-grid">
+        <article class="panel"><div class="panel-title"><div><h3>Risk concentration by subscription</h3><span>Open finding instances at period end</span></div></div><div id="executiveSubscriptionConcentration" class="executive-concentration-chart"></div></article>
+        <article class="panel"><div class="panel-title"><div><h3>Risk concentration by operating team</h3><span>Derived ownership from collected asset evidence</span></div></div><div id="executiveOwnerConcentration" class="executive-concentration-chart"></div></article>
+      </div>
+      <div class="executive-snapshot-grid">
+        <article class="panel"><div class="panel-title"><div><h3 id="executiveSlaTableTitle">SLA performance by severity</h3><span id="executiveSlaTableContext">Remediation observed during the selected period</span></div></div><div class="table-wrap executive-table-wrap"><table id="executiveSnapshotSlaTable"></table></div></article>
+        <article class="panel"><div class="panel-title"><div><h3>Highest remaining management risks</h3><span>Recommendations ranked by severity and open impact</span></div></div><div class="table-wrap executive-table-wrap"><table id="executiveSnapshotRiskTable"></table></div></article>
+      </div>
+      <footer class="executive-report-footer"><span id="executiveSnapshotGenerated"></span><span>Source: Microsoft Defender observations retained by Vulnerability View</span></footer>
     </section>
     <section id="overview" class="story">
       <div class="section-heading"><div><h2>Vulnerabilities and known exploits</h2></div></div>
@@ -316,7 +353,7 @@
   <aside id="recommendationPreview" class="recommendation-preview" role="status" hidden></aside>
   <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
   <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
-  <script src="config.js?v=20261012-0310"></script>
-  <script src="app.js?v=20261012-0310"></script>
+  <script src="config.js?v=20261012-1440"></script>
+  <script src="app.js?v=20261012-1440"></script>
 </body>
 </html>

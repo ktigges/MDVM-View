@@ -731,7 +731,7 @@ paths are append-only. Only `current/manifest.json` is replaceable.
 
 `plan webapp` and `apply webapp` retain the foundation and Function and add:
 
-1. One Linux B1 App Service plan and Web App.
+1. One Linux B2 App Service plan and Web App.
 2. One dedicated user-assigned managed identity.
 3. Storage Blob Data Reader on the history account for that identity.
 4. A private recommendation-workflow container and Storage Blob Data

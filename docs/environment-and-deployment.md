@@ -181,7 +181,7 @@ Use a development account that is separate from production. Never point local in
 | User-assigned managed identity | Defender access and Storage Blob Data Contributor for the collector | Implemented when `deploy_function=true` |
 | Flex Consumption Function App | Scheduled collector | Implemented when `deploy_function=true` |
 | Application Insights | Function diagnostics, failures, and dependency timing | Implemented when `deploy_function=true` |
-| Linux Web App and plan | Hosts the dashboard and a same-origin API that reads current data from private ADLS | Implemented as an optional B1 Terraform stage |
+| Linux Web App and plan | Hosts the dashboard and a same-origin API that reads current data from private ADLS | Implemented as an optional B2 Terraform stage |
 | Web App managed identity | Read-only access to `dvm-current` and referenced curated blobs | Implemented with Storage Blob Data Reader |
 | Microsoft Entra authentication | Restricts dashboard and API access to authorized users or groups | Implemented with Easy Auth and an assignment-required Enterprise Application; assignments are managed manually in Entra |
 | Log Analytics | Function operational logs, metrics, failures, and dependency timing | Implemented when `deploy_function=true` |
