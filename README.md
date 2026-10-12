@@ -410,6 +410,12 @@ still comes from finding deadlines.
 
 ## How the application works
 
+Start with the
+[straight-through application flow](docs/application-flow.md). It shows the
+exact API calls, what telemetry each call returns, the raw and curated files
+created by every job, full-versus-delta selection, compression and publication,
+dashboard startup, caching, and on-demand CVE detail behavior.
+
 At a high level:
 
 1. The Azure Function authenticates with its managed identity.
@@ -437,6 +443,8 @@ recommendation-machine relationships.
 Detailed implementation is intentionally kept in the following authoritative
 documents:
 
+- [Application flow](docs/application-flow.md) — start here for one
+  end-to-end explanation from Function trigger through browser rendering.
 - [Dashboard and collection logic](LOGIC.md) — finding identity, priority,
   lifecycle, remediation, reopening, SLA, filtering, and reporting rules.
 - [Data collection and dashboard workflow](docs/data-collection-and-workflow/)
@@ -482,6 +490,7 @@ Start with the document that matches the task:
 | Need | Document |
 |---|---|
 | Deploy or update Azure | [Azure deployment guide](DEPLOY.md) |
+| Understand the complete application flow | [Application flow](docs/application-flow.md) |
 | Understand calculations and lifecycle | [Dashboard and collection logic](LOGIC.md) |
 | Understand data collection and processing | [Data collection and workflow](docs/data-collection-and-workflow/) |
 | Understand schemas and retained Storage | [Data structure and retention](docs/data/) |

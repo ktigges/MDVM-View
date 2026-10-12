@@ -6,6 +6,13 @@
 This document describes current application behavior. Configuration files and
 source code remain authoritative when a value shown here changes.
 
+For the straight-through runtime sequence—including exact API calls, raw and
+curated files, compression, weekly full behavior, dashboard startup, caching,
+and lazy CVE detail—start with
+[Application flow](docs/application-flow.md). This document focuses on how the
+application calculates and interprets results after the source data is
+available.
+
 ## 1. Data runs and publication
 
 Each successful collector execution creates a new immutable run. It does not

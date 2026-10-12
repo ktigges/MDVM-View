@@ -3,6 +3,12 @@
 > **Last modified:** 2026-10-12
 > **Purpose:** Explain how Defender observations become retained evidence, lifecycle records, SLA results, and dashboard views.
 
+For one direct start-to-finish sequence showing the exact API calls, compressed
+files, weekly full decision, dashboard startup datasets, server cache, and lazy
+CVE detail behavior, read
+[Application flow](../application-flow.md) first. This document provides the
+deeper workflow rationale and operating model.
+
 ## Scope
 
 The application collects Microsoft Defender Vulnerability Management data, preserves source evidence, normalizes separate API responses, identifies changes between runs, calculates SLA results, and publishes reporting datasets.

@@ -51,11 +51,14 @@ Local work is intentionally separated from hosted deployment. Start with the
 
 ### 5. Understand SLA and application logic
 
-1. [Dashboard and collection logic](../LOGIC.md) — concise source of truth for
+1. [Application flow](application-flow.md) — exact calls, telemetry, files,
+   compression, weekly full behavior, dashboard loading, caching, and lazy CVE
+   detail
+2. [Dashboard and collection logic](../LOGIC.md) — concise source of truth for
    lifecycle, priority, SLA, recommendation ordering, filters, and work status
-2. [Data collection and dashboard workflow](data-collection-and-workflow/) —
+3. [Data collection and dashboard workflow](data-collection-and-workflow/) —
    end-to-end collector and user workflow
-3. [Data structure and retention](data/) — detailed schema, lineage,
+4. [Data structure and retention](data/) — detailed schema, lineage,
    manifests, overwrite rules, and history semantics
 
 ## Find a document by task
@@ -73,6 +76,7 @@ Local work is intentionally separated from hosted deployment. Start with the
 | Check active progress or failed runs | [Troubleshooting](troubleshooting.md#4-collector-progress-failure-and-memory) |
 | Find a command | [Command reference](command-reference.md) |
 | Find a setting | [Configuration reference](configuration-reference.md) |
+| Understand what a job calls and what files it creates | [Application flow](application-flow.md) |
 | Understand fixed/reopened logic | [Dashboard and collection logic](../LOGIC.md#6-finding-completion-and-reopening) |
 | Understand SLA clocks | [Dashboard and collection logic](../LOGIC.md#5-sla-targeting) |
 | Understand retention and purge behavior | [Data structure and retention](data/) |
@@ -89,6 +93,8 @@ The long reference documents are intentionally retained:
 - `operations-and-configuration.md` describes ongoing operation.
 - `command-reference.md` answers “what command do I run?”
 - `configuration-reference.md` answers “what does this setting do?”
+- `application-flow.md` answers “what happens from job start through dashboard
+  rendering?”
 - `LOGIC.md` answers “how is this result calculated?”
 - `data-collection-and-workflow/README.md` explains end-to-end behavior.
 - `data/README.md` is the detailed data contract and lineage reference.

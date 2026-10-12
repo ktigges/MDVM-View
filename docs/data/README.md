@@ -3,6 +3,11 @@
 > **Last modified:** 2026-10-12
 > **Purpose:** Define collected data, run processing, retention, change detection, and SLA calculations.
 
+For the direct runtime sequence that maps each API call to its raw file,
+curated file, and dashboard load behavior, start with
+[Application flow](../application-flow.md). This document is the deeper data
+contract and retention reference.
+
 ## Collection flow
 
 1. Download current Defender records and retain each original response page as compressed source evidence.
