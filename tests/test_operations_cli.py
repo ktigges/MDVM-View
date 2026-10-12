@@ -13,6 +13,20 @@ import pytest
 from vulnerability_view import operations_cli
 
 
+def test_values_missing_file_explains_initial_configuration(monkeypatch, tmp_path):
+    missing = tmp_path / "main.tfvars.json"
+    monkeypatch.setattr(operations_cli, "TF_DIR", tmp_path)
+    monkeypatch.setattr(operations_cli, "TF_VARS", missing)
+
+    with pytest.raises(RuntimeError) as error:
+        operations_cli._values()
+
+    message = str(error.value)
+    assert str(missing) in message
+    assert "main.tfvars.example.json" in message
+    assert "replace every example value" in message
+
+
 def test_local_timestamp_uses_machine_time_zone():
     value = "2026-10-09T18:00:00Z"
 

@@ -6,18 +6,34 @@ param()
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
 
-function Resolve-SystemPythonCommand {
-    $python = Get-Command python -ErrorAction SilentlyContinue
-    if ($python) {
-        return [pscustomobject]@{ Executable = $python.Source; Prefix = @() }
-    }
+function Test-PythonCommand {
+    param([Parameter(Mandatory)]$Command)
 
+    $prefix = @($Command.Prefix)
+    & $Command.Executable @prefix -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+function Resolve-SystemPythonCommand {
     $py = Get-Command py -ErrorAction SilentlyContinue
     if ($py) {
-        return [pscustomobject]@{ Executable = $py.Source; Prefix = @("-3") }
+        foreach ($version in @("-3.14", "-3.12", "-3")) {
+            $command = [pscustomobject]@{ Executable = $py.Source; Prefix = @($version) }
+            if (Test-PythonCommand -Command $command) {
+                return $command
+            }
+        }
     }
 
-    throw "Python was not found. Install Python 3.12 or newer, or set PYTHON to the interpreter path."
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if ($python) {
+        $command = [pscustomobject]@{ Executable = $python.Source; Prefix = @() }
+        if (Test-PythonCommand -Command $command) {
+            return $command
+        }
+    }
+
+    throw "A working Python 3.12 or newer interpreter was not found. Install Python 3.14 x64, close and reopen PowerShell, and try again."
 }
 
 function Test-OperationsCliImport {
@@ -47,7 +63,8 @@ function Initialize-PythonCommand {
         Write-Host "Creating the deployment environment at $virtualEnvironment."
         & $bootstrap.Executable @bootstrapPrefix -m venv $virtualEnvironment | Out-Host
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $virtualPython -PathType Leaf)) {
-            throw "Failed to create the deployment environment at $virtualEnvironment."
+            $bootstrapDisplay = (@($bootstrap.Executable) + $bootstrapPrefix) -join " "
+            throw "Failed to create the deployment environment at $virtualEnvironment using '$bootstrapDisplay'. Review the Python error shown above."
         }
         $command = [pscustomobject]@{ Executable = $virtualPython; Prefix = @() }
     }
