@@ -364,7 +364,8 @@ prints the active-run safety check, then lists published runs. The active run
 will not appear in the manifest list until publication completes.
 
 The status checker uses both Function execution traces and completed
-`AppRequests` telemetry. This avoids reporting a successfully completed run as
+`AppRequests` telemetry for scheduled, manual scheduled-policy, and manual full
+invocations. This avoids reporting a successfully completed run as
 `INDETERMINATE` when Azure emits the request result but omits the usual
 `Executed 'Functions.dataprep_snapshot'` trace.
 

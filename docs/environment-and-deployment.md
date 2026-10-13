@@ -130,10 +130,10 @@ Azure Functions Core Tools v4 and Azurite are prerequisites. They are not curren
 3. Authenticate the developer identity in a separate terminal.
 4. Start Azurite for `AzureWebJobsStorage=UseDevelopmentStorage=true`.
 5. Start the Functions host with `func start`.
-6. Invoke the timer once from another terminal:
+6. Invoke the manual scheduled-policy trigger once from another terminal:
 
    ```bash
-   curl -i -X POST http://localhost:7071/admin/functions/dataprep_snapshot \
+   curl -i -X POST http://localhost:7071/admin/functions/dataprep_manual_snapshot \
      -H 'Content-Type: application/json' \
      -d '{"input":null}'
    ```

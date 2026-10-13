@@ -7,6 +7,8 @@ SHELL_TEARDOWN = Path("infra/destroy-application.sh")
 POWERSHELL_TEARDOWN = Path("infra/destroy-application.ps1")
 SHELL_FULL_TEARDOWN = Path("infra/destroy-test-environment.sh")
 POWERSHELL_FULL_TEARDOWN = Path("infra/destroy-test-environment.ps1")
+SHELL_DEPLOY = Path("infra/deploy.sh")
+SHELL_FUNCTION_LOGS = Path("infra/check-function-logs.sh")
 
 
 def menu_sources() -> tuple[str, str]:
@@ -133,6 +135,20 @@ def test_powershell_menu_bootstraps_clean_windows_clone():
     assert "extension add --name $extension --allow-preview true --yes" in powershell
     assert "Azure CLI extension '$extension' is not available after installation." in powershell
     assert "Initialize-AzureCliExtensions" in powershell
+
+
+def test_manual_collection_uses_flex_compatible_trigger_and_monitoring():
+    deploy = SHELL_DEPLOY.read_text(encoding="utf-8")
+    function_logs = SHELL_FUNCTION_LOGS.read_text(encoding="utf-8")
+
+    assert "/admin/functions/dataprep_manual_snapshot" in deploy
+    assert "/admin/functions/dataprep_snapshot" not in deploy
+    for function_name in (
+        "dataprep_snapshot",
+        "dataprep_manual_snapshot",
+        "dataprep_full_snapshot",
+    ):
+        assert function_name in function_logs
 
 
 def test_application_teardown_scripts_require_four_confirmations_and_preserve_history():

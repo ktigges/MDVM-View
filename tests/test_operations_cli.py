@@ -127,6 +127,24 @@ def test_function_status_uses_completed_request_when_completion_trace_is_missing
     assert "Completed local:" in output
 
 
+def test_check_runs_allows_empty_history_before_first_publication(monkeypatch, capsys):
+    monkeypatch.delenv("STORAGE_ACCOUNT_NAME", raising=False)
+    monkeypatch.delenv("STORAGE_CONTAINER_NAME", raising=False)
+    monkeypatch.setattr(
+        operations_cli,
+        "_values",
+        lambda: {
+            "history_storage_account_name": "history-test",
+            "history_container_name": "dvm-history",
+        },
+    )
+    monkeypatch.setattr(operations_cli, "_az_json", lambda *args, **kwargs: [])
+
+    operations_cli.check_runs(5, False)
+
+    assert "No published durable runs found in history-test/dvm-history." in capsys.readouterr().out
+
+
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):
     terraform = tmp_path / "terraform.exe"
     terraform.write_bytes(b"local terraform")
@@ -537,11 +555,18 @@ def test_invoke_distinguishes_trigger_acceptance_from_collection_success(monkeyp
         "_az",
         lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="host-key\n"),
     )
-    monkeypatch.setattr(operations_cli.requests, "post", lambda *args, **kwargs: AcceptedResponse())
+    requests = []
+    monkeypatch.setattr(
+        operations_cli.requests,
+        "post",
+        lambda *args, **kwargs: requests.append((args, kwargs)) or AcceptedResponse(),
+    )
 
     operations_cli.invoke(True)
 
     output = capsys.readouterr().out
+    assert requests[0][0][0].endswith("/admin/functions/dataprep_manual_snapshot")
+    assert requests[0][1]["json"] == {"input": None}
     assert "trigger accepted" in output
     assert "does not confirm collection success" in output
     assert "check-runs --limit 10 --progress" in output

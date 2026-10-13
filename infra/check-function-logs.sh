@@ -101,11 +101,15 @@ RUN_STATE_JSON="$(
     --analytics-query "let starts = AppTraces
         | where TimeGenerated > ago(${HOURS}h)
         | where Message startswith \"Executing 'Functions.dataprep_snapshot'\"
+            or Message startswith \"Executing 'Functions.dataprep_manual_snapshot'\"
+            or Message startswith \"Executing 'Functions.dataprep_full_snapshot'\"
         | extend InvocationId = extract(@'Id=([0-9a-fA-F-]{36})', 1, Message)
         | project InvocationId, StartedUtc=TimeGenerated;
       let completions = AppTraces
         | where TimeGenerated > ago(${HOURS}h)
         | where Message startswith \"Executed 'Functions.dataprep_snapshot'\"
+            or Message startswith \"Executed 'Functions.dataprep_manual_snapshot'\"
+            or Message startswith \"Executed 'Functions.dataprep_full_snapshot'\"
         | extend InvocationId = extract(@'Id=([0-9a-fA-F-]{36})', 1, Message)
         | extend CompletionStatus = extract(@'\\(([^,]+),', 1, Message)
         | project InvocationId, CompletedUtc=TimeGenerated, CompletionStatus;
@@ -173,14 +177,14 @@ if [[ "$MODE" == "--status-only" ]]; then
   exit 0
 fi
 
-echo "Recent dataprep_snapshot invocations:"
+echo "Recent collector invocations:"
 RECENT_INVOCATIONS_JSON="$(
   az monitor log-analytics query \
     --subscription "$SUBSCRIPTION_ID" \
     --workspace "$WORKSPACE_ID" \
     --analytics-query "AppRequests
       | where TimeGenerated > ago(${HOURS}h)
-      | where Name == 'dataprep_snapshot'
+      | where Name in ('dataprep_snapshot', 'dataprep_manual_snapshot', 'dataprep_full_snapshot')
       | top ${LIMIT} by TimeGenerated desc
       | extend DurationSeconds = round(DurationMs / 1000.0, 1)
       | project TimeGenerated, Success, DurationSeconds, OperationId" \
@@ -198,7 +202,8 @@ FAILED_JSON="$(
     --workspace "$WORKSPACE_ID" \
     --analytics-query "AppRequests
       | where TimeGenerated > ago(${HOURS}h)
-      | where Name == 'dataprep_snapshot' and Success == false
+      | where Name in ('dataprep_snapshot', 'dataprep_manual_snapshot', 'dataprep_full_snapshot')
+          and Success == false
       | top 1 by TimeGenerated desc
       | project TimeGenerated, DurationMs, OperationId" \
     --output json
@@ -207,7 +212,7 @@ FAILED_JSON="$(
 FAILED_OPERATION_ID="$(jq -r '.[0].OperationId // empty' <<<"$FAILED_JSON")"
 if [[ -z "$FAILED_OPERATION_ID" ]]; then
   echo
-  echo "No failed dataprep_snapshot invocation was found in this time window."
+  echo "No failed collector invocation was found in this time window."
   exit 0
 fi
 

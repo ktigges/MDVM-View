@@ -543,7 +543,7 @@ tf_invoke() {
     --header "x-functions-key: $host_key" \
     --header "Content-Type: application/json" \
     --data '{"input":null}' \
-    "https://$function_app.azurewebsites.net/admin/functions/dataprep_snapshot"
+    "https://$function_app.azurewebsites.net/admin/functions/dataprep_manual_snapshot"
   echo
   echo "Function trigger accepted. This does not confirm collection success."
   echo "Verify execution and immutable publication with: ./infra/check-runs.sh 10 --progress"

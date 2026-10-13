@@ -313,11 +313,12 @@ Use `/api/status`, `/api/data/<asset>.json`, and `/api/diagnostics` to test this
 complete path. Direct Blob requests require Microsoft Entra authorization and
 must not be made anonymous.
 
-The collector has no public data-retrieval HTTP endpoint. Its timer function can
-be invoked through the key-protected Azure Functions admin route
-`POST /admin/functions/dataprep_snapshot`, but that starts a collection and can
-publish a new immutable run. Use only the guarded helper after confirming no run
-is active:
+The collector has no public data-retrieval HTTP endpoint. Manual collection
+uses the key-protected Azure Functions admin route for the dedicated
+`dataprep_manual_snapshot` manual trigger. It does not invoke the timer trigger
+because Flex Consumption can accept a manual timer invocation without
+dispatching it. A manual trigger starts a collection and can publish a new
+immutable run. Use only the guarded helper after confirming no run is active:
 
 ```bash
 CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function

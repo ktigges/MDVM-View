@@ -57,6 +57,17 @@ def dataprep_snapshot(timer: func.TimerRequest) -> None:
 
 
 @app.generic_trigger(arg_name="input", type="manualTrigger", data_type=func.DataType.STRING)
+def dataprep_manual_snapshot(input: str) -> None:
+    """Run an operator-requested collection using scheduled collection policy."""
+    del input
+    logging.info("Starting manual vulnerability dataprep collector version %s", COLLECTOR_VERSION)
+    exit_code = _run_dataprep()
+    if exit_code:
+        raise RuntimeError(f"Manual vulnerability dataprep failed with exit code {exit_code}")
+    logging.info("Manual vulnerability dataprep collector version %s completed", COLLECTOR_VERSION)
+
+
+@app.generic_trigger(arg_name="input", type="manualTrigger", data_type=func.DataType.STRING)
 def dataprep_full_snapshot(input: str) -> None:
     """Run an operator-requested full vulnerability and relationship reconciliation."""
     del input

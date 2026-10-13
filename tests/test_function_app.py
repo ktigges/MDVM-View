@@ -50,3 +50,12 @@ def test_manual_full_trigger_forces_full_collection_and_enrichment(monkeypatch):
     function_app.dataprep_full_snapshot("full")
 
     assert calls == [("full", "full")]
+
+
+def test_manual_trigger_uses_scheduled_collection_policy(monkeypatch):
+    calls = []
+    monkeypatch.setattr(function_app, "_run_dataprep", lambda: calls.append(()) or 0)
+
+    function_app.dataprep_manual_snapshot("")
+
+    assert calls == [()]

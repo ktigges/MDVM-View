@@ -1171,7 +1171,7 @@ az monitor log-analytics query \
   --subscription "<subscription-id>" \
   --workspace "<workspace-guid>" \
   --analytics-query "AppRequests
-    | where Name == 'dataprep_snapshot'
+    | where Name in ('dataprep_snapshot', 'dataprep_manual_snapshot', 'dataprep_full_snapshot')
     | top 10 by TimeGenerated desc
     | project TimeGenerated, Success, DurationMs, OperationId" \
   --output table
