@@ -39,9 +39,81 @@ def test_parser_exposes_identical_cross_platform_commands():
     assert operations_cli.build_parser().parse_args(["deploy", "function"]).stage == "function"
     assert operations_cli.build_parser().parse_args(["show", "foundation"]).stage == "foundation"
     assert operations_cli.build_parser().parse_args(["output", "function_app_name"]).name == "function_app_name"
+    assert operations_cli.build_parser().parse_args(["configure-webapp-sku"]).command == "configure-webapp-sku"
     assert operations_cli.build_parser().parse_args(["check-runs", "--limit", "5", "--progress"]).progress is True
     assert operations_cli.build_parser().parse_args(["invoke", "function", "--confirm"]).confirm is True
     assert operations_cli.build_parser().parse_args(["invoke", "function", "--confirm", "--full"]).full is True
+
+
+def test_configure_webapp_sku_keeps_configured_sku_with_quota(monkeypatch):
+    values = {
+        "subscription_id": "subscription-test",
+        "resource_group_name": "rg-test",
+        "web_app_service_plan_name": "plan-test",
+        "web_app_sku_name": "B2",
+        "location": "eastus2",
+    }
+    responses = iter([
+        [],
+        {"value": [{"name": {"value": "B2"}, "currentValue": 0, "limit": 1}]},
+    ])
+    monkeypatch.setattr(operations_cli, "_values", lambda: values)
+    monkeypatch.setattr(operations_cli, "_azure_json", lambda *args: next(responses))
+    monkeypatch.setattr("builtins.input", lambda *args: (_ for _ in ()).throw(AssertionError("unexpected prompt")))
+
+    operations_cli.configure_webapp_sku()
+
+    assert values["web_app_sku_name"] == "B2"
+
+
+def test_configure_webapp_sku_requires_explicit_available_fallback(monkeypatch, tmp_path):
+    values_file = tmp_path / "main.tfvars.json"
+    values = {
+        "subscription_id": "subscription-test",
+        "resource_group_name": "rg-test",
+        "web_app_service_plan_name": "plan-test",
+        "web_app_sku_name": "B2",
+        "location": "eastus2",
+    }
+    values_file.write_text(json.dumps(values), encoding="utf-8")
+    responses = iter([
+        [],
+        {
+            "value": [
+                {"name": {"value": "B1"}, "currentValue": 0, "limit": 0},
+                {"name": {"value": "B2"}, "currentValue": 0, "limit": 0},
+                {"name": {"value": "P0v3"}, "currentValue": 0, "limit": 2},
+            ],
+        },
+    ])
+    answers = iter(["1", "P0v3"])
+    monkeypatch.setattr(operations_cli, "TF_VARS", values_file)
+    monkeypatch.setattr(operations_cli, "_values", lambda: dict(values))
+    monkeypatch.setattr(operations_cli, "_azure_json", lambda *args: next(responses))
+    monkeypatch.setattr("builtins.input", lambda *args: next(answers))
+
+    operations_cli.configure_webapp_sku()
+
+    assert json.loads(values_file.read_text(encoding="utf-8"))["web_app_sku_name"] == "P0v3"
+
+
+def test_configure_webapp_sku_preserves_existing_plan_without_spare_quota(monkeypatch):
+    values = {
+        "subscription_id": "subscription-test",
+        "resource_group_name": "rg-test",
+        "web_app_service_plan_name": "plan-test",
+        "web_app_sku_name": "B2",
+        "location": "eastus2",
+    }
+    monkeypatch.setattr(operations_cli, "_values", lambda: values)
+    monkeypatch.setattr(
+        operations_cli,
+        "_azure_json",
+        lambda *args: [{"name": "plan-test", "resourceGroup": "rg-test", "sku": {"name": "B2"}}],
+    )
+    monkeypatch.setattr("builtins.input", lambda *args: (_ for _ in ()).throw(AssertionError("unexpected prompt")))
+
+    operations_cli.configure_webapp_sku()
 
 
 def test_log_query_has_bounded_timeout(monkeypatch):

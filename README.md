@@ -97,6 +97,11 @@ Azure CLI extensions, and verifies the operations CLI before showing the menu.
 Python, Azure CLI, Terraform, and Git remain workstation prerequisites and are
 not installed by the menu.
 
+Before a Web App infrastructure plan, the menu checks regional App Service
+quota. If the configured SKU has no deployable capacity, it shows supported
+SKUs that do, requires an explicit capacity-and-cost selection, updates only
+`web_app_sku_name` in `main.tfvars.json`, and then creates a fresh plan.
+
 ### 3. Configure the target environment
 
 Before the first deployment, create both environment-specific configuration

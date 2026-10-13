@@ -53,6 +53,7 @@ def test_deployment_menus_wrap_the_same_operations():
     shell, powershell = menu_sources()
     equivalent_calls = (
         ("run_cli deployment-preflight", "Invoke-OperationsCli deployment-preflight"),
+        ("run_cli configure-webapp-sku", "Invoke-OperationsCli configure-webapp-sku"),
         ("run_cli plan webapp", "Invoke-OperationsCli plan webapp"),
         ("run_cli show webapp", "Invoke-OperationsCli show webapp"),
         ("run_cli apply webapp", "Invoke-OperationsCli apply webapp"),

@@ -85,6 +85,14 @@ extensions, and verifies that the operations CLI is importable before showing
 deployment operations. Python 3.12 or newer, Azure CLI, Terraform, and Git must
 already be available as described below.
 
+Before planning the cumulative Web App stage, the menu queries regional App
+Service quota. It keeps an existing plan on its configured SKU and otherwise
+continues with the configured SKU when capacity is available. If capacity is
+unavailable, the operator must explicitly select a supported SKU with quota;
+the menu updates `web_app_sku_name` in `main.tfvars.json` before creating the
+new plan. The selection is never automatic because it changes capacity and
+cost.
+
 The detailed commands later in this guide explain what the menu performs and
 provide troubleshooting fallbacks. They are not the normal deployment path.
 
