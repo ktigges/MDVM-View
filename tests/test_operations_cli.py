@@ -566,6 +566,8 @@ def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, 
     )
     start_index = next(index for index, call in enumerate(calls) if call[:2] == ("webapp", "start"))
     assert calls[deploy_index][calls[deploy_index].index("--restart") + 1] == "false"
+    assert calls[deploy_index][calls[deploy_index].index("--async") + 1] == "true"
+    assert calls[deploy_index][calls[deploy_index].index("--track-status") + 1] == "true"
     assert deploy_index < settings_index < start_index
     assert not any(call[:4] == ("webapp", "log", "deployment", "list") for call in calls)
 
