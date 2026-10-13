@@ -15,6 +15,12 @@ sequence, typed confirmation, and safety boundary changed in one launcher must
 be changed in the other. `tests/test_deployment_menus.py` enforces parity and
 ensures neither menu exposes destructive operations.
 
+On Windows, `deployment-menu.ps1` also bootstraps menu-managed dependencies: it
+creates the project virtual environment, installs project packages when
+needed, and installs required Azure CLI extensions such as `log-analytics`.
+Python, Azure CLI, Terraform, and Git remain explicit workstation
+prerequisites.
+
 The Operations and diagnostics submenu includes a `FULL`-confirmed complete
 vulnerability baseline and recommendation-relationship reconciliation. Normal
 scheduled collection uses deltas between weekly full vulnerability baselines.

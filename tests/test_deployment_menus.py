@@ -127,6 +127,12 @@ def test_powershell_menu_bootstraps_clean_windows_clone():
     assert '-m pip install --disable-pip-version-check -e "${RootDirectory}[dev]"' in powershell
     assert "importlib.util.find_spec('vulnerability_view.operations_cli')" in powershell
     assert "Vulnerability View is not importable" in powershell
+    assert '$RequiredAzureCliExtensions = @("log-analytics")' in powershell
+    assert "Get-Command az -ErrorAction SilentlyContinue" in powershell
+    assert "extension show --name $extension --output none" in powershell
+    assert "extension add --name $extension --allow-preview true --yes" in powershell
+    assert "Azure CLI extension '$extension' is not available after installation." in powershell
+    assert "Initialize-AzureCliExtensions" in powershell
 
 
 def test_application_teardown_scripts_require_four_confirmations_and_preserve_history():

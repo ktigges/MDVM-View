@@ -92,8 +92,10 @@ python3.14 -m venv .venv
 ```
 
 On Windows, the PowerShell menu creates `.venv-win`, installs Vulnerability
-View and its Python deployment dependencies, and verifies the operations CLI
-before showing the menu.
+View and its Python deployment dependencies, installs any missing required
+Azure CLI extensions, and verifies the operations CLI before showing the menu.
+Python, Azure CLI, Terraform, and Git remain workstation prerequisites and are
+not installed by the menu.
 
 ### 3. Configure the target environment
 

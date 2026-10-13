@@ -5,6 +5,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
+$RequiredAzureCliExtensions = @("log-analytics")
 
 function Test-PythonCommand {
     param([Parameter(Mandatory)]$Command)
@@ -86,7 +87,33 @@ function Initialize-PythonCommand {
     return $command
 }
 
+function Initialize-AzureCliExtensions {
+    $azureCli = Get-Command az -ErrorAction SilentlyContinue
+    if (-not $azureCli) {
+        throw "Azure CLI was not found. Install Azure CLI, close and reopen PowerShell, and try again."
+    }
+
+    foreach ($extension in $RequiredAzureCliExtensions) {
+        & $azureCli.Source extension show --name $extension --output none *> $null
+        if ($LASTEXITCODE -eq 0) {
+            continue
+        }
+
+        Write-Host "Installing required Azure CLI extension '$extension'."
+        & $azureCli.Source extension add --name $extension --allow-preview true --yes | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install required Azure CLI extension '$extension'. Review the Azure CLI error shown above."
+        }
+
+        & $azureCli.Source extension show --name $extension --output none *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Azure CLI extension '$extension' is not available after installation."
+        }
+    }
+}
+
 $PythonCommand = Initialize-PythonCommand
+Initialize-AzureCliExtensions
 
 function Invoke-OperationsCli {
     param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$CliArguments)

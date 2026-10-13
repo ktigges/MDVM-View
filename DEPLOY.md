@@ -80,9 +80,10 @@ Before starting the menu:
    `.\infra\deployment-menu.ps1` on Windows.
 
 On a clean Windows clone, the PowerShell menu creates `.venv-win`, installs the
-project and deployment dependencies, and verifies that the operations CLI is
-importable before showing deployment operations. Python 3.12 or newer, Azure
-CLI, Terraform, and Git must already be available as described below.
+project and deployment dependencies, installs any missing required Azure CLI
+extensions, and verifies that the operations CLI is importable before showing
+deployment operations. Python 3.12 or newer, Azure CLI, Terraform, and Git must
+already be available as described below.
 
 The detailed commands later in this guide explain what the menu performs and
 provide troubleshooting fallbacks. They are not the normal deployment path.
@@ -358,8 +359,10 @@ The deployment workstation needs:
 - Terraform 1.10 or newer, either on `PATH` or as `terraform.exe` in the
   repository root on Windows;
 - Azure CLI authenticated to the target tenant and subscription;
-- Azure CLI `log-analytics` extension for progress and Function-log checks:
-  `az extension add --name log-analytics --allow-preview true --yes`;
+- Azure CLI `log-analytics` extension for progress and Function-log checks; the
+  Windows PowerShell menu installs it when missing, or install it manually with
+  `az extension add --name log-analytics --allow-preview true --yes` when using
+  the operations CLI directly;
 - Python 3.12 or the tested Python 3.14.7 local runtime, with the project
   virtual environment;
 - Git;
