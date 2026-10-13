@@ -175,7 +175,7 @@ it is excluded from Git.
 The Python operations CLI calls:
 
 - `terraform init`, `validate`, `plan`, `show`, `apply`, and `output`;
-- `az storage container list`;
+- Azure Resource Manager container inventory through `az rest`;
 - `az functionapp` settings, restart, ZIP deployment, keys, and function listing;
 - Azure Resource Manager trigger synchronization through `az rest`;
 - `az webapp deploy`, deployment-log queries, and Web App inspection;

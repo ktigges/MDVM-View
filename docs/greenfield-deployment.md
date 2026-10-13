@@ -36,6 +36,8 @@ Only example files belong in the source repository.
 | `collector_management_group_id` | Management group ID containing the subscriptions to inventory; use the ID, not the display name or full resource path |
 | `resource_group_name` | New resource group name |
 | `location` | Region supported by Azure Functions Flex Consumption |
+| `web_app_location` | Optional App Service and Web App region; empty uses `location` |
+| `web_app_candidate_locations` | Optional additional customer-approved regions for quota checks |
 | `history_storage_account_name` | Globally unique name for protected ADLS Gen2 history |
 | `function_runtime_storage_account_name` | Globally unique name for replaceable Functions host storage |
 | `function_app_name` | Globally unique Function App name |
@@ -46,7 +48,7 @@ Only example files belong in the source repository.
 | `storage_soft_delete_days` | Recovery period from 7 through 365 days |
 | `history_immutability_days` | Minimum WORM retention for history blobs; 365 days for this environment |
 | `lock_history_immutability_policy` | Keep `false` until validation is complete; locking cannot be reversed or shortened |
-| `grant_deployer_history_access` | Grants the Terraform execution identity Blob data access for local seeding, backfill, restore, and status |
+| `grant_deployer_history_access` | Deprecated compatibility value; must remain `false` because operators receive no protected-history data role |
 | `tags` | Organization ownership, environment, application, and cost tags |
 
 Storage names must contain only lowercase letters and numbers and be 3-24
@@ -210,7 +212,7 @@ invocation and do not start a one-shot run while the timer is running.
 
 The optional cumulative Web App stage creates:
 
-- one Linux B2 App Service plan and Web App;
+- one Linux App Service plan and Web App using the explicitly approved region and SKU;
 - one user-assigned managed identity with Storage Blob Data Reader;
 - one single-tenant Entra application and Enterprise Application named `DVM Viewer`;
 - `Dashboard.Viewer` and `Data.Evidence.Reader` app roles;

@@ -152,6 +152,22 @@ def test_manual_collection_uses_flex_compatible_trigger_and_monitoring():
         assert function_name in function_logs
 
 
+def test_deployment_operations_do_not_use_operator_storage_data_plane():
+    operations = Path("src/vulnerability_view/operations_cli.py").read_text(encoding="utf-8")
+    check_runs = SHELL_FUNCTION_LOGS.with_name("check-runs.sh").read_text(encoding="utf-8")
+    deploy = SHELL_DEPLOY.read_text(encoding="utf-8")
+    terraform = Path("infra/terraform/main.tf").read_text(encoding="utf-8")
+    example_values = Path("infra/terraform/main.tfvars.example.json").read_text(encoding="utf-8")
+
+    for source in (operations, check_runs, deploy):
+        assert "--auth-mode\", \"login" not in source
+        assert "--auth-mode login" not in source
+        assert "az storage blob" not in source
+    assert 'resource "azurerm_role_assignment" "history_blob_contributor_deployer"' not in terraform
+    assert "principal_id       = data.azurerm_client_config.current.object_id" not in terraform
+    assert '"grant_deployer_history_access": false' in example_values
+
+
 def test_application_teardown_scripts_require_four_confirmations_and_preserve_history():
     shell = SHELL_TEARDOWN.read_text(encoding="utf-8")
     powershell = POWERSHELL_TEARDOWN.read_text(encoding="utf-8")

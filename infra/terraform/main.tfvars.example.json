@@ -15,7 +15,7 @@
   "storage_soft_delete_days": 30,
   "history_immutability_days": 365,
   "lock_history_immutability_policy": false,
-  "grant_deployer_history_access": true,
+  "grant_deployer_history_access": false,
   "network_security_perimeter_enabled": true,
   "network_security_perimeter_access_mode": "Enforced",
   "network_security_perimeter_allowed_ip_cidrs": [
@@ -29,6 +29,8 @@
   "web_app_name": "app-dvmviewer-test-replace123",
   "web_app_service_plan_name": "plan-dvmviewer-web-test-replace123",
   "web_app_identity_name": "id-dvmviewer-web-test-replace123",
+  "web_app_location": "",
+  "web_app_candidate_locations": [],
   "web_app_sku_name": "B2",
   "web_app_worker_processes": 1,
   "dashboard_entra_application_name": "DVM Viewer test replace123",

@@ -103,8 +103,8 @@ support solely from a smaller successful run.
 
 ## 5. Scheduled invocation but no current run
 
-`check-runs.sh` lists only immutable runs that reached publication. A timer can
-start successfully and still fail before publication.
+`check-runs.sh` lists telemetry emitted after managed-identity publication
+completed. A timer can start successfully and still fail before publication.
 
 ```bash
 ./infra/check-function-logs.sh 24 10
@@ -127,7 +127,7 @@ Until then the dashboard correctly continues serving the prior complete run.
 
 | Symptom | Check and action |
 |---|---|
-| Upload returns 403 | Grant Storage Blob Data Contributor to the collector or authorized local publisher at the history-account scope. |
+| Upload returns 403 | Confirm the collector managed identity has Storage Blob Data Contributor on the history account. Do not grant the deployment user direct history access. |
 | Dashboard Azure mode returns 503 | Confirm the current manifest exists and the reader identity has Storage Blob Data Reader. |
 | First Web App publish returns 502, 503, or 504 before the sign-in redirect | The ZIP deployment or application container may still be starting. The deployment menu waits for Kudu success and retries transient startup responses for five minutes. If the response persists, inspect the newest Kudu deployment and App Service application logs; do not delete or recreate retained Storage. |
 | Subscription selector omits a subscription | Confirm it is nested under `collector_management_group_id`, the collector has inherited Reader, and the next collection completed after the subscription was added. |

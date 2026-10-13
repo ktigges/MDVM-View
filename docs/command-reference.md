@@ -10,9 +10,9 @@ Run commands from the repository root unless a section says otherwise.
 | Need | Command |
 |---|---|
 | See whether the collector is active | `python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 3 --status-only` |
-| Show active progress plus published runs | `python -m vulnerability_view.operations_cli check-runs --limit 5 --progress` |
+| Show active progress plus managed-identity publication telemetry | `python -m vulnerability_view.operations_cli check-runs --limit 5 --progress` |
 | Inspect recent invocation requests | `python -m vulnerability_view.operations_cli check-function-logs --hours 24 --limit 10` |
-| List completed immutable runs | `python -m vulnerability_view.operations_cli check-runs --limit 10` |
+| List completed publication telemetry | `python -m vulnerability_view.operations_cli check-runs --limit 10` |
 | Deploy Function code only | `python -m vulnerability_view.operations_cli deploy function` |
 | Deploy Web App code only | `python -m vulnerability_view.operations_cli deploy webapp` |
 | Verify deployed Function | `python -m vulnerability_view.operations_cli verify function` |
@@ -359,9 +359,11 @@ watch -n 20 './infra/check-function-logs.sh 1 1 --status-only'
 ./infra/check-runs.sh 5 --progress
 ```
 
-`check-runs.sh` reads completed immutable manifests only. `--progress` first
-prints the active-run safety check, then lists published runs. The active run
-will not appear in the manifest list until publication completes.
+`check-runs.sh` queries Log Analytics through the Azure management plane.
+`--progress` first prints the active-run safety check, then lists telemetry
+emitted only after the collector managed identity completed the Storage
+upload. It never lists or downloads blobs as the signed-in operator. Records
+are limited by the Log Analytics retention period.
 
 The status checker uses both Function execution traces and completed
 `AppRequests` telemetry for scheduled, manual scheduled-policy, and manual full

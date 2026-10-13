@@ -97,10 +97,13 @@ Azure CLI extensions, and verifies the operations CLI before showing the menu.
 Python, Azure CLI, Terraform, and Git remain workstation prerequisites and are
 not installed by the menu.
 
-Before a Web App infrastructure plan, the menu checks regional App Service
-quota. If the configured SKU has no deployable capacity, it shows supported
-SKUs that do, requires an explicit capacity-and-cost selection, updates only
-`web_app_sku_name` in `main.tfvars.json`, and then creates a fresh plan.
+Before a Web App infrastructure plan, the menu checks App Service quota in the
+configured Web App region and any additional customer-approved candidate
+regions. If the configured SKU has no deployable capacity, the operator can
+check another approved region, select an available Basic, Standard, Premium v3,
+or Premium v4 option, and confirm the exact region/SKU pair. The menu updates
+only `web_app_location` and `web_app_sku_name` before creating a fresh plan;
+the protected Storage and Function region does not change.
 
 ### 3. Configure the target environment
 
@@ -139,6 +142,8 @@ At minimum, replace or confirm these environment-specific values in
 | `web_app_name` | Globally unique Web App name |
 | `web_app_service_plan_name` | App Service plan name |
 | `web_app_identity_name` | Dashboard managed-identity name |
+| `web_app_location` | Optional App Service and Web App region; empty uses `location` |
+| `web_app_candidate_locations` | Optional customer-approved regions to include in quota checks |
 | `network_security_perimeter_allowed_ip_cidrs` | Approved source CIDRs, or the documented initial `0.0.0.0/0` value while perimeter behavior is validated |
 
 #### Choose unique deployment names

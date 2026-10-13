@@ -85,13 +85,20 @@ extensions, and verifies that the operations CLI is importable before showing
 deployment operations. Python 3.12 or newer, Azure CLI, Terraform, and Git must
 already be available as described below.
 
-Before planning the cumulative Web App stage, the menu queries regional App
-Service quota. It keeps an existing plan on its configured SKU and otherwise
-continues with the configured SKU when capacity is available. If capacity is
-unavailable, the operator must explicitly select a supported SKU with quota;
-the menu updates `web_app_sku_name` in `main.tfvars.json` before creating the
-new plan. The selection is never automatic because it changes capacity and
-cost.
+Before planning the cumulative Web App stage, the menu queries App Service
+quota in `web_app_location` (or `location` when it is empty) and any configured
+`web_app_candidate_locations`. It preserves an existing plan and otherwise
+continues when the configured region/SKU has capacity. If capacity is
+unavailable, the operator may enter another customer-approved region, select
+an available Basic, Standard, Premium v3, or Premium v4 option, and type the
+exact region/SKU pair. The menu updates `web_app_location` and
+`web_app_sku_name` before creating the new plan. Selection is never automatic
+because region and SKU affect latency, data transfer, capacity, and cost.
+
+Only the App Service plan and Web App use `web_app_location`. Protected
+history, Function resources, and the dashboard managed identity remain in
+`location`, so selecting another Web App region does not move retained history
+or replace an already-created managed identity.
 
 The detailed commands later in this guide explain what the menu performs and
 provide troubleshooting fallbacks. They are not the normal deployment path.
@@ -563,11 +570,11 @@ The wrapper supplies the cumulative deployment-stage values:
 - `plan function` enables the Function and keeps the Web App disabled.
 - `plan webapp` enables both the Function and Web App as the cumulative stage.
 
-`grant_deployer_history_access=true` grants the identity executing Terraform
-Storage Blob Data Contributor on the new history account. With interactive
-Azure CLI authentication, this is the currently signed-in local operator. Keep
-it enabled when that operator will run status, restore, backfill, or synthetic
-seeding commands.
+`grant_deployer_history_access` is retained only for configuration
+compatibility and must be `false`. Terraform never grants the execution
+identity a protected-history data role. The signed-in operator is used for
+management-plane deployment, verification, diagnostics, and Function
+invocation; hosted Storage and Defender access uses managed identities.
 
 `config/vulnerability-view.example.json` is an optional local CLI configuration
 template. It is not read by Terraform and is not packaged into the Function.
@@ -679,11 +686,11 @@ Terraform then grants the collector managed identity:
 
 No collector client secret, operator username, or password is created or stored.
 
-Uploading existing local history requires Storage Blob Data Contributor on the
-history account. The foundation assigns this automatically to the Terraform
-execution identity when `grant_deployer_history_access=true`. Azure subscription
-Owner or Contributor alone does not automatically provide Blob data-plane
-access.
+The deployment does not grant a local user permission to upload existing
+history. Local migration commands must use `--local-only`. Production
+publication occurs inside the deployed Function under the collector managed
+identity. A separately approved Azure-hosted migration identity and workflow
+would be required for an exceptional historical migration.
 
 The hosted collector uses its user-assigned managed identity and has no client
 secret.
@@ -698,9 +705,10 @@ authorized roles when organizational policy requires them.
 
 ## Runtime identities and permissions
 
-Terraform uses the signed-in operator only for deployment and explicitly
-requested local storage operations. Hosted workloads use separate user-assigned
-managed identities:
+Terraform and operational scripts use the signed-in operator only for
+management-plane deployment, verification, diagnostics, and Function
+invocation. They do not use the operator for Storage or Defender data-plane
+access. Hosted workloads use separate user-assigned managed identities:
 
 | Identity | Permission | Scope and purpose |
 |---|---|---|
@@ -767,8 +775,7 @@ Both ZIP files are local build artifacts and must not be committed.
    - Holds only `current/manifest.json`.
    - Has no immutability policy because the pointer must be replaceable.
    - Terraform `prevent_destroy`.
-6. Storage Blob Data Contributor on the history account for the identity running
-   Terraform when `grant_deployer_history_access=true`.
+6. No protected-history data role for the Terraform execution identity.
 
 Soft delete and WORM serve different purposes. The 30-day soft-delete window
 allows recovery after an eligible blob or container is deleted; it never
@@ -1185,9 +1192,8 @@ az monitor log-analytics query \
   --output table
 ```
 
-`TimeGenerated` is UTC. A failed invocation may not appear in
-`check-runs.sh` because the current manifest advances only after successful
-publication.
+`TimeGenerated` is UTC. A failed invocation does not emit a publication record
+for `check-runs.sh`; inspect Function diagnostics for the failure.
 
 ## Deploy the authenticated dashboard Web App
 

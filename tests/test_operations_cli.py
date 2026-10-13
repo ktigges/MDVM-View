@@ -86,7 +86,7 @@ def test_configure_webapp_sku_requires_explicit_available_fallback(monkeypatch, 
             ],
         },
     ])
-    answers = iter(["1", "P0v3"])
+    answers = iter(["1", "eastus2/P0v3"])
     monkeypatch.setattr(operations_cli, "TF_VARS", values_file)
     monkeypatch.setattr(operations_cli, "_values", lambda: dict(values))
     monkeypatch.setattr(operations_cli, "_azure_json", lambda *args: next(responses))
@@ -94,7 +94,9 @@ def test_configure_webapp_sku_requires_explicit_available_fallback(monkeypatch, 
 
     operations_cli.configure_webapp_sku()
 
-    assert json.loads(values_file.read_text(encoding="utf-8"))["web_app_sku_name"] == "P0v3"
+    updated = json.loads(values_file.read_text(encoding="utf-8"))
+    assert updated["web_app_location"] == "eastus2"
+    assert updated["web_app_sku_name"] == "P0v3"
 
 
 def test_configure_webapp_sku_preserves_existing_plan_without_spare_quota(monkeypatch):
@@ -114,6 +116,107 @@ def test_configure_webapp_sku_preserves_existing_plan_without_spare_quota(monkey
     monkeypatch.setattr("builtins.input", lambda *args: (_ for _ in ()).throw(AssertionError("unexpected prompt")))
 
     operations_cli.configure_webapp_sku()
+
+
+def test_configure_webapp_sku_reports_all_supported_zero_quotas(monkeypatch, capsys):
+    values = {
+        "subscription_id": "subscription-test",
+        "resource_group_name": "rg-test",
+        "web_app_service_plan_name": "plan-test",
+        "web_app_sku_name": "B2",
+        "location": "eastus2",
+    }
+    responses = iter([
+        [],
+        {
+            "value": [
+                {"name": {"value": sku}, "currentValue": 0, "limit": 0}
+                for sku in operations_cli.SUPPORTED_WEB_APP_SKUS
+            ],
+        },
+    ])
+    monkeypatch.setattr(operations_cli, "_values", lambda: values)
+    monkeypatch.setattr(operations_cli, "_azure_json", lambda *args: next(responses))
+    monkeypatch.setattr("builtins.input", lambda *args: "")
+
+    with pytest.raises(RuntimeError, match="No supported App Service SKU"):
+        operations_cli.configure_webapp_sku()
+
+    output = capsys.readouterr().out
+    for sku in operations_cli.SUPPORTED_WEB_APP_SKUS:
+        assert f"  {sku}" in output
+    assert output.count("available=0") == len(operations_cli.SUPPORTED_WEB_APP_SKUS)
+
+
+def test_configure_webapp_sku_can_select_premium_v4_in_another_region(monkeypatch, tmp_path):
+    values_file = tmp_path / "main.tfvars.json"
+    values = {
+        "subscription_id": "subscription-test",
+        "resource_group_name": "rg-test",
+        "web_app_service_plan_name": "plan-test",
+        "web_app_sku_name": "B2",
+        "location": "eastus2",
+    }
+    values_file.write_text(json.dumps(values), encoding="utf-8")
+    responses = iter([
+        [],
+        {"value": [{"name": {"value": "B2"}, "currentValue": 0, "limit": 0}]},
+        {"value": [{"name": {"value": "P0v4"}, "currentValue": 0, "limit": 30}]},
+    ])
+    answers = iter(["East US", "1", "eastus/P0v4"])
+    monkeypatch.setattr(operations_cli, "TF_VARS", values_file)
+    monkeypatch.setattr(operations_cli, "_values", lambda: dict(values))
+    monkeypatch.setattr(operations_cli, "_azure_json", lambda *args: next(responses))
+    monkeypatch.setattr("builtins.input", lambda *args: next(answers))
+
+    operations_cli.configure_webapp_sku()
+
+    updated = json.loads(values_file.read_text(encoding="utf-8"))
+    assert updated["web_app_location"] == "eastus"
+    assert updated["web_app_sku_name"] == "P0v4"
+
+
+def test_configure_webapp_sku_preserves_existing_plan_configuration(monkeypatch, tmp_path):
+    values_file = tmp_path / "main.tfvars.json"
+    values = {
+        "subscription_id": "subscription-test",
+        "resource_group_name": "rg-test",
+        "web_app_service_plan_name": "plan-test",
+        "web_app_sku_name": "B2",
+        "location": "eastus2",
+    }
+    values_file.write_text(json.dumps(values), encoding="utf-8")
+    monkeypatch.setattr(operations_cli, "TF_VARS", values_file)
+    monkeypatch.setattr(operations_cli, "_values", lambda: dict(values))
+    monkeypatch.setattr(
+        operations_cli,
+        "_azure_json",
+        lambda *args: [{
+            "name": "plan-test",
+            "resourceGroup": "rg-test",
+            "location": "East US",
+            "sku": {"name": "P0v4"},
+        }],
+    )
+
+    operations_cli.configure_webapp_sku()
+
+    updated = json.loads(values_file.read_text(encoding="utf-8"))
+    assert updated["web_app_location"] == "eastus"
+    assert updated["web_app_sku_name"] == "P0v4"
+
+
+def test_webapp_location_does_not_move_foundation_or_managed_identity():
+    terraform = (operations_cli.TF_DIR / "main.tf").read_text(encoding="utf-8")
+
+    assert "web_app_location   = trimspace(var.web_app_location)" in terraform
+    assert terraform.count("location            = local.web_app_location") == 1
+    assert terraform.count("location                                       = local.web_app_location") == 1
+    dashboard_identity = terraform.split(
+        'resource "azurerm_user_assigned_identity" "dashboard" {',
+        maxsplit=1,
+    )[1].split("}", maxsplit=1)[0]
+    assert "location            = var.location" in dashboard_identity
 
 
 def test_log_query_has_bounded_timeout(monkeypatch):
@@ -200,21 +303,49 @@ def test_function_status_uses_completed_request_when_completion_trace_is_missing
 
 
 def test_check_runs_allows_empty_history_before_first_publication(monkeypatch, capsys):
-    monkeypatch.delenv("STORAGE_ACCOUNT_NAME", raising=False)
-    monkeypatch.delenv("STORAGE_CONTAINER_NAME", raising=False)
     monkeypatch.setattr(
         operations_cli,
-        "_values",
-        lambda: {
-            "history_storage_account_name": "history-test",
-            "history_container_name": "dvm-history",
-        },
+        "_workspace_context",
+        lambda: ({"subscription_id": "subscription-test"}, "workspace-test"),
     )
-    monkeypatch.setattr(operations_cli, "_az_json", lambda *args, **kwargs: [])
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: [])
 
     operations_cli.check_runs(5, False)
 
-    assert "No published durable runs found in history-test/dvm-history." in capsys.readouterr().out
+    assert "No managed-identity publication telemetry was found" in capsys.readouterr().out
+
+
+def test_check_runs_uses_management_plane_telemetry(monkeypatch, capsys):
+    monkeypatch.setattr(
+        operations_cli,
+        "_workspace_context",
+        lambda: ({"subscription_id": "subscription-test"}, "workspace-test"),
+    )
+    monkeypatch.setattr(
+        operations_cli,
+        "_log_query",
+        lambda *args, **kwargs: [{
+            "TimeGenerated": "2026-10-13T20:00:00Z",
+            "RunId": "live-20261013T200000Z",
+            "SnapshotUtc": "2026-10-13T20:00:00Z",
+            "Status": "Success",
+            "Findings": 9235,
+            "Files": 115,
+            "ReportedIssues": 0,
+        }],
+    )
+    monkeypatch.setattr(
+        operations_cli,
+        "_az_json",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected Storage data-plane call")),
+    )
+
+    operations_cli.check_runs(5, False)
+
+    output = capsys.readouterr().out
+    assert "live-20261013T200000Z" in output
+    assert "Findings:         9235" in output
+    assert "Published files:  115" in output
 
 
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):

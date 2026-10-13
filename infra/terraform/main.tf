@@ -49,6 +49,7 @@ data "azurerm_client_config" "current" {}
 locals {
   function_instances = var.deploy_function ? { collector = true } : {}
   web_app_instances  = var.deploy_web_app ? { dashboard = true } : {}
+  web_app_location   = trimspace(var.web_app_location) != "" ? var.web_app_location : var.location
   network_security_perimeter_instances = var.network_security_perimeter_enabled ? {
     storage = true
   } : {}
@@ -206,14 +207,6 @@ resource "azapi_update_resource" "history_storage_secured_by_perimeter" {
   depends_on = [
     azurerm_network_security_perimeter_association.history_storage,
   ]
-}
-
-resource "azurerm_role_assignment" "history_blob_contributor_deployer" {
-  count = var.grant_deployer_history_access ? 1 : 0
-
-  scope              = azurerm_storage_account.history.id
-  role_definition_id = local.role_definition_ids.storage_blob_data_contributor
-  principal_id       = data.azurerm_client_config.current.object_id
 }
 
 resource "azurecaf_name" "service_plan" {
@@ -685,7 +678,7 @@ resource "azurerm_service_plan" "dashboard" {
 
   name                = var.web_app_service_plan_name
   resource_group_name = azurerm_resource_group.environment.name
-  location            = var.location
+  location            = local.web_app_location
   os_type             = "Linux"
   sku_name            = var.web_app_sku_name
   tags                = var.tags
@@ -696,7 +689,7 @@ resource "azurerm_linux_web_app" "dashboard" {
 
   name                                           = var.web_app_name
   resource_group_name                            = azurerm_resource_group.environment.name
-  location                                       = var.location
+  location                                       = local.web_app_location
   service_plan_id                                = azurerm_service_plan.dashboard[each.key].id
   https_only                                     = true
   ftp_publish_basic_authentication_enabled       = false

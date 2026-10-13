@@ -73,10 +73,10 @@ def test_function_schedule_is_setting_driven_and_client_secret_is_locally_guarde
 def test_run_status_script_supports_macos_system_bash():
     script = Path("infra/check-runs.sh").read_text()
 
-    assert '${SHOW_EXPERIMENTAL,,}' not in script
     assert "mapfile" not in script
-    assert 'case "$SHOW_EXPERIMENTAL" in' in script
-    assert "while IFS= read -r manifest" in script
+    assert "readarray" not in script
+    assert 'exec "$PYTHON_BIN" -m vulnerability_view.operations_cli' in script
+    assert "az storage" not in script
 
 
 def test_function_log_check_supports_linux_and_macos_date():

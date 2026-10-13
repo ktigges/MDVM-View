@@ -144,9 +144,14 @@ variable "lock_history_immutability_policy" {
 }
 
 variable "grant_deployer_history_access" {
-  description = "Grant the identity running Terraform Storage Blob Data Contributor on the history account for local status, restore, backfill, and synthetic seeding."
+  description = "Deprecated compatibility setting. Direct deployer access to protected history is prohibited."
   type        = bool
-  default     = true
+  default     = false
+
+  validation {
+    condition     = !var.grant_deployer_history_access
+    error_message = "grant_deployer_history_access must be false. Runtime data access uses managed identities; deployment operators receive no Storage data-plane role."
+  }
 }
 
 variable "network_security_perimeter_enabled" {
@@ -204,10 +209,33 @@ variable "web_app_identity_name" {
   type        = string
 }
 
+variable "web_app_location" {
+  description = "Azure region for the App Service plan and dashboard Web App. Empty uses the protected foundation and Function location."
+  type        = string
+  default     = ""
+}
+
+variable "web_app_candidate_locations" {
+  description = "Additional customer-approved regions whose App Service quota the deployment menu may check before creating a plan."
+  type        = set(string)
+  default     = []
+}
+
 variable "web_app_sku_name" {
   description = "Linux App Service SKU for the dashboard."
   type        = string
   default     = "B2"
+
+  validation {
+    condition = contains([
+      "B1", "B2", "B3",
+      "S1", "S2", "S3",
+      "P0v3", "P1v3", "P2v3", "P3v3",
+      "P0v4", "P1v4", "P2v4", "P3v4",
+      "P1mv4", "P2mv4", "P3mv4", "P4mv4", "P5mv4",
+    ], var.web_app_sku_name)
+    error_message = "web_app_sku_name must be an approved Basic, Standard, Premium v3, or Premium v4 SKU."
+  }
 }
 
 variable "web_app_worker_processes" {

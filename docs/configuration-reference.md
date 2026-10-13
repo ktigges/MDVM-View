@@ -95,7 +95,7 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `storage_soft_delete_days` | `30`; 7-365 | Blob/container recovery window |
 | `history_immutability_days` | `365`; 1-146000 | Minimum WORM retention for history blobs |
 | `lock_history_immutability_policy` | `false` | Permanently locks WORM policy when true; cannot be reversed or shortened |
-| `grant_deployer_history_access` | `true` | Grants the Terraform execution identity Blob Data Contributor for status, restore, backfill, and seeding |
+| `grant_deployer_history_access` | `false`; must remain false | Deprecated compatibility setting; direct deployer access to protected history is prohibited |
 | `network_security_perimeter_enabled` | `true` | Creates a shared Storage Network Security Perimeter profile and associates the history and Function runtime accounts |
 | `network_security_perimeter_access_mode` | `Enforced`; `Audit`, `Enforced`, or `Learning` | Controls the access mode used by both Storage associations |
 | `network_security_perimeter_allowed_ip_cidrs` | `["0.0.0.0/0"]`; valid IPv4/IPv6 CIDRs | Allows public source networks through the perimeter; the default does not restrict IPv4 addresses yet |
@@ -357,16 +357,16 @@ Asset query versions in `dashboard/index.html` control browser cache busting for
 | `infra/deploy.sh` | `tfplan`, `tfapply`, `tfdeploy`, `tfverify`, `tfinvoke`, or `tfdestroy` plus stage | Selects the deployment operation |
 | `infra/deploy.sh` | `CONFIRM_LIVE_COLLECTION=yes` | Required acknowledgement before manual collection |
 | `infra/deploy.sh` | `CONFIRM_TF_DESTROY_FUNCTION=yes` | Required before removing only replaceable Function infrastructure |
-| `infra/check-runs.sh` | Optional positive count | Number of published immutable run manifests to inspect |
-| `infra/check-runs.sh` | `STORAGE_ACCOUNT_NAME`, `STORAGE_CONTAINER_NAME` | Optional history-location overrides |
-| `infra/check-runs.sh` | `ENABLE_EXPERIMENTAL_ENDPOINTS` | Includes experimental endpoint results |
+| `infra/check-runs.sh` | Optional positive count | Number of managed-identity publication telemetry records to inspect |
 | `infra/check-function-logs.sh` | Optional positive hours and count | Log window and invocation count |
 | `infra/check-function-logs.sh` | `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `FUNCTION_APP_NAME`, `LOG_ANALYTICS_WORKSPACE_NAME` | Optional diagnostic target overrides |
 
-Operational status scripts are read-only. Run and invocation timestamps show
-both the source UTC value and the local time zone of the machine running the
-script. `check-runs.sh` lists only completed, published manifests; failed
-invocations that never publish a manifest appear only in Function diagnostics.
+Operational status scripts use Azure management-plane telemetry and never
+request a Storage data-plane token for the signed-in operator. Run and
+invocation timestamps show both UTC and the local time zone.
+`check-runs.sh` lists publication records emitted after managed-identity
+Storage upload completed; failed invocations appear only in Function
+diagnostics.
 
 ## 11. Dependency and packaging configuration
 

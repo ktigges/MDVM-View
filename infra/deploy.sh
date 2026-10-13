@@ -447,10 +447,16 @@ tf_verify() {
   fi
   case "$stage" in
     foundation)
-      az storage container list \
-        --account-name "$history_account" \
-        --auth-mode login \
-        --query '[].name' \
+      local history_account_id
+      history_account_id="$(az storage account show \
+        --resource-group "$resource_group" \
+        --name "$history_account" \
+        --query id \
+        --output tsv)"
+      az rest \
+        --method get \
+        --url "https://management.azure.com${history_account_id}/blobServices/default/containers?api-version=2023-05-01" \
+        --query 'value[].name' \
         --output table
       ;;
     function)
