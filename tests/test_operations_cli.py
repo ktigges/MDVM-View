@@ -531,17 +531,17 @@ def test_web_package_stamps_version_revision_and_cache_keys(tmp_path: Path):
     assert html.count("?v=20261008150000") == 3
 
 
-def test_webapp_deployment_restarts_only_after_kudu_completes(monkeypatch, tmp_path: Path):
+def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, tmp_path: Path):
     calls: list[tuple[object, ...]] = []
-    deployment_reads = 0
+    statuses = iter([
+        ({"deploymentId": "previous-deployment", "status": "RuntimeSuccessful"}, ""),
+        ({"deploymentId": "new-deployment", "status": "BuildSuccessful"}, ""),
+    ])
 
     def fake_az(*args, **kwargs):
-        nonlocal deployment_reads
         calls.append(args)
-        stdout = ""
-        if args[:4] == ("webapp", "log", "deployment", "list"):
-            deployment_reads += 1
-            stdout = "previous-deployment\n" if deployment_reads == 1 else "new-deployment\t4\n"
+        stdout = "/subscriptions/test/resourceGroups/rg-test/providers/Microsoft.Web/sites/app-test\n" \
+            if args[:2] == ("webapp", "show") else ""
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
@@ -555,6 +555,7 @@ def test_webapp_deployment_restarts_only_after_kudu_completes(monkeypatch, tmp_p
     monkeypatch.setattr(operations_cli, "_zip_tree", lambda *args, **kwargs: None)
     monkeypatch.setattr(operations_cli, "_stamp_web_package", lambda *args, **kwargs: None)
     monkeypatch.setattr(operations_cli, "_az", fake_az)
+    monkeypatch.setattr(operations_cli, "_webapp_onedeploy_status", lambda *args: next(statuses))
 
     operations_cli.deploy_webapp()
 
@@ -566,7 +567,19 @@ def test_webapp_deployment_restarts_only_after_kudu_completes(monkeypatch, tmp_p
     start_index = next(index for index, call in enumerate(calls) if call[:2] == ("webapp", "start"))
     assert calls[deploy_index][calls[deploy_index].index("--restart") + 1] == "false"
     assert deploy_index < settings_index < start_index
-    assert deployment_reads == 2
+    assert not any(call[:4] == ("webapp", "log", "deployment", "list") for call in calls)
+
+
+def test_webapp_deployment_reports_onedeploy_failure(monkeypatch):
+    statuses = iter([
+        ({"deploymentId": "previous-deployment", "status": "RuntimeSuccessful"}, ""),
+        ({"deploymentId": "new-deployment", "status": "BuildFailed", "errors": ["build error"]}, ""),
+    ])
+    monkeypatch.setattr(operations_cli, "_webapp_onedeploy_status", lambda *args: next(statuses))
+
+    previous, _ = operations_cli._webapp_onedeploy_status("resource-id")
+    with pytest.raises(RuntimeError, match="BuildFailed"):
+        operations_cli._wait_for_webapp_deployment("resource-id", previous["deploymentId"])
 
 
 def test_webapp_deployment_rejects_mismatched_source_version(monkeypatch, tmp_path: Path):
