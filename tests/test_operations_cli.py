@@ -646,6 +646,11 @@ def test_check_runs_uses_management_plane_telemetry(monkeypatch, capsys):
 
 
 def test_check_runs_surfaces_authoritative_status_failure(monkeypatch):
+    monkeypatch.setattr(
+        operations_cli,
+        "_workspace_context",
+        lambda: ({"subscription_id": "subscription-test"}, "workspace-test"),
+    )
     monkeypatch.setattr(operations_cli, "_tf_output", lambda name: f"{name}-test")
     monkeypatch.setattr(
         operations_cli,
@@ -667,6 +672,42 @@ def test_check_runs_surfaces_authoritative_status_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Function publication-status lookup failed: Status lookup failed"):
         operations_cli.check_runs(5, False)
+
+
+def test_check_runs_reuses_workspace_and_publication_status_for_progress(monkeypatch):
+    context = ({"subscription_id": "subscription-test"}, "workspace-test")
+    publication_status = {"published": False, "reason": "No current manifest"}
+    context_calls = []
+    status_calls = []
+    progress_calls = []
+    monkeypatch.setattr(
+        operations_cli,
+        "_workspace_context",
+        lambda: context_calls.append(True) or context,
+    )
+    monkeypatch.setattr(
+        operations_cli,
+        "_function_publication_status",
+        lambda: status_calls.append(True) or publication_status,
+    )
+    monkeypatch.setattr(
+        operations_cli,
+        "check_function_logs",
+        lambda *args, **kwargs: progress_calls.append((args, kwargs)) or "NONE",
+    )
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: [])
+
+    operations_cli.check_runs(5, True)
+
+    assert context_calls == [True]
+    assert status_calls == [True]
+    assert progress_calls == [(
+        (1, 1, True),
+        {
+            "workspace_context": context,
+            "publication_status": publication_status,
+        },
+    )]
 
 
 def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_path, capsys):

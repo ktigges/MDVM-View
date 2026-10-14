@@ -9,6 +9,8 @@ SHELL_FULL_TEARDOWN = Path("infra/destroy-test-environment.sh")
 POWERSHELL_FULL_TEARDOWN = Path("infra/destroy-test-environment.ps1")
 SHELL_DEPLOY = Path("infra/deploy.sh")
 SHELL_FUNCTION_LOGS = Path("infra/check-function-logs.sh")
+SHELL_GITHUB_WORKFLOW = Path("infra/github-workflow-menu.sh")
+POWERSHELL_GITHUB_WORKFLOW = Path("infra/github-workflow-menu.ps1")
 
 
 def menu_sources() -> tuple[str, str]:
@@ -133,6 +135,18 @@ def test_deployment_menus_show_version_and_revision_in_title():
     assert '$DeploymentMenuVersion = "2026.10.14.3"' in powershell
     assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
+
+
+def test_github_workflow_menus_offer_single_publish_and_promote_action():
+    shell = SHELL_GITHUB_WORKFLOW.read_text(encoding="utf-8")
+    powershell = POWERSHELL_GITHUB_WORKFLOW.read_text(encoding="utf-8")
+
+    for source in (shell, powershell):
+        assert "3) Test once, publish main, and promote latest" in source
+        assert "4) Validate customer release readiness" in source
+        assert "5) Exit" in source
+        assert "publish-and-promote" in source
+        assert "RELEASE" in source
 
 
 def test_powershell_menu_bootstraps_clean_windows_clone():
