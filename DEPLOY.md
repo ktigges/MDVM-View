@@ -1157,8 +1157,10 @@ List the latest ten durable Azure runs and their manifest status:
 ```
 
 Pass a different positive count when needed, for example
-`./infra/check-runs.sh 20`. The script performs read-only Azure operations and
-uses a temporary local download directory that it removes on exit.
+`./infra/check-runs.sh 20`. The script performs read-only Azure management
+operations. Its key-protected Function status endpoint reads the current
+manifest with the collector managed identity; the signed-in operator does not
+list or download Storage blobs.
 
 This lists only runs that reached immutable manifest publication. To see timer
 invocations that failed before a run was published, query the Function's
@@ -1174,9 +1176,11 @@ The optional arguments are the lookback in hours and maximum invocation count:
 ./infra/check-function-logs.sh 48 20
 ```
 
-The script displays recent invocations, automatically investigates the newest
-failure, prints its warning/error traces and correlated exceptions, and reports
-the Function's minute-by-minute memory working set. It is read-only.
+The script correlates recent trigger requests, Function execution traces, and
+publication telemetry. A completed publication displays its run ID, status,
+finding count, published-file count, reported-issue count, and UTC/local
+completion time. Detailed output also prints retained collection traces,
+exceptions, and failed dependencies. It is read-only.
 
 The equivalent query can be run after resolving the workspace GUID from the
 Log Analytics workspace:

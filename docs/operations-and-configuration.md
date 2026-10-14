@@ -16,10 +16,12 @@ symptom-led diagnosis use [Troubleshooting](troubleshooting.md).
 ./infra/check-runs.sh 5 --progress
 ```
 
-The first command checks Function invocation state. The second combines current
-progress with completed immutable runs. Both show UTC together with the local
-time zone of the machine running the command. Do not invoke manually while
-status is `ACTIVE` or `INDETERMINATE`.
+The first command correlates trigger requests, Function traces, and publication
+telemetry. A published run includes its finding, file, and issue counts. The
+second combines current progress with the current manifest read by the
+collector managed identity and retained publication telemetry. Both show UTC
+together with the local time zone of the machine running the command. Do not
+invoke manually while status is `ACTIVE` or `INDETERMINATE`.
 
 The scripts support the macOS system Bash 3.2 and Linux Bash. They can be
 launched directly from zsh; no Homebrew Bash installation is required.

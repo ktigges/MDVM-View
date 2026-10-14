@@ -359,17 +359,19 @@ watch -n 20 './infra/check-function-logs.sh 1 1 --status-only'
 ./infra/check-runs.sh 5 --progress
 ```
 
-`check-runs.sh` queries Log Analytics through the Azure management plane.
-`--progress` first prints the active-run safety check, then lists telemetry
-emitted only after the collector managed identity completed the Storage
-upload. It never lists or downloads blobs as the signed-in operator. Records
-are limited by the Log Analytics retention period.
+`check-runs.sh` calls the key-protected Function status endpoint, which reads
+the current manifest with the collector managed identity, and then queries Log
+Analytics through the Azure management plane for retained publication history.
+`--progress` first prints the active-run safety check. It never lists or
+downloads blobs as the signed-in operator. Historical records are limited by
+the Log Analytics retention period.
 
-The status checker uses both Function execution traces and completed
-`AppRequests` telemetry for scheduled, manual scheduled-policy, and manual full
-invocations. This avoids reporting a successfully completed run as
-`INDETERMINATE` when Azure emits the request result but omits the usual
-`Executed 'Functions.dataprep_snapshot'` trace.
+The status checker correlates Function execution traces, `AppRequests`, and
+`[publication]` telemetry for scheduled, manual scheduled-policy, and manual
+full invocations. A successful request means only that Azure accepted the
+trigger. A publication record is the completed-run evidence and includes the
+run ID, result, finding count, published-file count, reported-issue count, and
+completion time.
 
 The operations submenu also provides **Force full vulnerability and
 relationship reconciliation**. It checks active-run safety, requires typing
@@ -386,8 +388,10 @@ run and does not replace retained history.
 ```
 
 Arguments are lookback hours and invocation count. Without `--status-only`, the
-script also shows completed requests, latest failure traces, exceptions, and
-minute-level peak memory.
+script also shows recent requests and retained collection traces, exceptions,
+and failed dependencies. When the latest invocation published successfully,
+the activity summary includes its run ID, result, finding count,
+published-file count, reported-issue count, and UTC/local completion time.
 
 All three diagnostic forms are read-only.
 

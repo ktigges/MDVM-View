@@ -288,7 +288,7 @@ def test_function_status_distinguishes_failed_execution_from_success(monkeypatch
     assert "Completed local:" in output
 
 
-def test_function_status_uses_completed_request_when_completion_trace_is_missing(monkeypatch, capsys):
+def test_function_status_does_not_treat_accepted_request_as_completed(monkeypatch, capsys):
     monkeypatch.setattr(
         operations_cli,
         "_workspace_context",
@@ -297,7 +297,7 @@ def test_function_status_uses_completed_request_when_completion_trace_is_missing
     responses = iter([
         [{
             "InvocationId": "completed-invocation",
-            "StartedUtc": "2026-10-11T18:20:51Z",
+            "StartedUtc": "2026-10-11T18:20:49Z",
             "CompletedUtc": None,
             "CompletionStatus": None,
         }],
@@ -307,13 +307,14 @@ def test_function_status_uses_completed_request_when_completion_trace_is_missing
             "DurationMs": 977000,
             "ResultCode": "0",
         }],
+        [],
     ])
     monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
 
-    assert operations_cli.check_function_logs(1, 3, True) == "SUCCEEDED"
+    assert operations_cli.check_function_logs(1, 3, True) == "INDETERMINATE"
     output = capsys.readouterr().out
-    assert "Result:            Succeeded" in output
-    assert "Completed local:" in output
+    assert "trigger request accepted" in output
+    assert "Execution and publication are not confirmed" in output
 
 
 def test_function_status_uses_request_when_start_trace_is_missing(monkeypatch, capsys):
@@ -332,15 +333,16 @@ def test_function_status_uses_request_when_start_trace_is_missing(monkeypatch, c
             "OperationId": "request-operation",
             "FunctionName": "dataprep_snapshot",
         }],
+        [],
     ])
     monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
 
-    assert operations_cli.check_function_logs(24, 3, True) == "SUCCEEDED"
+    assert operations_cli.check_function_logs(24, 3, True) == "INDETERMINATE"
     output = capsys.readouterr().out
     assert "request-operation" in output
     assert "dataprep_snapshot" in output
     assert "No invocation was found" not in output
-    assert "INACTIVE - invocation completed" in output
+    assert "trigger request accepted" in output
 
 
 def test_telemetry_value_accepts_aliases_case_insensitively():
@@ -370,6 +372,16 @@ def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, caps
     responses = iter([
         [],
         [request],
+        [{
+            "TimeGenerated": "2026-10-14T05:10:00Z",
+            "OperationId": "request-operation",
+            "RunId": "live-test",
+            "SnapshotUtc": "2026-10-14T04:59:59Z",
+            "PublicationStatus": "Success",
+            "Findings": 19638,
+            "Files": 115,
+            "ReportedIssues": 0,
+        }],
         [request],
         [{
             "TimeGenerated": "2026-10-14T05:10:00Z",
@@ -382,12 +394,32 @@ def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, caps
     operations_cli.check_function_logs(24, 3, False)
 
     output = capsys.readouterr().out
+    assert "Result:            Success" in output
+    assert "Run ID:            live-test" in output
+    assert "Findings:          19638" in output
+    assert "Published files:   115" in output
+    assert "Reported issues:   0" in output
     assert "Duration:  unavailable" in output
     assert "Collector execution evidence:" in output
     assert "[publication] runId=live-test status=Success" in output
 
 
 def test_check_runs_allows_empty_history_before_first_publication(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: f"{name}-test")
+    monkeypatch.setattr(
+        operations_cli,
+        "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, "function-key\n", ""),
+    )
+    monkeypatch.setattr(
+        operations_cli.requests,
+        "get",
+        lambda *args, **kwargs: type(
+            "Response",
+            (),
+            {"status_code": 404, "json": lambda self: {"published": False, "reason": "No current manifest"}},
+        )(),
+    )
     monkeypatch.setattr(
         operations_cli,
         "_workspace_context",
@@ -401,6 +433,32 @@ def test_check_runs_allows_empty_history_before_first_publication(monkeypatch, c
 
 
 def test_check_runs_uses_management_plane_telemetry(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: f"{name}-test")
+    monkeypatch.setattr(
+        operations_cli,
+        "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, "function-key\n", ""),
+    )
+    monkeypatch.setattr(
+        operations_cli.requests,
+        "get",
+        lambda *args, **kwargs: type(
+            "Response",
+            (),
+            {
+                "status_code": 200,
+                "json": lambda self: {
+                    "published": True,
+                    "runId": "live-20261013T200000Z",
+                    "snapshotTimeUtc": "2026-10-13T20:00:00Z",
+                    "status": "Success",
+                    "findings": 9235,
+                    "publishedFiles": 115,
+                    "reportedIssues": 0,
+                },
+            },
+        )(),
+    )
     monkeypatch.setattr(
         operations_cli,
         "_workspace_context",
@@ -431,6 +489,30 @@ def test_check_runs_uses_management_plane_telemetry(monkeypatch, capsys):
     assert "live-20261013T200000Z" in output
     assert "Findings:         9235" in output
     assert "Published files:  115" in output
+
+
+def test_check_runs_surfaces_authoritative_status_failure(monkeypatch):
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: f"{name}-test")
+    monkeypatch.setattr(
+        operations_cli,
+        "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, "function-key\n", ""),
+    )
+    monkeypatch.setattr(
+        operations_cli.requests,
+        "get",
+        lambda *args, **kwargs: type(
+            "Response",
+            (),
+            {
+                "status_code": 500,
+                "json": lambda self: {"published": False, "reason": "Status lookup failed"},
+            },
+        )(),
+    )
+
+    with pytest.raises(RuntimeError, match="Function publication-status lookup failed: Status lookup failed"):
+        operations_cli.check_runs(5, False)
 
 
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):
