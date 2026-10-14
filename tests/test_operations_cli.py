@@ -266,6 +266,7 @@ def test_log_query_reports_missing_extension(monkeypatch):
 
 
 def test_function_status_distinguishes_failed_execution_from_success(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {"published": False})
     monkeypatch.setattr(
         operations_cli,
         "_workspace_context",
@@ -289,6 +290,7 @@ def test_function_status_distinguishes_failed_execution_from_success(monkeypatch
 
 
 def test_function_status_does_not_treat_accepted_request_as_completed(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {"published": False})
     monkeypatch.setattr(
         operations_cli,
         "_workspace_context",
@@ -318,6 +320,7 @@ def test_function_status_does_not_treat_accepted_request_as_completed(monkeypatc
 
 
 def test_function_status_uses_request_when_start_trace_is_missing(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {"published": False})
     monkeypatch.setattr(
         operations_cli,
         "_workspace_context",
@@ -353,6 +356,7 @@ def test_telemetry_value_accepts_aliases_case_insensitively():
 
 
 def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {"published": False})
     monkeypatch.setattr(
         operations_cli,
         "_workspace_context",
@@ -402,6 +406,49 @@ def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, caps
     assert "Duration:  unavailable" in output
     assert "Collector execution evidence:" in output
     assert "[publication] runId=live-test status=Success" in output
+
+
+def test_function_status_prefers_newer_authoritative_publication(monkeypatch, capsys):
+    monkeypatch.setattr(
+        operations_cli,
+        "_workspace_context",
+        lambda: ({"function_app_name": "func-test", "subscription_id": "sub-test"}, "workspace-test"),
+    )
+    responses = iter([
+        [],
+        [{
+            "TimeGenerated": "2026-10-13T23:35:56Z",
+            "Success": True,
+            "OperationId": "stale-request",
+            "FunctionName": "dataprep_manual_snapshot",
+        }],
+        [],
+    ])
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(
+        operations_cli,
+        "_function_publication_status",
+        lambda: {
+            "published": True,
+            "runId": "live-20261014T171922Z",
+            "snapshotTimeUtc": "2026-10-14T17:19:22Z",
+            "status": "Success",
+            "findings": 19638,
+            "publishedFiles": 113,
+            "reportedIssues": 0,
+        },
+    )
+
+    assert operations_cli.check_function_logs(1, 3, True) == "SUCCEEDED"
+
+    output = capsys.readouterr().out
+    assert "live-20261014T171922Z" in output
+    assert "State:             INACTIVE - invocation completed" in output
+    assert "Snapshot UTC:      2026-10-14T17:19:22Z" in output
+    assert "Findings:          19638" in output
+    assert "Published files:   113" in output
+    assert "Reported issues:   0" in output
+    assert "stale-request" not in output
 
 
 def test_check_runs_allows_empty_history_before_first_publication(monkeypatch, capsys):

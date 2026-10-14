@@ -366,12 +366,12 @@ Analytics through the Azure management plane for retained publication history.
 downloads blobs as the signed-in operator. Historical records are limited by
 the Log Analytics retention period.
 
-The status checker correlates Function execution traces, `AppRequests`, and
-`[publication]` telemetry for scheduled, manual scheduled-policy, and manual
-full invocations. A successful request means only that Azure accepted the
-trigger. A publication record is the completed-run evidence and includes the
-run ID, result, finding count, published-file count, reported-issue count, and
-completion time.
+The status checker correlates Function execution traces, `AppRequests`,
+`[publication]` telemetry, and the current manifest returned through the
+managed-identity status endpoint. A successful request means only that Azure
+accepted the trigger. A newer current manifest supersedes stale request
+telemetry and includes the run ID, result, finding count, published-file count,
+reported-issue count, and snapshot time.
 
 The operations submenu also provides **Force full vulnerability and
 relationship reconciliation**. It checks active-run safety, requires typing
