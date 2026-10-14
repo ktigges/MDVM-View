@@ -260,6 +260,17 @@ def test_log_query_applies_explicit_timespan(monkeypatch):
     assert captured[1][captured[1].index("--timespan") + 1] == "PT1H"
 
 
+def test_log_query_rejects_unexpected_cli_json_shape(monkeypatch):
+    responses = iter([
+        subprocess.CompletedProcess((), 0, stdout=""),
+        subprocess.CompletedProcess((), 0, stdout='{"tables": []}'),
+    ])
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: next(responses))
+
+    with pytest.raises(RuntimeError, match="unexpected Log Analytics JSON shape"):
+        operations_cli._log_query("workspace-id", "subscription-id", "AppRequests | take 1")
+
+
 def test_workspace_context_uses_application_insights_workspace(monkeypatch):
     monkeypatch.delenv("LOG_ANALYTICS_WORKSPACE_NAME", raising=False)
     monkeypatch.setattr(
@@ -748,14 +759,16 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
             "from 192.0.2.10 in tenant 11111111-2222-3333-4444-555555555555"
         ),
     }]
-    telemetry_responses = iter([
-        [{
+    request_response = [{
             "TimeGenerated": "2026-10-14T21:15:00Z",
             "OperationId": "status-operation",
             "Name": "dataprep_status",
             "Success": True,
             "ResultCode": "200",
-        }, *telemetry],
+        }, *telemetry]
+    telemetry_responses = iter([
+        request_response,
+        request_response,
         [],
     ])
     monkeypatch.setattr(
@@ -811,7 +824,7 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
     assert "Application request records scanned: 2" in output
 
 
-def test_export_uses_working_collector_request_query_before_limiting(monkeypatch, tmp_path, capsys):
+def test_export_uses_proven_manual_query_shape_and_filters_locally(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     monkeypatch.setattr(
         operations_cli,
@@ -837,11 +850,16 @@ def test_export_uses_working_collector_request_query_before_limiting(monkeypatch
 
     def fake_log_query(workspace, subscription, query, timespan=None):
         queries.append((query, timespan))
-        if "AppRequests" in query:
-            # This reproduces the customer evidence: the direct, server-filtered
-            # request query returns 18 rows while the former broad export query
-            # (without Name in) returned none.
-            return request_rows if "| where Name in (" in query else []
+        if query == (
+            "AppRequests | project TimeGenerated, AppRoleName, Name, Success, ResultCode "
+            "| order by TimeGenerated desc | take 20"
+        ):
+            return request_rows
+        if query == (
+            "AppRequests | project TimeGenerated, AppRoleName, Name, Success, ResultCode, "
+            "OperationId, DurationMs | order by TimeGenerated desc | take 500"
+        ):
+            return request_rows
         return []
 
     monkeypatch.setattr(operations_cli, "_log_query", fake_log_query)
@@ -859,13 +877,48 @@ def test_export_uses_working_collector_request_query_before_limiting(monkeypatch
     )
     assert len(exported) == 18
     request_query, timespan = queries[0]
-    assert "TimeGenerated > ago(24h)" in request_query
-    assert "| where Name in (" in request_query
-    assert "| top 500 by TimeGenerated desc" in request_query
+    assert request_query == (
+        "AppRequests | project TimeGenerated, AppRoleName, Name, Success, ResultCode "
+        "| order by TimeGenerated desc | take 20"
+    )
+    assert "ago(" not in request_query
+    assert "DurationMs" not in request_query
+    assert "OperationId" not in request_query
     assert timespan == "PT24H"
+    correlation_query, correlation_timespan = queries[1]
+    assert "OperationId, DurationMs" in correlation_query
+    assert correlation_timespan == "PT24H"
     output = capsys.readouterr().out
     assert "Collector records exported: 18 (18 requests, 0 correlated records)" in output
     assert "Application request records scanned: 18" in output
+
+
+def test_export_refuses_silent_empty_when_apprequests_count_is_nonzero(monkeypatch, tmp_path):
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        operations_cli,
+        "_workspace_context",
+        lambda: ({
+            "subscription_id": "subscription-test",
+            "resource_group_name": "resource-group-test",
+            "function_app_name": "function-test",
+        }, "workspace-test"),
+    )
+
+    def fake_log_query(workspace, subscription, query, timespan=None):
+        if "summarize AppRequestCount=count()" in query:
+            return [{"AppRequestCount": "18"}]
+        return []
+
+    monkeypatch.setattr(operations_cli, "_log_query", fake_log_query)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"AppRequests verification found 18 record\(s\).*proven request query returned zero",
+    ):
+        operations_cli.export_function_logs(24)
+
+    assert list((tmp_path / "output" / "diagnostics").glob("*/collector-sanitized-logs.json")) == []
 
 
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):
