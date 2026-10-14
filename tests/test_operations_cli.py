@@ -628,7 +628,16 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
             "from 192.0.2.10 in tenant 11111111-2222-3333-4444-555555555555"
         ),
     }]
-    telemetry_responses = iter([telemetry, []])
+    telemetry_responses = iter([
+        [{
+            "TimeGenerated": "2026-10-14T21:15:00Z",
+            "OperationId": "status-operation",
+            "Name": "dataprep_status",
+            "Success": True,
+            "ResultCode": "200",
+        }, *telemetry],
+        [],
+    ])
     monkeypatch.setattr(
         operations_cli,
         "_log_query",
@@ -665,6 +674,7 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
     assert "[REDACTED_ID]" in telemetry_text
     assert "[REDACTED_RESOURCE]" in platform_text
     assert "caller" not in platform_text
+    assert "dataprep_status" not in telemetry_text
     for sensitive_value in (
         "user@example.com",
         "function-test",
@@ -678,6 +688,7 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
     assert "collector-sanitized-logs.json" in output
     assert "collector-sanitized-platform-failures.json" in output
     assert "Collector records exported: 1 (1 requests, 0 correlated records)" in output
+    assert "Application request records scanned: 2" in output
 
 
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):
