@@ -443,7 +443,7 @@ def test_function_status_prefers_newer_authoritative_publication(monkeypatch, ca
 
     output = capsys.readouterr().out
     assert "live-20261014T171922Z" in output
-    assert "State:             INACTIVE - invocation completed" in output
+    assert "State:             IDLE - no collector is currently running" in output
     assert "Snapshot UTC:      2026-10-14T17:19:22Z" in output
     assert "Findings:          19638" in output
     assert "Published files:   113" in output

@@ -371,7 +371,8 @@ The status checker correlates Function execution traces, `AppRequests`,
 managed-identity status endpoint. A successful request means only that Azure
 accepted the trigger. A newer current manifest supersedes stale request
 telemetry and includes the run ID, result, finding count, published-file count,
-reported-issue count, and snapshot time.
+reported-issue count, and snapshot time. `IDLE` means no collector is currently
+running; the displayed result describes the latest completed attempt.
 
 The operations submenu also provides **Force full vulnerability and
 relationship reconciliation**. It checks active-run safety, requires typing
