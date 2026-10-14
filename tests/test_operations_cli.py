@@ -302,6 +302,69 @@ def test_function_status_uses_completed_request_when_completion_trace_is_missing
     assert "Completed local:" in output
 
 
+def test_function_status_uses_request_when_start_trace_is_missing(monkeypatch, capsys):
+    monkeypatch.setattr(
+        operations_cli,
+        "_workspace_context",
+        lambda: ({"function_app_name": "func-test", "subscription_id": "sub-test"}, "workspace-test"),
+    )
+    responses = iter([
+        [],
+        [{
+            "RequestStartedUtc": "2026-10-14T04:59:59Z",
+            "Success": True,
+            "DurationMs": None,
+            "ResultCode": "0",
+            "OperationId": "request-operation",
+            "FunctionName": "dataprep_snapshot",
+        }],
+    ])
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args: next(responses))
+
+    assert operations_cli.check_function_logs(24, 3, True) == "SUCCEEDED"
+    output = capsys.readouterr().out
+    assert "request-operation" in output
+    assert "dataprep_snapshot" in output
+    assert "No invocation start was found" not in output
+
+
+def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, capsys):
+    monkeypatch.setattr(
+        operations_cli,
+        "_workspace_context",
+        lambda: ({"function_app_name": "func-test", "subscription_id": "sub-test"}, "workspace-test"),
+    )
+    request = {
+        "RequestStartedUtc": "2026-10-14T04:59:59Z",
+        "TimeGenerated": "2026-10-14T04:59:59Z",
+        "Success": True,
+        "DurationMs": None,
+        "DurationSeconds": None,
+        "ResultCode": "0",
+        "OperationId": "request-operation",
+        "FunctionName": "dataprep_snapshot",
+        "Name": "dataprep_snapshot",
+    }
+    responses = iter([
+        [],
+        [request],
+        [request],
+        [{
+            "TimeGenerated": "2026-10-14T05:10:00Z",
+            "Kind": "Trace",
+            "Detail": "[publication] runId=live-test status=Success",
+        }],
+    ])
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args: next(responses))
+
+    operations_cli.check_function_logs(24, 3, False)
+
+    output = capsys.readouterr().out
+    assert "Duration:  unavailable" in output
+    assert "Collector execution evidence:" in output
+    assert "[publication] runId=live-test status=Success" in output
+
+
 def test_check_runs_allows_empty_history_before_first_publication(monkeypatch, capsys):
     monkeypatch.setattr(
         operations_cli,
@@ -606,6 +669,13 @@ def test_web_app_uses_configurable_worker_processes():
     assert "--workers ${var.web_app_worker_processes}" in terraform
     assert 'variable "web_app_worker_processes"' in variables
     assert example["web_app_worker_processes"] == 1
+
+
+def test_function_telemetry_preserves_operational_evidence():
+    host = json.loads(Path("host.json").read_text(encoding="utf-8"))
+    excluded = host["logging"]["applicationInsights"]["samplingSettings"]["excludedTypes"].split(";")
+
+    assert {"Request", "Trace", "Exception"} <= set(excluded)
 
 
 def test_workflow_container_is_part_of_protected_foundation():
