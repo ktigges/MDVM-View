@@ -518,7 +518,7 @@ def test_check_runs_allows_empty_history_before_first_publication(monkeypatch, c
 
     operations_cli.check_runs(5, False)
 
-    assert "No managed-identity publication telemetry was found" in capsys.readouterr().out
+    assert "No retained [publication] trace history was found" in capsys.readouterr().out
 
 
 def test_check_runs_uses_management_plane_telemetry(monkeypatch, capsys):
@@ -613,6 +613,7 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
             "subscription_id": "subscription-test",
             "resource_group_name": "resource-group-test",
             "function_app_name": "function-test",
+            "tenant_id": "11111111-2222-3333-4444-555555555555",
         }, "workspace-test"),
     )
     telemetry = [{
@@ -621,6 +622,11 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
         "Name": "dataprep_manual_snapshot",
         "Success": False,
         "ResultCode": "500",
+        "OperationId": "0123456789abcdef0123456789abcdef",
+        "Message": (
+            "user@example.com called https://function-test.azurewebsites.net/api "
+            "from 192.0.2.10 in tenant 11111111-2222-3333-4444-555555555555"
+        ),
     }]
     monkeypatch.setattr(
         operations_cli,
@@ -635,19 +641,41 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
     monkeypatch.setattr(
         operations_cli,
         "_az_json",
-        lambda *args: [{"status": {"value": "Failed"}}],
+        lambda *args: [{
+            "eventTimestamp": "2026-10-14T21:14:47Z",
+            "caller": "user@example.com",
+            "operationName": {"value": "Microsoft.Web/sites/functions/action"},
+            "status": {"value": "Failed"},
+            "properties": {
+                "statusCode": "InternalServerError",
+                "statusMessage": "function-test failed from 192.0.2.10",
+            },
+        }],
     )
 
     output_directory = operations_cli.export_function_logs(24)
 
     assert output_directory.parent == tmp_path / "output" / "diagnostics"
-    assert json.loads((output_directory / "collector-raw-logs.json").read_text()) == telemetry
-    assert json.loads((output_directory / "collector-platform-failures.json").read_text()) == [
-        {"status": {"value": "Failed"}}
-    ]
+    telemetry_text = (output_directory / "collector-sanitized-logs.json").read_text()
+    platform_text = (output_directory / "collector-sanitized-platform-failures.json").read_text()
+    assert "[REDACTED_EMAIL]" in telemetry_text
+    assert "[REDACTED_URL]" in telemetry_text
+    assert "[REDACTED_IP]" in telemetry_text
+    assert "[REDACTED_ID]" in telemetry_text
+    assert "[REDACTED_RESOURCE]" in platform_text
+    assert "caller" not in platform_text
+    for sensitive_value in (
+        "user@example.com",
+        "function-test",
+        "192.0.2.10",
+        "11111111-2222-3333-4444-555555555555",
+        "0123456789abcdef0123456789abcdef",
+    ):
+        assert sensitive_value not in telemetry_text
+        assert sensitive_value not in platform_text
     output = capsys.readouterr().out
-    assert "collector-raw-logs.json" in output
-    assert "collector-platform-failures.json" in output
+    assert "collector-sanitized-logs.json" in output
+    assert "collector-sanitized-platform-failures.json" in output
 
 
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):

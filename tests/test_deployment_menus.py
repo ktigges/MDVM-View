@@ -96,7 +96,7 @@ def test_deployment_menus_expose_matching_operations_submenu():
         "3) Show latest 10 published runs",
         "4) Show detailed Function diagnostics for the last 24 hours",
         "5) Show extended Function diagnostics for the last 72 hours",
-        "6) Pull raw collector logs for the last 24 hours",
+        "6) Pull sanitized collector logs for the last 24 hours",
         "7) Verify Function and Web App",
         "8) Force full vulnerability and relationship reconciliation",
         "9) Return to deployment menu",
