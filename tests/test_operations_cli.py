@@ -429,6 +429,7 @@ def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, caps
             "Kind": "Trace",
             "Detail": "[publication] runId=live-test status=Success",
         }],
+        [],
     ])
     monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
 
@@ -441,8 +442,11 @@ def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, caps
     assert "Published files:   115" in output
     assert "Reported issues:   0" in output
     assert "Duration:  unavailable" in output
+    assert "Result:    0" in output
     assert "Collector execution evidence:" in output
     assert "[publication] runId=live-test status=Success" in output
+    assert "Function platform evidence:" in output
+    assert "No Function host or platform failure evidence was retained" in output
 
 
 def test_function_status_prefers_newer_authoritative_publication(monkeypatch, capsys):
