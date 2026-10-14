@@ -88,8 +88,7 @@ GitHub development and customer release workflow
             Invoke-GitHubWorkflow status
             $commitMessage = Read-Host "Commit message (required only when changes are uncommitted)"
             Write-Host "This runs tests once, publishes main, and promotes the same tested commit to latest."
-            $confirmation = Read-Host "Type RELEASE to continue"
-            Invoke-GitHubWorkflow publish-and-promote --message $commitMessage --confirm $confirmation
+            Invoke-GitHubWorkflow publish-and-promote --message $commitMessage
             Pause-Menu
         }
         "4" {

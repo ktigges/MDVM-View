@@ -69,9 +69,8 @@ EOF
       run_workflow status
       printf '\nCommit message (required only when changes are uncommitted): '
       read -r commit_message
-      printf 'This runs tests once, publishes main, and promotes the same tested commit to latest.\nType RELEASE to continue: '
-      read -r confirmation
-      run_workflow publish-and-promote --message "$commit_message" --confirm "$confirmation"
+      printf 'This runs tests once, publishes main, and promotes the same tested commit to latest.\n'
+      run_workflow publish-and-promote --message "$commit_message"
       pause_menu
       ;;
     4)

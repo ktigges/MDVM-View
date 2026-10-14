@@ -130,9 +130,9 @@ def test_powershell_menu_preserves_python_executable_as_one_value():
 def test_deployment_menus_show_version_and_revision_in_title():
     shell, powershell = menu_sources()
 
-    assert 'DEPLOYMENT_MENU_VERSION="2026.10.14.3"' in shell
+    assert 'DEPLOYMENT_MENU_VERSION="2026.10.14.4"' in shell
     assert 'Vulnerability View deployment menu %s (revision %s)' in shell
-    assert '$DeploymentMenuVersion = "2026.10.14.3"' in powershell
+    assert '$DeploymentMenuVersion = "2026.10.14.4"' in powershell
     assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
 
@@ -146,7 +146,7 @@ def test_github_workflow_menus_offer_single_publish_and_promote_action():
         assert "4) Validate customer release readiness" in source
         assert "5) Exit" in source
         assert "publish-and-promote" in source
-        assert "RELEASE" in source
+        assert "Type RELEASE" not in source
 
 
 def test_powershell_menu_bootstraps_clean_windows_clone():

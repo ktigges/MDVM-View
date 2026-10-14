@@ -260,7 +260,23 @@ def test_log_query_applies_explicit_timespan(monkeypatch):
     assert captured[1][captured[1].index("--timespan") + 1] == "PT1H"
 
 
-def test_workspace_context_uses_function_diagnostic_setting(monkeypatch):
+@pytest.mark.parametrize("diagnostic_settings", [
+    [{
+        "workspaceId": (
+            "/subscriptions/subscription-test/resourceGroups/resource-group-test/"
+            "providers/Microsoft.OperationalInsights/workspaces/workspace-test"
+        ),
+    }],
+    {
+        "value": [{
+            "workspaceId": (
+                "/subscriptions/subscription-test/resourceGroups/resource-group-test/"
+                "providers/Microsoft.OperationalInsights/workspaces/workspace-test"
+            ),
+        }],
+    },
+])
+def test_workspace_context_uses_function_diagnostic_setting(monkeypatch, diagnostic_settings):
     monkeypatch.delenv("LOG_ANALYTICS_WORKSPACE_NAME", raising=False)
     monkeypatch.setattr(
         operations_cli,
@@ -274,14 +290,7 @@ def test_workspace_context_uses_function_diagnostic_setting(monkeypatch):
     monkeypatch.setattr(
         operations_cli,
         "_az_json",
-        lambda *args: {
-            "value": [{
-                "workspaceId": (
-                    "/subscriptions/subscription-test/resourceGroups/resource-group-test/"
-                    "providers/Microsoft.OperationalInsights/workspaces/workspace-test"
-                ),
-            }],
-        },
+        lambda *args: diagnostic_settings,
     )
     captured = []
 

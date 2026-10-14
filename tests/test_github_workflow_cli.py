@@ -8,13 +8,10 @@ def test_parser_supports_publish_and_promote():
         "publish-and-promote",
         "--message",
         "release message",
-        "--confirm",
-        "RELEASE",
     ])
 
     assert args.command == "publish-and-promote"
     assert args.message == "release message"
-    assert args.confirm == "RELEASE"
 
 
 def test_publish_and_promote_runs_tests_once_and_pushes_both_branches(monkeypatch):
@@ -49,7 +46,7 @@ def test_publish_and_promote_runs_tests_once_and_pushes_both_branches(monkeypatc
     monkeypatch.setattr(github_workflow_cli, "_output", fake_output)
     monkeypatch.setattr(github_workflow_cli, "_git", fake_git)
 
-    github_workflow_cli.publish_and_promote("origin", "", "RELEASE")
+    github_workflow_cli.publish_and_promote("origin", "")
 
     assert test_runs == [True]
     pushes = [call for call in calls if call and call[0] == "push"]
