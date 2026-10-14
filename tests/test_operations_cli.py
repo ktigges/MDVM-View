@@ -191,7 +191,7 @@ def test_configure_webapp_sku_preserves_existing_plan_configuration(monkeypatch,
     monkeypatch.setattr(
         operations_cli,
         "_azure_json",
-        lambda *args: [{
+        lambda *args, **kwargs: [{
             "name": "plan-test",
             "resourceGroup": "rg-test",
             "location": "East US",
@@ -236,6 +236,20 @@ def test_log_query_has_bounded_timeout(monkeypatch):
     assert captured[1][1] == {"capture": True, "timeout": 90}
 
 
+def test_log_query_applies_explicit_timespan(monkeypatch):
+    captured: list[tuple[object, ...]] = []
+
+    def fake_az(*args, **kwargs):
+        captured.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="[]")
+
+    monkeypatch.setattr(operations_cli, "_az", fake_az)
+
+    operations_cli._log_query("workspace-id", "subscription-id", "AppRequests | take 1", timespan="PT1H")
+
+    assert captured[1][captured[1].index("--timespan") + 1] == "PT1H"
+
+
 def test_log_query_reports_missing_extension(monkeypatch):
     monkeypatch.setattr(
         operations_cli,
@@ -260,7 +274,7 @@ def test_function_status_distinguishes_failed_execution_from_success(monkeypatch
     monkeypatch.setattr(
         operations_cli,
         "_log_query",
-        lambda *args: [{
+        lambda *args, **kwargs: [{
             "InvocationId": "failed-invocation",
             "StartedUtc": "2026-10-09T18:09:57Z",
             "CompletedUtc": "2026-10-09T18:09:58Z",
@@ -294,7 +308,7 @@ def test_function_status_uses_completed_request_when_completion_trace_is_missing
             "ResultCode": "0",
         }],
     ])
-    monkeypatch.setattr(operations_cli, "_log_query", lambda *args: next(responses))
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
 
     assert operations_cli.check_function_logs(1, 3, True) == "SUCCEEDED"
     output = capsys.readouterr().out
@@ -319,13 +333,14 @@ def test_function_status_uses_request_when_start_trace_is_missing(monkeypatch, c
             "FunctionName": "dataprep_snapshot",
         }],
     ])
-    monkeypatch.setattr(operations_cli, "_log_query", lambda *args: next(responses))
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
 
     assert operations_cli.check_function_logs(24, 3, True) == "SUCCEEDED"
     output = capsys.readouterr().out
     assert "request-operation" in output
     assert "dataprep_snapshot" in output
-    assert "No invocation start was found" not in output
+    assert "No invocation was found" not in output
+    assert "INACTIVE - invocation completed" in output
 
 
 def test_telemetry_value_accepts_aliases_case_insensitively():
@@ -362,7 +377,7 @@ def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, caps
             "Detail": "[publication] runId=live-test status=Success",
         }],
     ])
-    monkeypatch.setattr(operations_cli, "_log_query", lambda *args: next(responses))
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
 
     operations_cli.check_function_logs(24, 3, False)
 
