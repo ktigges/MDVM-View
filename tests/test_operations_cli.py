@@ -628,10 +628,11 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
             "from 192.0.2.10 in tenant 11111111-2222-3333-4444-555555555555"
         ),
     }]
+    telemetry_responses = iter([telemetry, []])
     monkeypatch.setattr(
         operations_cli,
         "_log_query",
-        lambda workspace, subscription, query, timespan=None: telemetry,
+        lambda workspace, subscription, query, timespan=None: next(telemetry_responses),
     )
     monkeypatch.setattr(
         operations_cli,
@@ -676,6 +677,7 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
     output = capsys.readouterr().out
     assert "collector-sanitized-logs.json" in output
     assert "collector-sanitized-platform-failures.json" in output
+    assert "Collector records exported: 1 (1 requests, 0 correlated records)" in output
 
 
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):
