@@ -4,6 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+DEPLOYMENT_MENU_VERSION="2026.10.14.1"
 
 resolve_python() {
   if [[ -n "${PYTHON:-}" ]]; then
@@ -23,7 +24,8 @@ PYTHON_BIN=$(resolve_python)
 run_cli() {
   (
     cd "$ROOT_DIR"
-    "$PYTHON_BIN" -m vulnerability_view.operations_cli "$@"
+    PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PYTHON_BIN" -m vulnerability_view.operations_cli "$@"
   )
 }
 
@@ -136,6 +138,11 @@ EOF
 if [[ -t 1 ]] && command -v clear >/dev/null 2>&1; then
   clear
 fi
+
+GIT_REVISION=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || printf 'unavailable')
+printf 'Deployment menu version: %s\n' "$DEPLOYMENT_MENU_VERSION"
+printf 'Repository revision:      %s\n' "$GIT_REVISION"
+run_cli version
 
 cat <<'EOF'
 

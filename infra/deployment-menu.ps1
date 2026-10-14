@@ -5,6 +5,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
+$DeploymentMenuVersion = "2026.10.14.1"
 $RequiredAzureCliExtensions = @("log-analytics")
 
 function Test-PythonCommand {
@@ -119,15 +120,20 @@ function Invoke-OperationsCli {
     param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$CliArguments)
 
     Push-Location $RootDirectory
+    $previousPythonPath = $env:PYTHONPATH
     try {
         $executable = $PythonCommand.Executable
         $prefix = @($PythonCommand.Prefix)
+        $sourcePath = Join-Path $RootDirectory "src"
+        $pathSeparator = [System.IO.Path]::PathSeparator
+        $env:PYTHONPATH = if ($previousPythonPath) { "$sourcePath$pathSeparator$previousPythonPath" } else { $sourcePath }
         & $executable @prefix -m vulnerability_view.operations_cli @CliArguments | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Command failed with exit code $LASTEXITCODE."
         }
     }
     finally {
+        $env:PYTHONPATH = $previousPythonPath
         Pop-Location
     }
 }
@@ -241,6 +247,15 @@ Operations and diagnostics
 if (-not [Console]::IsOutputRedirected) {
     Clear-Host
 }
+
+$GitRevision = (& git -C $RootDirectory rev-parse --short HEAD 2>$null)
+if (-not $GitRevision) {
+    $GitRevision = "unavailable"
+}
+
+Write-Host "Deployment menu version: $DeploymentMenuVersion"
+Write-Host "Repository revision:      $GitRevision"
+Invoke-OperationsCli version
 
 Write-Host @"
 

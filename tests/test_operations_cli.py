@@ -40,10 +40,19 @@ def test_parser_exposes_identical_cross_platform_commands():
     assert operations_cli.build_parser().parse_args(["show", "foundation"]).stage == "foundation"
     assert operations_cli.build_parser().parse_args(["output", "function_app_name"]).name == "function_app_name"
     assert operations_cli.build_parser().parse_args(["configure-webapp-sku"]).command == "configure-webapp-sku"
+    assert operations_cli.build_parser().parse_args(["version"]).command == "version"
     assert operations_cli.build_parser().parse_args(["check-runs", "--limit", "5", "--progress"]).progress is True
     assert operations_cli.build_parser().parse_args(["export-function-logs", "--hours", "72"]).hours == 72
     assert operations_cli.build_parser().parse_args(["invoke", "function", "--confirm"]).confirm is True
     assert operations_cli.build_parser().parse_args(["invoke", "function", "--confirm", "--full"]).full is True
+
+
+def test_version_reports_cli_source(capsys):
+    assert operations_cli.main(["version"]) == 0
+
+    output = capsys.readouterr().out
+    assert f"Operations CLI version: {operations_cli.OPERATIONS_CLI_VERSION}" in output
+    assert str(Path(operations_cli.__file__).resolve()) in output
 
 
 def test_configure_webapp_sku_keeps_configured_sku_with_quota(monkeypatch):

@@ -121,6 +121,19 @@ def test_powershell_menu_preserves_python_executable_as_one_value():
     assert "$executable = $PythonCommand.Executable" in powershell
     assert "$prefix = @($PythonCommand.Prefix)" in powershell
     assert "$PythonCommand[0]" not in powershell
+    assert '$env:PYTHONPATH = if ($previousPythonPath)' in powershell
+    assert '$sourcePath = Join-Path $RootDirectory "src"' in powershell
+
+
+def test_deployment_menus_report_version_revision_and_cli_source():
+    shell, powershell = menu_sources()
+
+    for source in (shell, powershell):
+        assert "Deployment menu version:" in source
+        assert "Repository revision:" in source
+        assert "version" in source
+    assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
+    assert "Invoke-OperationsCli version" in powershell
 
 
 def test_powershell_menu_bootstraps_clean_windows_clone():
