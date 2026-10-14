@@ -811,6 +811,63 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
     assert "Application request records scanned: 2" in output
 
 
+def test_export_uses_working_collector_request_query_before_limiting(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        operations_cli,
+        "_workspace_context",
+        lambda: ({
+            "subscription_id": "subscription-test",
+            "resource_group_name": "resource-group-test",
+            "function_app_name": "function-test",
+        }, "workspace-test"),
+    )
+    request_rows = [
+        {
+            "TimeGenerated": f"2026-10-14T{index:02d}:00:00Z",
+            "OperationId": f"operation-{index}",
+            "Name": "dataprep_manual_snapshot" if index % 2 else "dataprep_snapshot",
+            "Success": "True",
+            "ResultCode": "202",
+            "DurationMs": "10",
+        }
+        for index in range(18)
+    ]
+    queries: list[tuple[str, str | None]] = []
+
+    def fake_log_query(workspace, subscription, query, timespan=None):
+        queries.append((query, timespan))
+        if "AppRequests" in query:
+            # This reproduces the customer evidence: the direct, server-filtered
+            # request query returns 18 rows while the former broad export query
+            # (without Name in) returned none.
+            return request_rows if "| where Name in (" in query else []
+        return []
+
+    monkeypatch.setattr(operations_cli, "_log_query", fake_log_query)
+    monkeypatch.setattr(
+        operations_cli,
+        "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, "/function/id\n", ""),
+    )
+    monkeypatch.setattr(operations_cli, "_az_json", lambda *args: [])
+
+    output_directory = operations_cli.export_function_logs(24)
+
+    exported = json.loads(
+        (output_directory / "collector-sanitized-logs.json").read_text(encoding="utf-8")
+    )
+    assert len(exported) == 18
+    request_query, timespan = queries[0]
+    assert "TimeGenerated > ago(24h)" in request_query
+    assert "| where Name in (" in request_query
+    assert "| top 500 by TimeGenerated desc" in request_query
+    assert timespan == "PT24H"
+    output = capsys.readouterr().out
+    assert "Collector records exported: 18 (18 requests, 0 correlated records)" in output
+    assert "Application request records scanned: 18" in output
+
+
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):
     terraform = tmp_path / "terraform.exe"
     terraform.write_bytes(b"local terraform")

@@ -5,7 +5,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
-$DeploymentMenuVersion = "2026.10.14.5"
+$DeploymentMenuVersion = "2026.10.14.6"
 $RequiredAzureCliExtensions = @("log-analytics")
 
 function Test-PythonCommand {
