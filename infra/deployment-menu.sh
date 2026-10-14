@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DEPLOYMENT_MENU_VERSION="2026.10.14.1"
+DEPLOYMENT_MENU_VERSION="2026.10.14.2"
 
 resolve_python() {
   if [[ -n "${PYTHON:-}" ]]; then
@@ -140,9 +140,6 @@ if [[ -t 1 ]] && command -v clear >/dev/null 2>&1; then
 fi
 
 GIT_REVISION=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || printf 'unavailable')
-printf 'Deployment menu version: %s\n' "$DEPLOYMENT_MENU_VERSION"
-printf 'Repository revision:      %s\n' "$GIT_REVISION"
-run_cli version
 
 cat <<'EOF'
 
@@ -155,9 +152,8 @@ Deployment identity notice
 EOF
 
 while true; do
+  printf '\nVulnerability View deployment menu %s (revision %s)\n' "$DEPLOYMENT_MENU_VERSION" "$GIT_REVISION"
   cat <<'EOF'
-
-Vulnerability View deployment menu
   1) Complete initial deployment or update: infrastructure, Function, and Web App
   2) Plan, review, and apply Web App infrastructure
   3) Deploy and verify Function code

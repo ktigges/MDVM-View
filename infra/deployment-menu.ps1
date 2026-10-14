@@ -5,7 +5,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
-$DeploymentMenuVersion = "2026.10.14.1"
+$DeploymentMenuVersion = "2026.10.14.2"
 $RequiredAzureCliExtensions = @("log-analytics")
 
 function Test-PythonCommand {
@@ -253,10 +253,6 @@ if (-not $GitRevision) {
     $GitRevision = "unavailable"
 }
 
-Write-Host "Deployment menu version: $DeploymentMenuVersion"
-Write-Host "Repository revision:      $GitRevision"
-Invoke-OperationsCli version
-
 Write-Host @"
 
 Deployment identity notice
@@ -270,7 +266,7 @@ Deployment identity notice
 while ($true) {
     Write-Host @"
 
-Vulnerability View deployment menu
+Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)
   1) Complete initial deployment or update: infrastructure, Function, and Web App
   2) Plan, review, and apply Web App infrastructure
   3) Deploy and verify Function code

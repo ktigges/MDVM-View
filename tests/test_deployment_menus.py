@@ -125,15 +125,14 @@ def test_powershell_menu_preserves_python_executable_as_one_value():
     assert '$sourcePath = Join-Path $RootDirectory "src"' in powershell
 
 
-def test_deployment_menus_report_version_revision_and_cli_source():
+def test_deployment_menus_show_version_and_revision_in_title():
     shell, powershell = menu_sources()
 
-    for source in (shell, powershell):
-        assert "Deployment menu version:" in source
-        assert "Repository revision:" in source
-        assert "version" in source
+    assert 'DEPLOYMENT_MENU_VERSION="2026.10.14.2"' in shell
+    assert 'Vulnerability View deployment menu %s (revision %s)' in shell
+    assert '$DeploymentMenuVersion = "2026.10.14.2"' in powershell
+    assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
-    assert "Invoke-OperationsCli version" in powershell
 
 
 def test_powershell_menu_bootstraps_clean_windows_clone():
