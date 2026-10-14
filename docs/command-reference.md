@@ -394,6 +394,13 @@ and failed dependencies. When the latest invocation published successfully,
 the activity summary includes its run ID, result, finding count,
 published-file count, reported-issue count, and UTC/local completion time.
 
+Use **Pull raw collector logs for the last 24 hours** in the operations menu
+when the summarized evidence is insufficient. It writes a new timestamped
+folder under `output/diagnostics/` containing `collector-raw-logs.json` and
+`collector-platform-failures.json`. The first file contains correlated
+Application Insights request, trace, exception, and dependency records. The
+second contains failed Azure activity-log records for the Function resource.
+
 All three diagnostic forms are read-only.
 
 ## 7. Terraform inspection commands

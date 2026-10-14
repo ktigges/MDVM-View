@@ -111,9 +111,10 @@ Operations and diagnostics
   3) Show latest 10 published runs
   4) Show detailed Function diagnostics for the last 24 hours
   5) Show extended Function diagnostics for the last 72 hours
-  6) Verify Function and Web App
-  7) Force full vulnerability and relationship reconciliation
-  8) Return to deployment menu
+  6) Pull raw collector logs for the last 24 hours
+  7) Verify Function and Web App
+  8) Force full vulnerability and relationship reconciliation
+  9) Return to deployment menu
 EOF
     printf 'Select an option: '
     read -r operations_choice
@@ -123,10 +124,11 @@ EOF
       3) run_cli check-runs --limit 10; pause_menu ;;
       4) run_cli check-function-logs --hours 24 --limit 10; pause_menu ;;
       5) run_cli check-function-logs --hours 72 --limit 25; pause_menu ;;
-      6) verify_all; pause_menu ;;
-      7) invoke_collection full; pause_menu ;;
-      8) return ;;
-      *) printf 'Select a number from 1 through 8.\n' ;;
+      6) run_cli export-function-logs --hours 24; pause_menu ;;
+      7) verify_all; pause_menu ;;
+      8) invoke_collection full; pause_menu ;;
+      9) return ;;
+      *) printf 'Select a number from 1 through 9.\n' ;;
     esac
   done
 }

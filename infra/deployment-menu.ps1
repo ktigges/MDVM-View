@@ -218,9 +218,10 @@ Operations and diagnostics
   3) Show latest 10 published runs
   4) Show detailed Function diagnostics for the last 24 hours
   5) Show extended Function diagnostics for the last 72 hours
-  6) Verify Function and Web App
-  7) Force full vulnerability and relationship reconciliation
-  8) Return to deployment menu
+  6) Pull raw collector logs for the last 24 hours
+  7) Verify Function and Web App
+  8) Force full vulnerability and relationship reconciliation
+  9) Return to deployment menu
 "@
         switch (Read-Host "Select an option") {
             "1" { Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only; Pause-Menu }
@@ -228,10 +229,11 @@ Operations and diagnostics
             "3" { Invoke-OperationsCli check-runs --limit 10; Pause-Menu }
             "4" { Invoke-OperationsCli check-function-logs --hours 24 --limit 10; Pause-Menu }
             "5" { Invoke-OperationsCli check-function-logs --hours 72 --limit 25; Pause-Menu }
-            "6" { Invoke-VerifyAll; Pause-Menu }
-            "7" { Invoke-LiveCollection -Full; Pause-Menu }
-            "8" { return }
-            default { Write-Host "Select a number from 1 through 8." }
+            "6" { Invoke-OperationsCli export-function-logs --hours 24; Pause-Menu }
+            "7" { Invoke-VerifyAll; Pause-Menu }
+            "8" { Invoke-LiveCollection -Full; Pause-Menu }
+            "9" { return }
+            default { Write-Host "Select a number from 1 through 9." }
         }
     }
 }

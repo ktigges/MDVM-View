@@ -76,6 +76,10 @@ def test_deployment_menus_wrap_the_same_operations():
             "run_cli check-function-logs --hours 72 --limit 25",
             "Invoke-OperationsCli check-function-logs --hours 72 --limit 25",
         ),
+        (
+            "run_cli export-function-logs --hours 24",
+            "Invoke-OperationsCli export-function-logs --hours 24",
+        ),
     )
 
     for shell_call, powershell_call in equivalent_calls:
@@ -92,9 +96,10 @@ def test_deployment_menus_expose_matching_operations_submenu():
         "3) Show latest 10 published runs",
         "4) Show detailed Function diagnostics for the last 24 hours",
         "5) Show extended Function diagnostics for the last 72 hours",
-        "6) Verify Function and Web App",
-        "7) Force full vulnerability and relationship reconciliation",
-        "8) Return to deployment menu",
+        "6) Pull raw collector logs for the last 24 hours",
+        "7) Verify Function and Web App",
+        "8) Force full vulnerability and relationship reconciliation",
+        "9) Return to deployment menu",
     )
 
     for option in options:

@@ -41,6 +41,7 @@ def test_parser_exposes_identical_cross_platform_commands():
     assert operations_cli.build_parser().parse_args(["output", "function_app_name"]).name == "function_app_name"
     assert operations_cli.build_parser().parse_args(["configure-webapp-sku"]).command == "configure-webapp-sku"
     assert operations_cli.build_parser().parse_args(["check-runs", "--limit", "5", "--progress"]).progress is True
+    assert operations_cli.build_parser().parse_args(["export-function-logs", "--hours", "72"]).hours == 72
     assert operations_cli.build_parser().parse_args(["invoke", "function", "--confirm"]).confirm is True
     assert operations_cli.build_parser().parse_args(["invoke", "function", "--confirm", "--full"]).full is True
 
@@ -601,6 +602,52 @@ def test_check_runs_surfaces_authoritative_status_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Function publication-status lookup failed: Status lookup failed"):
         operations_cli.check_runs(5, False)
+
+
+def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        operations_cli,
+        "_workspace_context",
+        lambda: ({
+            "subscription_id": "subscription-test",
+            "resource_group_name": "resource-group-test",
+            "function_app_name": "function-test",
+        }, "workspace-test"),
+    )
+    telemetry = [{
+        "TimeGenerated": "2026-10-14T21:14:47Z",
+        "TableName": "AppRequests",
+        "Name": "dataprep_manual_snapshot",
+        "Success": False,
+        "ResultCode": "500",
+    }]
+    monkeypatch.setattr(
+        operations_cli,
+        "_log_query",
+        lambda workspace, subscription, query, timespan=None: telemetry,
+    )
+    monkeypatch.setattr(
+        operations_cli,
+        "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, "/function/id\n", ""),
+    )
+    monkeypatch.setattr(
+        operations_cli,
+        "_az_json",
+        lambda *args: [{"status": {"value": "Failed"}}],
+    )
+
+    output_directory = operations_cli.export_function_logs(24)
+
+    assert output_directory.parent == tmp_path / "output" / "diagnostics"
+    assert json.loads((output_directory / "collector-raw-logs.json").read_text()) == telemetry
+    assert json.loads((output_directory / "collector-platform-failures.json").read_text()) == [
+        {"status": {"value": "Failed"}}
+    ]
+    output = capsys.readouterr().out
+    assert "collector-raw-logs.json" in output
+    assert "collector-platform-failures.json" in output
 
 
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):
