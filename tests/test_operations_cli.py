@@ -308,6 +308,7 @@ def test_function_status_does_not_treat_accepted_request_as_completed(monkeypatc
             "Success": True,
             "DurationMs": 977000,
             "ResultCode": "0",
+            "Name": "dataprep_manual_snapshot",
         }],
         [],
     ])
@@ -346,6 +347,42 @@ def test_function_status_uses_request_when_start_trace_is_missing(monkeypatch, c
     assert "dataprep_snapshot" in output
     assert "No invocation was found" not in output
     assert "trigger request accepted" in output
+
+
+def test_function_status_ignores_status_endpoint_requests(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {"published": False})
+    monkeypatch.setattr(
+        operations_cli,
+        "_workspace_context",
+        lambda: ({"function_app_name": "func-test", "subscription_id": "sub-test"}, "workspace-test"),
+    )
+    responses = iter([
+        [],
+        [
+            {
+                "TimeGenerated": "2026-10-14T21:14:16Z",
+                "Success": True,
+                "OperationId": "status-request",
+                "Name": "dataprep_status",
+            },
+            {
+                "TimeGenerated": "2026-10-14T21:13:00Z",
+                "Success": True,
+                "OperationId": "collector-request",
+                "Name": "dataprep_manual_snapshot",
+            },
+        ],
+        [],
+    ])
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
+
+    assert operations_cli.check_function_logs(1, 3, True) == "INDETERMINATE"
+
+    output = capsys.readouterr().out
+    assert "collector-request" in output
+    assert "dataprep_manual_snapshot" in output
+    assert "status-request" not in output
+    assert "dataprep_status" not in output
 
 
 def test_telemetry_value_accepts_aliases_case_insensitively():
