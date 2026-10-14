@@ -260,6 +260,62 @@ def test_log_query_applies_explicit_timespan(monkeypatch):
     assert captured[1][captured[1].index("--timespan") + 1] == "PT1H"
 
 
+def test_workspace_context_uses_function_diagnostic_setting(monkeypatch):
+    monkeypatch.delenv("LOG_ANALYTICS_WORKSPACE_NAME", raising=False)
+    monkeypatch.setattr(
+        operations_cli,
+        "_values",
+        lambda: {
+            "subscription_id": "subscription-test",
+            "resource_group_name": "resource-group-test",
+            "function_app_name": "function-test",
+        },
+    )
+    monkeypatch.setattr(
+        operations_cli,
+        "_az_json",
+        lambda *args: {
+            "value": [{
+                "workspaceId": (
+                    "/subscriptions/subscription-test/resourceGroups/resource-group-test/"
+                    "providers/Microsoft.OperationalInsights/workspaces/workspace-test"
+                ),
+            }],
+        },
+    )
+    captured = []
+
+    def fake_az(*args, **kwargs):
+        captured.append(args)
+        return subprocess.CompletedProcess(args, 0, "workspace-customer-id\n", "")
+
+    monkeypatch.setattr(operations_cli, "_az", fake_az)
+
+    values, workspace_id = operations_cli._workspace_context()
+
+    assert values["function_app_name"] == "function-test"
+    assert workspace_id == "workspace-customer-id"
+    assert "--ids" in captured[0]
+    assert "Microsoft.OperationalInsights/workspaces/workspace-test" in captured[0][captured[0].index("--ids") + 1]
+
+
+def test_workspace_context_requires_one_linked_workspace(monkeypatch):
+    monkeypatch.delenv("LOG_ANALYTICS_WORKSPACE_NAME", raising=False)
+    monkeypatch.setattr(
+        operations_cli,
+        "_values",
+        lambda: {
+            "subscription_id": "subscription-test",
+            "resource_group_name": "resource-group-test",
+            "function_app_name": "function-test",
+        },
+    )
+    monkeypatch.setattr(operations_cli, "_az_json", lambda *args: {"value": []})
+
+    with pytest.raises(RuntimeError, match="exactly one Log Analytics workspace"):
+        operations_cli._workspace_context()
+
+
 def test_log_query_reports_missing_extension(monkeypatch):
     monkeypatch.setattr(
         operations_cli,
