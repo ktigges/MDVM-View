@@ -311,7 +311,7 @@ def test_function_status_uses_request_when_start_trace_is_missing(monkeypatch, c
     responses = iter([
         [],
         [{
-            "RequestStartedUtc": "2026-10-14T04:59:59Z",
+            "TimeGenerated": "2026-10-14T04:59:59Z",
             "Success": True,
             "DurationMs": None,
             "ResultCode": "0",
@@ -326,6 +326,13 @@ def test_function_status_uses_request_when_start_trace_is_missing(monkeypatch, c
     assert "request-operation" in output
     assert "dataprep_snapshot" in output
     assert "No invocation start was found" not in output
+
+
+def test_telemetry_value_accepts_aliases_case_insensitively():
+    row = {"timegenerated": "2026-10-14T04:59:59Z"}
+
+    assert operations_cli._telemetry_value(row, "TimeGenerated", "RequestStartedUtc") == "2026-10-14T04:59:59Z"
+    assert operations_cli._telemetry_value(row, "DurationMs") is None
 
 
 def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, capsys):
