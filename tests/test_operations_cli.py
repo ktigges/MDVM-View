@@ -260,23 +260,7 @@ def test_log_query_applies_explicit_timespan(monkeypatch):
     assert captured[1][captured[1].index("--timespan") + 1] == "PT1H"
 
 
-@pytest.mark.parametrize("diagnostic_settings", [
-    [{
-        "workspaceId": (
-            "/subscriptions/subscription-test/resourceGroups/resource-group-test/"
-            "providers/Microsoft.OperationalInsights/workspaces/workspace-test"
-        ),
-    }],
-    {
-        "value": [{
-            "workspaceId": (
-                "/subscriptions/subscription-test/resourceGroups/resource-group-test/"
-                "providers/Microsoft.OperationalInsights/workspaces/workspace-test"
-            ),
-        }],
-    },
-])
-def test_workspace_context_uses_function_diagnostic_setting(monkeypatch, diagnostic_settings):
+def test_workspace_context_uses_application_insights_workspace(monkeypatch):
     monkeypatch.delenv("LOG_ANALYTICS_WORKSPACE_NAME", raising=False)
     monkeypatch.setattr(
         operations_cli,
@@ -287,11 +271,29 @@ def test_workspace_context_uses_function_diagnostic_setting(monkeypatch, diagnos
             "function_app_name": "function-test",
         },
     )
-    monkeypatch.setattr(
-        operations_cli,
-        "_az_json",
-        lambda *args: diagnostic_settings,
-    )
+    json_calls = []
+
+    def fake_az_json(*args):
+        json_calls.append(args)
+        if args[:2] == ("functionapp", "show"):
+            return {
+                "tags": {
+                    "hidden-link: /app-insights-resource-id": (
+                        "/subscriptions/subscription-test/resourceGroups/resource-group-test/"
+                        "providers/microsoft.insights/components/insights-test"
+                    ),
+                },
+            }
+        return {
+            "properties": {
+                "WorkspaceResourceId": (
+                    "/subscriptions/subscription-test/resourceGroups/resource-group-test/"
+                    "providers/Microsoft.OperationalInsights/workspaces/workspace-test"
+                ),
+            },
+        }
+
+    monkeypatch.setattr(operations_cli, "_az_json", fake_az_json)
     captured = []
 
     def fake_az(*args, **kwargs):
@@ -304,11 +306,14 @@ def test_workspace_context_uses_function_diagnostic_setting(monkeypatch, diagnos
 
     assert values["function_app_name"] == "function-test"
     assert workspace_id == "workspace-customer-id"
+    assert json_calls[0][:2] == ("functionapp", "show")
+    assert json_calls[1][:2] == ("resource", "show")
+    assert "microsoft.insights/components/insights-test" in json_calls[1][json_calls[1].index("--ids") + 1]
     assert "--ids" in captured[0]
     assert "Microsoft.OperationalInsights/workspaces/workspace-test" in captured[0][captured[0].index("--ids") + 1]
 
 
-def test_workspace_context_requires_one_linked_workspace(monkeypatch):
+def test_workspace_context_requires_linked_application_insights(monkeypatch):
     monkeypatch.delenv("LOG_ANALYTICS_WORKSPACE_NAME", raising=False)
     monkeypatch.setattr(
         operations_cli,
@@ -319,9 +324,9 @@ def test_workspace_context_requires_one_linked_workspace(monkeypatch):
             "function_app_name": "function-test",
         },
     )
-    monkeypatch.setattr(operations_cli, "_az_json", lambda *args: {"value": []})
+    monkeypatch.setattr(operations_cli, "_az_json", lambda *args: {"tags": {}})
 
-    with pytest.raises(RuntimeError, match="exactly one Log Analytics workspace"):
+    with pytest.raises(RuntimeError, match="linked Application Insights"):
         operations_cli._workspace_context()
 
 
