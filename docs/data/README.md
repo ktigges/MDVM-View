@@ -277,7 +277,24 @@ flowchart TD
 
 ### Page download and raw archive
 
-Each endpoint is downloaded one page at a time. The collector follows `@odata.nextLink` until no next page exists.
+Each endpoint is downloaded one page at a time. Machine-vulnerability, machine,
+vulnerability-catalog, and recommendation inventories request at most 1,000 rows
+from the first page onward using `$top`. The collector follows `@odata.nextLink`
+when provided; otherwise, a full inventory page advances `$skip` while preserving
+filters until a short or empty page is returned. An exact page-size boundary
+requires a final empty request; 1,000 is a page size, not a total collection limit.
+
+Vulnerability deltas use `pageSize=1000` and follow server continuation links.
+They do not use `$top`, which disables continuation on the delta export API.
+Recommendation-machine references and experimental routes have no documented
+manual page-size control; their server-provided next links are followed without
+inventing query parameters. Graph Secure Score intentionally requests only the
+latest score and is not a full inventory.
+
+Malformed pages, repeated continuation URLs, repeated full pages, and responses
+exceeding the requested page size fail collection rather than silently reporting
+a complete snapshot. Request timeouts and transient HTTP failures share a
+five-attempt budget per page.
 
 Every successful page is written immediately as gzip-compressed JSON:
 

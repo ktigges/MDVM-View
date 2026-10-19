@@ -2,11 +2,12 @@ import json
 from copy import deepcopy
 import gzip
 from datetime import datetime, timezone
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 import pytest
 
-from vulnerability_view.defender_client import ENDPOINTS, DefenderApiError, DefenderClient, collection_endpoints
+from vulnerability_view.defender_client import ENDPOINTS, DefenderApiError, DefenderClient, Endpoint, collection_endpoints
 from vulnerability_view.live_collector import apply_vulnerability_delta, merge_vulnerability_delta, normalize_live, recommendation_requires_api_enrichment, reconcile_live_findings, replay_raw_snapshot
 
 
@@ -111,7 +112,7 @@ def test_defender_page_timeout_does_not_duplicate_archived_pages(monkeypatch):
     assert status["PageCount"] == 2
     assert [page for page, _ in archived] == [1, 2]
     assert calls == [
-        "https://example.test/api/vulnerabilities/machinesVulnerabilities",
+        "https://example.test/api/vulnerabilities/machinesVulnerabilities?%24top=1000",
         "https://example.test/page2",
         "https://example.test/page2",
     ]
@@ -134,6 +135,223 @@ def test_defender_permission_errors_are_not_retried(monkeypatch, status):
     with pytest.raises(DefenderApiError, match=str(status)):
         client.request("https://example.test/page")
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("path", [
+    "/api/vulnerabilities/machinesVulnerabilities",
+    "/api/machines",
+    "/api/vulnerabilities",
+    "/api/recommendations",
+])
+@pytest.mark.parametrize("retain_rows", [True, False])
+def test_bounded_inventory_paging_collects_all_rows_without_next_links(monkeypatch, path, retain_rows):
+    archived = []
+    queries = []
+    progress = []
+    client = DefenderClient(
+        "https://example.test", Credential(),
+        lambda name, page, content: archived.append((page, json.loads(content))),
+        progress_callback=progress.append,
+    )
+
+    def request(url):
+        query = parse_qs(urlsplit(url).query)
+        queries.append(query)
+        assert query["$top"] == ["1000"]
+        offset = int(query.get("$skip", ["0"])[0])
+        return response({"value": [{"id": index} for index in range(offset, min(offset + 1000, 2057))]})
+
+    monkeypatch.setattr(client, "request", request)
+    endpoint = Endpoint("inventory", path, "permission", True, "documentation")
+
+    rows, status = client.collect(endpoint, retain_rows=retain_rows)
+
+    assert [query.get("$skip", ["0"]) for query in queries] == [["0"], ["1000"], ["2000"]]
+    assert status["RowCount"] == 2057
+    assert status["PageCount"] == 3
+    assert [page for page, _ in archived] == [1, 2, 3]
+    assert [row["id"] for _, payload in archived for row in payload["value"]] == list(range(2057))
+    assert [row["id"] for row in rows] == (list(range(2057)) if retain_rows else [])
+    assert any("page size" in message and "1,000" in message for message in progress)
+
+
+@pytest.mark.parametrize("count, expected_pages", [(0, 1), (999, 1), (1000, 2), (2000, 3)])
+def test_bounded_paging_checks_empty_terminal_page_at_exact_boundary(monkeypatch, count, expected_pages):
+    client = DefenderClient("https://example.test", Credential())
+
+    def request(url):
+        query = parse_qs(urlsplit(url).query)
+        offset = int(query.get("$skip", ["0"])[0])
+        return response({"value": [{"id": index} for index in range(offset, min(offset + 1000, count))]})
+
+    monkeypatch.setattr(client, "request", request)
+
+    rows, status = client.collect(ENDPOINTS[0])
+
+    assert [row["id"] for row in rows] == list(range(count))
+    assert status["PageCount"] == expected_pages
+
+
+def test_bounded_paging_preserves_filters_offsets_and_smaller_pages(monkeypatch):
+    client = DefenderClient("https://example.test", Credential())
+    original = {"$filter": "severity eq 'High'", "$skip": "5", "$top": "2"}
+    queries = []
+
+    def request(url):
+        query = parse_qs(urlsplit(url).query)
+        queries.append(query)
+        offset = int(query["$skip"][0])
+        assert query["$filter"] == [original["$filter"]]
+        assert query["$top"] == ["2"]
+        return response({"value": [{"id": index} for index in range(offset, min(offset + 2, 10))]})
+
+    monkeypatch.setattr(client, "request", request)
+
+    rows, _ = client.collect(ENDPOINTS[2], original)
+
+    assert [row["id"] for row in rows] == [5, 6, 7, 8, 9]
+    assert [query["$skip"] for query in queries] == [["5"], ["7"], ["9"]]
+    assert original == {"$filter": "severity eq 'High'", "$skip": "5", "$top": "2"}
+
+
+def test_filtered_dynamic_catalog_requests_also_bound_page_size(monkeypatch):
+    client = DefenderClient("https://example.test", Credential())
+    urls = []
+    monkeypatch.setattr(client, "request", lambda url: urls.append(url) or response({"value": []}))
+    endpoint = Endpoint("vulnerability_delta_details--1", "/api/vulnerabilities", "permission", True, "documentation")
+
+    client.collect(endpoint, {"$filter": "id eq 'CVE-1'", "$top": "99999"})
+
+    assert parse_qs(urlsplit(urls[0]).query) == {"$filter": ["id eq 'CVE-1'"], "$top": ["1000"]}
+
+
+def test_delta_uses_page_size_and_follows_opaque_continuation(monkeypatch):
+    client = DefenderClient("https://example.test", Credential())
+    urls = []
+    next_link = "https://example.test/api/machines/SoftwareVulnerabilityChangesByMachine?pageSize=1000&$skiptoken=opaque"
+    pages = iter([
+        response({"value": [{"id": 1}], "@odata.nextLink": next_link}),
+        response({"value": [{"id": 2}]}),
+    ])
+    monkeypatch.setattr(client, "request", lambda url: urls.append(url) or next(pages))
+
+    rows, status = client.collect(ENDPOINTS[5], {"sinceTime": "2026-10-19T00:00:00Z"})
+
+    assert parse_qs(urlsplit(urls[0]).query) == {
+        "sinceTime": ["2026-10-19T00:00:00Z"], "pageSize": ["1000"],
+    }
+    assert urls[1] == next_link
+    assert [row["id"] for row in rows] == [1, 2]
+    assert status["PageCount"] == 2
+
+
+def test_server_continuation_takes_priority_over_offset_fallback(monkeypatch):
+    client = DefenderClient("https://example.test", Credential())
+    urls = []
+    next_link = "https://example.test/api/machines?$top=1000&$skiptoken=opaque"
+    pages = iter([
+        response({"value": [{"id": index} for index in range(1000)], "@odata.nextLink": next_link}),
+        response({"value": [{"id": 1000}]}),
+    ])
+    monkeypatch.setattr(client, "request", lambda url: urls.append(url) or next(pages))
+
+    rows, _ = client.collect(ENDPOINTS[1])
+
+    assert urls[1] == next_link
+    assert len(rows) == 1001
+
+
+@pytest.mark.parametrize("payload", [{}, {"value": None}, {"value": {}}, {"value": [None]}, {"value": [], "@odata.nextLink": 123}])
+def test_paging_rejects_malformed_pages_instead_of_claiming_completion(monkeypatch, payload):
+    client = DefenderClient("https://example.test", Credential())
+    monkeypatch.setattr(client, "request", lambda url: response(payload))
+
+    with pytest.raises(DefenderApiError):
+        client.collect(ENDPOINTS[0])
+
+
+def test_paging_rejects_a_repeated_continuation_link(monkeypatch):
+    client = DefenderClient("https://example.test", Credential())
+    monkeypatch.setattr(client, "request", lambda url: response({"value": [{"id": 1}], "@odata.nextLink": url}))
+
+    with pytest.raises(DefenderApiError, match="repeated"):
+        client.collect(ENDPOINTS[0])
+
+
+def test_paging_rejects_a_server_ignoring_skip(monkeypatch):
+    client = DefenderClient("https://example.test", Credential())
+    monkeypatch.setattr(client, "request", lambda url: response({"value": [{"id": index} for index in range(1000)]}))
+
+    with pytest.raises(DefenderApiError, match="repeated"):
+        client.collect(ENDPOINTS[0])
+
+
+@pytest.mark.parametrize("query", [{"$top": "0"}, {"$top": "-1"}, {"$top": "abc"}, {"$skip": "-1"}, {"$skip": "abc"}])
+def test_paging_rejects_invalid_bounds_before_requesting(monkeypatch, query):
+    client = DefenderClient("https://example.test", Credential())
+    monkeypatch.setattr(client, "request", lambda url: pytest.fail("Invalid paging must fail before a request"))
+
+    with pytest.raises(ValueError):
+        client.collect(ENDPOINTS[0], query)
+
+
+def test_delta_rejects_top_that_would_disable_continuation(monkeypatch):
+    client = DefenderClient("https://example.test", Credential())
+    monkeypatch.setattr(client, "request", lambda url: pytest.fail("Do not truncate delta history"))
+
+    with pytest.raises(ValueError, match=r"\$top"):
+        client.collect(ENDPOINTS[5], {"sinceTime": "2026-10-19T00:00:00Z", "$top": "1000"})
+
+
+def test_relationships_do_not_send_undocumented_paging_parameters(monkeypatch):
+    client = DefenderClient("https://example.test", Credential())
+    urls = []
+    endpoint = Endpoint("recommendation_machines--id", "/api/recommendations/id/machineReferences", "permission", False, "documentation")
+    pages = iter([
+        response({"value": [{"id": 1}], "@odata.nextLink": "https://example.test/next"}),
+        response({"value": [{"id": 2}]}),
+    ])
+    monkeypatch.setattr(client, "request", lambda url: urls.append(url) or next(pages))
+
+    rows, _ = client.collect(endpoint)
+
+    assert urls == ["https://example.test/api/recommendations/id/machineReferences", "https://example.test/next"]
+    assert [row["id"] for row in rows] == [1, 2]
+
+
+def test_later_page_failure_never_reports_a_completed_partial_inventory(monkeypatch):
+    archived = []
+    progress = []
+    client = DefenderClient(
+        "https://example.test", Credential(),
+        lambda name, page, content: archived.append((page, json.loads(content))),
+        progress_callback=progress.append,
+    )
+
+    def request(url):
+        if "$skip" in parse_qs(urlsplit(url).query):
+            raise requests.ReadTimeout("later page timed out")
+        return response({"value": [{"id": index} for index in range(1000)]})
+
+    monkeypatch.setattr(client, "request", request)
+
+    with pytest.raises(requests.ReadTimeout):
+        client.collect(ENDPOINTS[0], retain_rows=False)
+
+    assert [page for page, _ in archived] == [1]
+    assert not any("complete:" in message for message in progress)
+
+
+def test_delta_caps_explicit_page_size_without_mutating_query(monkeypatch):
+    client = DefenderClient("https://example.test", Credential())
+    urls = []
+    monkeypatch.setattr(client, "request", lambda url: urls.append(url) or response({"value": []}))
+    query = {"sinceTime": "2026-10-19T00:00:00Z", "pageSize": "50000"}
+
+    client.collect(ENDPOINTS[5], query)
+
+    assert parse_qs(urlsplit(urls[0]).query)["pageSize"] == ["1000"]
+    assert query["pageSize"] == "50000"
 
 
 def test_vulnerability_delta_reconstructs_current_detected_snapshot():

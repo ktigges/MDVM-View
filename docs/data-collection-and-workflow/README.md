@@ -362,21 +362,40 @@ Graph Secure Score uses the `https://graph.microsoft.com/.default` scope.
 
 ## Download, pagination, and retry logic
 
-Every endpoint is downloaded one page at a time. The client follows `@odata.nextLink` until no next page remains.
+Every endpoint is downloaded one page at a time. Machine-vulnerability, machine,
+vulnerability-catalog, and recommendation inventories explicitly request at most
+1,000 rows per page using `$top`, including the first request. Server continuation
+links take priority. When a full inventory page has no next link, the client
+advances `$skip`, retaining filters, until a short or empty page is returned.
+The page size never caps the total inventory.
+
+Vulnerability deltas use `pageSize=1000` and server continuation links, not `$top`
+(which disables continuation on that API). Recommendation-machine references and
+experimental routes have no documented manual page-size control, so the client
+uses their server-provided continuation links without adding unsupported options.
+Graph Secure Score deliberately requests the latest score rather than an inventory.
 
 For each successful page:
 
 1. The original response bytes are archived.
 2. The JSON `value` rows are added to the endpoint result.
-3. The next-link URL is requested.
+3. The next-link URL, or the next inventory offset, is requested if more data remains.
 
-Requests use separate connection and response timeouts. HTTP 429 and temporary server failures (`500`, `502`, `503`, and `504`) are retried up to five attempts.
+Requests use separate connection and response timeouts. Read/connect timeouts,
+HTTP 429, and temporary server failures (`500`, `502`, `503`, and `504`) share a
+budget of five attempts per page. Failed attempts do not advance the page or
+duplicate its archive. Malformed pages, repeated continuation URLs, repeated full
+pages, and oversized responses fail explicitly rather than publishing a partial
+inventory.
 
 Retry delay uses the service's `Retry-After` header when available. Otherwise, it uses bounded exponential backoff with a small random delay.
 
 HTTP 401 and 403 errors fail immediately with an authentication or permission message.
 
-Progress output reports cumulative rows and elapsed time. When Defender supplies `@odata.count`, it also reports a percentage. Recommendation-machine enrichment reports overall recommendations completed instead of logging each one-page request separately.
+Progress output reports the initial page-size bound, cumulative rows, and elapsed
+time. When Defender supplies `@odata.count`, it also reports a percentage.
+Recommendation-machine enrichment reports overall recommendations completed
+instead of logging each one-page request separately.
 
 ```mermaid
 flowchart TD
@@ -385,8 +404,10 @@ flowchart TD
     C --> D[Add value rows]
     D --> E{Next link exists?}
     E -->|Yes| A
-    E -->|No| F[Endpoint complete]
-    B -->|429 or temporary 5xx| G{Attempts remain?}
+    E -->|No| K{Full offset-paged inventory page?}
+    K -->|Yes: advance skip| A
+    K -->|No| F[Endpoint complete]
+    B -->|Timeout, 429 or temporary 5xx| G{Attempts remain?}
     G -->|Yes| H[Wait using Retry-After or backoff]
     H --> A
     G -->|No| I[Fail endpoint]
