@@ -45,7 +45,8 @@ Interpret the sources separately:
 |---|---|
 | Preflight 401 | Run `az login --tenant <tenant-id>` and confirm the selected tenant. Check the configured credential mode. |
 | Preflight 403 | Grant and admin-consent the permission printed by preflight; confirm Defender device-group visibility. |
-| Required route fails | Collection stops. Resolve the required permission or endpoint access before retrying. |
+| Required route fails | Collection stops. Resolve the reported permission, endpoint access, or timeout failure before retrying. |
+| `machine_vulnerabilities` fails with `ReadTimeout` after 90 seconds | The Function executed but did not receive a timely Defender API response. This is not a code-deployment failure or proof of a permission problem. The client retries read/connect timeouts and HTTP 429/5xx transient responses within one shared budget of five attempts per page, with backoff and visible retry messages. The read timeout remains 90 seconds per attempt. If all attempts fail, collection fails explicitly rather than publishing an incomplete snapshot. Older code did not retry request timeouts; deploy the updated Function code, not just the Viewer. Persistent timeouts still require investigation of Defender endpoint responsiveness and the Function's outbound network path. |
 | Optional route is unavailable | The run can complete as partial success. Experimental compatibility routes are disabled by default. |
 | Secure Score is unavailable | Check the `secure_scores` collection status. Microsoft Graph requires `SecurityEvents.Read.All` with tenant admin consent. |
 | Client-secret mode is rejected in Azure | Expected. Client-secret authentication is restricted to explicitly acknowledged local development. Hosted workloads use managed identity. |

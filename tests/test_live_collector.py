@@ -4,8 +4,9 @@ import gzip
 from datetime import datetime, timezone
 
 import requests
+import pytest
 
-from vulnerability_view.defender_client import ENDPOINTS, DefenderClient, collection_endpoints
+from vulnerability_view.defender_client import ENDPOINTS, DefenderApiError, DefenderClient, collection_endpoints
 from vulnerability_view.live_collector import apply_vulnerability_delta, merge_vulnerability_delta, normalize_live, recommendation_requires_api_enrichment, reconcile_live_findings, replay_raw_snapshot
 
 
@@ -32,6 +33,107 @@ def response(payload, url="https://example.test/page"):
     value._content = json.dumps(payload).encode()
     value.headers["Content-Type"] = "application/json"
     return value
+
+
+@pytest.mark.parametrize("timeout_type", [requests.ReadTimeout, requests.ConnectTimeout])
+def test_defender_request_retries_timeout_before_success(monkeypatch, timeout_type):
+    progress = []
+    calls = []
+    sleeps = []
+    client = DefenderClient("https://example.test", Credential(), progress_callback=progress.append)
+    expected = response({"value": []})
+
+    def get(url, **kwargs):
+        calls.append((url, kwargs["timeout"]))
+        if len(calls) == 1:
+            raise timeout_type("request timed out")
+        return expected
+
+    monkeypatch.setattr(client.session, "get", get)
+    monkeypatch.setattr("vulnerability_view.defender_client.time.sleep", sleeps.append)
+    monkeypatch.setattr("vulnerability_view.defender_client.random.random", lambda: 0.5)
+
+    assert client.request("https://example.test/page") is expected
+    assert calls == [("https://example.test/page", (10, 90))] * 2
+    assert sleeps == [1.5]
+    assert any(f"{timeout_type.__name__}" in message and "attempt 2/5" in message for message in progress)
+
+
+def test_defender_timeouts_exhaust_shared_attempt_budget(monkeypatch):
+    progress = []
+    sleeps = []
+    client = DefenderClient("https://example.test", Credential(), max_attempts=3, progress_callback=progress.append)
+    throttled = response({})
+    throttled.status_code = 429
+    throttled.headers["Retry-After"] = "2"
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            return throttled
+        raise requests.ReadTimeout("request timed out")
+
+    monkeypatch.setattr(client.session, "get", get)
+    monkeypatch.setattr("vulnerability_view.defender_client.time.sleep", sleeps.append)
+
+    with pytest.raises(requests.ReadTimeout):
+        client.request("https://example.test/page")
+
+    assert len(calls) == 3
+    assert len(sleeps) == 2
+    assert sleeps[0] == 2
+    assert any("3 attempts" in message and "ReadTimeout" in message for message in progress)
+
+
+def test_defender_page_timeout_does_not_duplicate_archived_pages(monkeypatch):
+    archived = []
+    client = DefenderClient(
+        "https://example.test", Credential(),
+        lambda name, page, content: archived.append((page, json.loads(content))),
+    )
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            return response({"value": [{"id": 1}], "@odata.nextLink": "https://example.test/page2"})
+        if len(calls) == 2:
+            raise requests.ReadTimeout("request timed out")
+        return response({"value": [{"id": 2}]})
+
+    monkeypatch.setattr(client.session, "get", get)
+    monkeypatch.setattr("vulnerability_view.defender_client.time.sleep", lambda delay: None)
+
+    rows, status = client.collect(ENDPOINTS[0])
+
+    assert [row["id"] for row in rows] == [1, 2]
+    assert status["PageCount"] == 2
+    assert [page for page, _ in archived] == [1, 2]
+    assert calls == [
+        "https://example.test/api/vulnerabilities/machinesVulnerabilities",
+        "https://example.test/page2",
+        "https://example.test/page2",
+    ]
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_defender_permission_errors_are_not_retried(monkeypatch, status):
+    client = DefenderClient("https://example.test", Credential())
+    result = response({})
+    result.status_code = status
+    calls = []
+
+    def get(*args, **kwargs):
+        calls.append(args)
+        return result
+
+    monkeypatch.setattr(client.session, "get", get)
+    monkeypatch.setattr("vulnerability_view.defender_client.time.sleep", lambda delay: pytest.fail("Must not retry permission errors"))
+
+    with pytest.raises(DefenderApiError, match=str(status)):
+        client.request("https://example.test/page")
+    assert len(calls) == 1
 
 
 def test_vulnerability_delta_reconstructs_current_detected_snapshot():
