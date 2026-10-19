@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from azure.core.exceptions import ResourceNotFoundError
 
 import function_app
@@ -12,7 +13,7 @@ def test_run_dataprep_uses_temporary_writable_workspace(monkeypatch):
 
     def fake_main(arguments: list[str]) -> int:
         observed["work_root"] = Path.cwd()
-        assert arguments == ["collect-live", "--skip-local-exports", "--collection", "auto", "--enrichment", "auto"]
+        assert arguments == ["collect-live", "--skip-local-exports", "--collection", "auto", "--enrichment", "auto", "--page-size", "1000"]
         assert observed["work_root"].parent == Path("/tmp").resolve()
         assert (observed["work_root"] / "config/sla-policies.json").is_file()
         output = observed["work_root"] / "output/raw/live-test"
@@ -31,7 +32,7 @@ def test_run_dataprep_restores_directory_after_failure(monkeypatch):
     original_directory = Path.cwd()
 
     def failing_main(arguments: list[str]) -> int:
-        assert arguments == ["collect-live", "--skip-local-exports", "--collection", "auto", "--enrichment", "auto"]
+        assert arguments == ["collect-live", "--skip-local-exports", "--collection", "auto", "--enrichment", "auto", "--page-size", "1000"]
         raise RuntimeError("collection failed")
 
     monkeypatch.setattr(function_app, "main", failing_main)
@@ -48,20 +49,80 @@ def test_run_dataprep_restores_directory_after_failure(monkeypatch):
 
 def test_manual_full_trigger_forces_full_collection_and_enrichment(monkeypatch):
     calls = []
-    monkeypatch.setattr(function_app, "_run_dataprep", lambda collection, enrichment: calls.append((collection, enrichment)) or 0)
+    monkeypatch.setattr(function_app, "_run_dataprep", lambda collection, enrichment, **kwargs: calls.append((collection, enrichment, kwargs)) or 0)
 
     function_app.dataprep_full_snapshot("full")
 
-    assert calls == [("full", "full")]
+    assert calls == [("full", "full", {"page_size": 1000})]
 
 
 def test_manual_trigger_uses_scheduled_collection_policy(monkeypatch):
     calls = []
-    monkeypatch.setattr(function_app, "_run_dataprep", lambda: calls.append(()) or 0)
+    monkeypatch.setattr(function_app, "_run_dataprep", lambda **kwargs: calls.append(kwargs) or 0)
 
     function_app.dataprep_manual_snapshot("")
 
-    assert calls == [()]
+    assert calls == [{"page_size": 1000}]
+
+
+@pytest.mark.parametrize("page_size", [1, 100, 1000])
+def test_manual_triggers_forward_per_run_page_size(monkeypatch, page_size):
+    calls = []
+    monkeypatch.setattr(function_app, "_run_dataprep", lambda *args, **kwargs: calls.append((args, kwargs)) or 0)
+    payload = json.dumps({"pageSize": page_size})
+
+    function_app.dataprep_manual_snapshot(payload)
+    function_app.dataprep_full_snapshot(payload)
+    function_app.dataprep_debug_page(payload)
+
+    assert calls == [
+        ((), {"page_size": page_size}),
+        (("full", "full"), {"page_size": page_size}),
+        ((), {"page_size": page_size, "debug": True, "debug_endpoint": "machine_vulnerabilities"}),
+    ]
+
+
+@pytest.mark.parametrize("payload", ['{"pageSize":0}', '{"pageSize":1001}', '{"pageSize":true}', '{"pageSize":1.5}', "[]", "not-json"])
+def test_manual_trigger_rejects_invalid_input_before_collection(monkeypatch, payload):
+    monkeypatch.setattr(function_app, "_run_dataprep", lambda *args, **kwargs: pytest.fail("Invalid input must not collect"))
+
+    with pytest.raises(ValueError):
+        function_app.dataprep_debug_page(payload)
+
+
+def test_debug_trigger_defaults_to_one_record(monkeypatch):
+    calls = []
+    monkeypatch.setattr(function_app, "_run_dataprep", lambda **kwargs: calls.append(kwargs) or 0)
+
+    function_app.dataprep_debug_page("")
+
+    assert calls == [{"page_size": 1, "debug": True, "debug_endpoint": "machine_vulnerabilities"}]
+
+
+def test_debug_dataprep_bypasses_workspace_and_publication(monkeypatch):
+    calls = []
+    monkeypatch.setattr(function_app, "main", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(function_app.tempfile, "TemporaryDirectory", lambda **kwargs: pytest.fail("Debug must not create a collection workspace"))
+
+    assert function_app._run_dataprep(page_size=1, debug=True) == 0
+    assert calls == [["probe-live", "--page-size", "1", "--endpoint", "machine_vulnerabilities"]]
+
+
+@pytest.mark.parametrize("payload", ['{"pageSize":1000,"endpoint":"vulnerabilities"}', '{"endpoint":"vulnerabilities"}'])
+def test_debug_trigger_forwards_catalog_selection(monkeypatch, payload):
+    calls = []
+    monkeypatch.setattr(function_app, "_run_dataprep", lambda **kwargs: calls.append(kwargs) or 0)
+
+    function_app.dataprep_debug_page(payload)
+
+    assert calls == [{"page_size": 1000, "debug": True, "debug_endpoint": "vulnerabilities"}]
+
+
+def test_debug_trigger_rejects_unknown_route(monkeypatch):
+    monkeypatch.setattr(function_app, "_run_dataprep", lambda **kwargs: pytest.fail("Invalid endpoint must not execute"))
+
+    with pytest.raises(ValueError, match="Debug endpoint"):
+        function_app.dataprep_debug_page('{"pageSize":1,"endpoint":"not-a-route"}')
 
 
 def test_current_run_status_summarizes_manifest(monkeypatch):

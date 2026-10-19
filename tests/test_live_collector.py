@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 import requests
 import pytest
 
-from vulnerability_view.defender_client import ENDPOINTS, DefenderApiError, DefenderClient, Endpoint, collection_endpoints
+from vulnerability_view.defender_client import ENDPOINTS, DefenderApiError, DefenderClient, Endpoint, collection_endpoints, collection_page_size, probe_defender_page
 from vulnerability_view.live_collector import apply_vulnerability_delta, merge_vulnerability_delta, normalize_live, recommendation_requires_api_enrichment, reconcile_live_findings, replay_raw_snapshot
 
 
@@ -352,6 +352,131 @@ def test_delta_caps_explicit_page_size_without_mutating_query(monkeypatch):
 
     assert parse_qs(urlsplit(urls[0]).query)["pageSize"] == ["1000"]
     assert query["pageSize"] == "50000"
+
+
+@pytest.mark.parametrize("value", [0, -1, 1001, True, None, 1.5, "1.5", "abc", ""])
+def test_run_page_size_rejects_invalid_values(value):
+    with pytest.raises(ValueError, match="1 to 1000"):
+        collection_page_size(value)
+
+
+@pytest.mark.parametrize("page_size", [1, 100, 1000])
+def test_custom_client_page_size_bounds_all_inventory_and_delta_requests(monkeypatch, page_size):
+    client = DefenderClient("https://example.test", Credential(), page_size=page_size)
+    urls = []
+    monkeypatch.setattr(client, "request", lambda url: urls.append(url) or response({"value": []}))
+
+    for endpoint in collection_endpoints():
+        client.collect(endpoint)
+
+    for url in urls:
+        query = parse_qs(urlsplit(url).query)
+        key = "pageSize" if "SoftwareVulnerabilityChangesByMachine" in url else "$top"
+        assert query[key] == [str(page_size)]
+
+
+def test_debug_probe_requests_once_and_ignores_continuation(monkeypatch):
+    calls = []
+    progress = []
+    result = response({"value": [{"id": "one"}], "@odata.nextLink": "https://example.test/never-follow"})
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append(url) or result)
+
+    report = probe_defender_page("https://example.test", Credential(), 1, progress.append)
+
+    assert calls == ["https://example.test/api/vulnerabilities/machinesVulnerabilities?%24top=1"]
+    assert report["RequestedRows"] == report["RowCount"] == 1
+    assert report["HttpStatus"] == 200
+    assert "no data published" in progress[-1]
+    assert "one" not in report.values()
+
+
+@pytest.mark.parametrize("failure", ["timeout", 429, 503, 403])
+def test_debug_probe_never_retries_failures(monkeypatch, failure):
+    calls = []
+
+    def get(self, url, **kwargs):
+        calls.append(url)
+        if failure == "timeout":
+            raise requests.ReadTimeout("timed out")
+        result = response({})
+        result.status_code = failure
+        return result
+
+    monkeypatch.setattr(requests.Session, "get", get)
+    monkeypatch.setattr("vulnerability_view.defender_client.time.sleep", lambda delay: pytest.fail("Debug must never retry"))
+
+    with pytest.raises((requests.ReadTimeout, DefenderApiError)):
+        probe_defender_page("https://example.test", Credential(), 1)
+
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("endpoint,path,count", [
+    ("machine_vulnerabilities", "/api/vulnerabilities/machinesVulnerabilities", 10),
+    ("vulnerabilities", "/api/vulnerabilities", 1000),
+])
+def test_debug_calls_requested_regional_host_and_selected_dataset(monkeypatch, endpoint, path, count):
+    calls = []
+    progress = []
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append(url) or response({"value": []}))
+
+    report = probe_defender_page(
+        "https://api-us3.securitycenter.microsoft.com", Credential(), count,
+        progress.append, endpoint=endpoint,
+    )
+
+    assert calls == [f"https://api-us3.securitycenter.microsoft.com{path}?%24top={count}"]
+    assert report["Endpoint"] == endpoint
+    assert calls[0] in progress[0]
+
+
+def test_debug_cli_does_not_collect_or_access_storage(monkeypatch, capsys):
+    from vulnerability_view import dataprep_cli
+    from vulnerability_view.config import Settings
+
+    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity", defender_api_base_url="https://example.test"))
+    monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
+    for name in ("_read_existing", "_read_outputs", "collect_live", "upload_run_bundle", "write_outputs"):
+        monkeypatch.setattr(dataprep_cli, name, lambda *args, **kwargs: pytest.fail("Debug must not collect or touch storage"))
+    calls = []
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append(url) or response({"value": [{"id": 1}]}))
+
+    assert dataprep_cli.main(["probe-live", "--page-size", "1"]) == 0
+
+    assert len(calls) == 1
+    assert '"RowCount": 1' in capsys.readouterr().out
+
+
+def test_catalog_debug_cli_uses_catalog_route_and_default_limit(monkeypatch):
+    from vulnerability_view import dataprep_cli
+    from vulnerability_view.config import Settings
+
+    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity"))
+    monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
+    calls = []
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append(url) or response({"value": []}))
+
+    assert dataprep_cli.main(["probe-live", "--endpoint", "vulnerabilities"]) == 0
+    assert calls == ["https://api-us3.securitycenter.microsoft.com/api/vulnerabilities?%24top=1000"]
+
+
+def test_collect_cli_forwards_page_size(monkeypatch):
+    from vulnerability_view import dataprep_cli
+    from vulnerability_view.config import Settings
+
+    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity", tenant_id="tenant", defender_api_base_url="https://example.test"))
+    monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
+    monkeypatch.setattr(dataprep_cli, "_read_existing", lambda *args: {})
+    monkeypatch.setattr(dataprep_cli, "_resolve_collection_mode", lambda *args: ("full", None))
+
+    def collect(*args, **kwargs):
+        assert kwargs["page_size"] == 100
+        raise RuntimeError("Verified page-size forwarding")
+
+    monkeypatch.setattr(dataprep_cli, "collect_live", collect)
+
+    with pytest.raises(RuntimeError, match="Verified page-size forwarding"):
+        dataprep_cli.main(["collect-live", "--page-size", "100"])
 
 
 def test_vulnerability_delta_reconstructs_current_detected_snapshot():

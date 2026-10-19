@@ -332,6 +332,59 @@ group containing it. Review the generated destroy plan before approval.
 
 ## 6. Collection progress, runs, failures, and memory
 
+### One-page debugging versus complete collection
+
+Deployment menu option **5** offers:
+
+- **D — Debug one page** (default): choose **M — Machine vulnerability findings**
+  or **V — Vulnerability catalog**, then ask for a maximum of 1-1,000 records
+  (default **1** for machine findings or **1,000** for the catalog), require
+  `DEBUG`, make one Defender request, and stop.
+  It does not retry, follow next links, archive responses, normalize findings,
+  access snapshot Storage, or publish a manifest. A missing current manifest
+  remains missing after a successful debug request.
+- **C — Complete collection**: ask for records per page (default **1,000**),
+  require `COLLECT`, and collect the complete dataset with normal paging,
+  retries, validation, and publication.
+
+These choices apply only to this invocation. They do not modify Terraform,
+app settings, or the scheduled collector's default page size. The full
+reconciliation action also accepts a per-run page size and retains its `FULL`
+confirmation. The page size is a per-request maximum, not a total inventory cap.
+
+Equivalent cross-platform commands:
+
+```bash
+python -m vulnerability_view.operations_cli invoke function --confirm --debug --page-size 1
+python -m vulnerability_view.operations_cli invoke function --confirm --debug --endpoint vulnerabilities --page-size 1000
+python -m vulnerability_view.operations_cli invoke function --confirm --page-size 100
+```
+
+Debug uses the dedicated `dataprep_debug_page` trigger, so it cannot fall back to
+a full collection on an older deployed Function. Deploy updated Function code
+before using it. Trigger acceptance is not debug completion; inspect informational
+Function logs for `[debug]` messages or the final exception.
+
+The debug API request is:
+
+```http
+GET https://api-us3.securitycenter.microsoft.com/api/vulnerabilities/machinesVulnerabilities?$top=1
+GET https://api-us3.securitycenter.microsoft.com/api/vulnerabilities?$top=1000
+```
+
+It uses the collector's managed identity and configured Defender base URL.
+Both paths remain distinct. The operator-selected default base URI is
+`https://api-us3.securitycenter.microsoft.com`; it is not a claim that this
+Explorer-displayed hostname is a documented public endpoint. Set Terraform
+`defender_api_base_url` to retain another required host. Both infrastructure apply
+and Function code deployment synchronize the Function's base-URI app setting from
+that value (or its default), so an old deployed global host does not silently
+override new code defaults. No shell environment override is required.
+Debug logs print the actual request URI before making the request.
+Results report requested/returned row counts, HTTP status, and elapsed time,
+not raw finding contents or tokens. Debug retains the 10-second connection and
+90-second read timeouts but makes no automatic retry.
+
 ### Active status only
 
 ```bash

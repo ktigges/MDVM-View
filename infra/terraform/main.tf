@@ -469,7 +469,7 @@ resource "azurerm_function_app_flex_consumption" "collector" {
     "AzureWebJobsStorage__clientId"    = azurerm_user_assigned_identity.collector[each.key].client_id
     "AzureWebJobsStorage__credential"  = "managedidentity"
     "COLLECTION_SCHEDULE"              = var.collection_schedule
-    "DEFENDER_API_BASE_URL"            = "https://api.security.microsoft.com"
+    "DEFENDER_API_BASE_URL"            = var.defender_api_base_url
     "ENABLE_EXPERIMENTAL_ENDPOINTS"    = tostring(var.enable_experimental_endpoints)
     "FULL_COLLECTION_WEEKDAY"          = tostring(var.full_collection_weekday)
     "RECOMMENDATION_ENRICHMENT_MODE"   = var.recommendation_enrichment_mode

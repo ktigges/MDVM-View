@@ -5,7 +5,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
-$DeploymentMenuVersion = "2026.10.19.4"
+$DeploymentMenuVersion = "2026.10.19.6"
 $RequiredAzureCliExtensions = @("log-analytics")
 
 function Test-PythonCommand {
@@ -176,25 +176,75 @@ function Invoke-DeployVerify {
 }
 
 function Invoke-LiveCollection {
-    param([switch]$Full)
+    param([switch]$Full, [switch]$Complete)
 
-    Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only
-    $expected = if ($Full) { "FULL" } else { "COLLECT" }
-    $prompt = if ($Full) {
+    $debugOnly = $false
+    $pageDefault = "1000"
+    if (-not $Full -and -not $Complete) {
+        while ($true) {
+            $mode = (Read-Host "D) Debug one page (no publication); C) Complete collection [D]").Trim()
+            if (-not $mode -or $mode -match "^[Dd]$") {
+                $debugOnly = $true
+                $pageDefault = "1"
+                break
+            }
+            if ($mode -match "^[Cc]$") {
+                break
+            }
+            Write-Host "Select D for debugging or C for complete collection."
+        }
+    }
+    $debugEndpoint = "machine_vulnerabilities"
+    if ($debugOnly) {
+        while ($true) {
+            $endpoint = (Read-Host "M) Machine vulnerability findings; V) Vulnerability catalog [M]").Trim()
+            if (-not $endpoint -or $endpoint -match "^[Mm]$") {
+                break
+            }
+            if ($endpoint -match "^[Vv]$") {
+                $debugEndpoint = "vulnerabilities"
+                $pageDefault = "1000"
+                break
+            }
+            Write-Host "Select M for machine findings or V for the vulnerability catalog."
+        }
+    }
+    Write-Host "Page size controls each request, not the total records collected."
+    while ($true) {
+        $pageSize = (Read-Host "Records per page (1-1000) [$pageDefault]").Trim()
+        if (-not $pageSize) {
+            $pageSize = $pageDefault
+        }
+        if ($pageSize -match "^(?:[1-9][0-9]{0,2}|1000)$") {
+            break
+        }
+        Write-Host "Enter a whole number from 1 to 1000."
+    }
+    $expected = if ($debugOnly) { "DEBUG" } elseif ($Full) { "FULL" } else { "COLLECT" }
+    $prompt = if ($debugOnly) {
+        "This requests one Defender page once, then stops. No retries or publication."
+    } elseif ($Full) {
         "This forces a full vulnerability baseline and complete recommendation-machine reconciliation."
     } else {
         "This starts a live collection and publishes a new immutable run if successful."
+    }
+    if (-not $debugOnly) {
+        Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only
     }
     if (-not (Confirm-Value -Expected $expected -Prompt $prompt)) {
         Write-Host "Live collection canceled."
         return
     }
-    if ($Full) {
-        Invoke-OperationsCli invoke function --confirm --full
+    if ($debugOnly) {
+        Invoke-OperationsCli invoke function --confirm --debug --endpoint $debugEndpoint --page-size $pageSize
+    } elseif ($Full) {
+        Invoke-OperationsCli invoke function --confirm --full --page-size $pageSize
     } else {
-        Invoke-OperationsCli invoke function --confirm
+        Invoke-OperationsCli invoke function --confirm --page-size $pageSize
     }
-    Invoke-OperationsCli verify function
+    if (-not $debugOnly) {
+        Invoke-OperationsCli verify function
+    }
 }
 
 function Invoke-CompleteUpdate {
@@ -205,7 +255,7 @@ function Invoke-CompleteUpdate {
     Invoke-DeployVerify -Stage webapp
     Write-Host "`nComplete infrastructure and code deployment finished."
     if ((Read-Host "Run an initial/live collection now? [y/N]") -match "^[Yy]$") {
-        Invoke-LiveCollection
+        Invoke-LiveCollection -Complete
     }
 }
 
@@ -295,7 +345,7 @@ Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision
   2) Plan, review, and apply Web App infrastructure
   3) Deploy and verify Function code
   4) Deploy and verify Web App code
-  5) Invoke a live collection and verify Function
+  5) Debug a Defender page or run a live collection
   6) Verify Function and Web App
   7) Operations and diagnostics
   8) Show saved Web App plan

@@ -284,8 +284,11 @@ when provided; otherwise, a full inventory page advances `$skip` while preservin
 filters until a short or empty page is returned. An exact page-size boundary
 requires a final empty request; 1,000 is a page size, not a total collection limit.
 
-Vulnerability deltas use `pageSize=1000` and follow server continuation links.
-They do not use `$top`, which disables continuation on the delta export API.
+Vulnerability deltas default to `pageSize=1000` and follow server continuation
+links. They do not use `$top`, which disables continuation on the delta export API.
+Manual complete collections can select a smaller per-run page size (1-1,000)
+through deployment menu option 5. Its default debug mode instead requests one
+page once and stops without archiving or publishing any data.
 Recommendation-machine references and experimental routes have no documented
 manual page-size control; their server-provided next links are followed without
 inventing query parameters. Graph Secure Score intentionally requests only the

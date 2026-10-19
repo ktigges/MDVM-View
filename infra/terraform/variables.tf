@@ -21,6 +21,17 @@ variable "tenant_id" {
   }
 }
 
+variable "defender_api_base_url" {
+  description = "Operator-selected Defender API base URI, without an /api path or query."
+  type        = string
+  default     = "https://api-us3.securitycenter.microsoft.com"
+
+  validation {
+    condition     = can(regex("^https://[A-Za-z0-9.-]+/?$", var.defender_api_base_url))
+    error_message = "defender_api_base_url must be an HTTPS base URI without a path or query."
+  }
+}
+
 variable "function_version" {
   description = "Operator-managed release number stamped on Function code deployments."
   type        = string

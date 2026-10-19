@@ -226,7 +226,12 @@ tf_deploy() {
     function)
       require_command jq
       require_command git
-      local configured_function_version function_app function_version version_file
+      local configured_function_version function_app function_version version_file defender_base_url
+      defender_base_url="$(jq -r '.defender_api_base_url // "https://api-us3.securitycenter.microsoft.com"' "$TF_VARS")"
+      if [[ ! "$defender_base_url" =~ ^https://[A-Za-z0-9.-]+/?$ ]]; then
+        echo "defender_api_base_url must be an HTTPS base URI without a path or query." >&2
+        return 1
+      fi
       function_app="$(tf_output function_app_name 2>/dev/null || true)"
       configured_function_version="$(jq -r '.function_version // empty' "$TF_VARS")"
       function_version="${FUNCTION_VERSION:-${configured_function_version:-$(git -C "$ROOT_DIR" describe --tags --always --dirty)}}"
@@ -275,7 +280,7 @@ tf_deploy() {
       az functionapp config appsettings set \
         --resource-group "$resource_group" \
         --name "$function_app" \
-        --settings "COLLECTOR_VERSION=$function_version" \
+        --settings "COLLECTOR_VERSION=$function_version" "DEFENDER_API_BASE_URL=${defender_base_url%/}" \
         --output none
 
       az rest \

@@ -1841,6 +1841,94 @@ def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch):
     assert requests[0][1]["json"] == {"input": "full"}
 
 
+@pytest.mark.parametrize("debug,full,expected", [
+    (True, False, "dataprep_debug_page"),
+    (False, False, "dataprep_manual_snapshot"),
+    (False, True, "dataprep_full_snapshot"),
+])
+def test_manual_invoke_forwards_page_size_to_correct_trigger(monkeypatch, debug, full, expected):
+    calls = []
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="host-key\n"))
+    class AcceptedResponse:
+        status_code = 202
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(operations_cli.requests, "post", lambda url, **kwargs: calls.append((url, kwargs)) or AcceptedResponse())
+
+    operations_cli.invoke(True, full=full, page_size=1, debug=debug)
+
+    assert calls[0][0].endswith(f"/admin/functions/{expected}")
+    expected_payload = {"pageSize": 1, "endpoint": "machine_vulnerabilities"} if debug else {"pageSize": 1}
+    assert json.loads(calls[0][1]["json"]["input"]) == expected_payload
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "1001", "1.5", "abc"])
+def test_invoke_parser_rejects_invalid_page_size(value):
+    with pytest.raises(SystemExit):
+        operations_cli.build_parser().parse_args(["invoke", "function", "--page-size", value])
+
+
+def test_invoke_rejects_debug_with_full_before_azure_calls(monkeypatch):
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda *args: pytest.fail("Invalid mode must not call Azure"))
+    with pytest.raises(ValueError):
+        operations_cli.invoke(True, full=True, debug=True)
+
+
+@pytest.mark.parametrize("page_size", [None, 1000])
+def test_invoke_forwards_catalog_debug_selection(monkeypatch, page_size):
+    calls = []
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="host-key\n"))
+    class AcceptedResponse:
+        status_code = 202
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(operations_cli.requests, "post", lambda url, **kwargs: calls.append(kwargs) or AcceptedResponse())
+
+    operations_cli.invoke(True, debug=True, page_size=page_size, endpoint="vulnerabilities")
+
+    assert json.loads(calls[0]["json"]["input"]) == {"pageSize": 1000, "endpoint": "vulnerabilities"}
+
+
+@pytest.mark.parametrize("configured,expected", [
+    (None, "https://api-us3.securitycenter.microsoft.com"),
+    ("https://us.api.security.microsoft.com/", "https://us.api.security.microsoft.com"),
+])
+def test_function_deploy_synchronizes_base_uri_from_terraform_values(monkeypatch, tmp_path, configured, expected):
+    values = {"subscription_id": "subscription", "function_version": "2026.10.19.3"}
+    if configured is not None:
+        values["defender_api_base_url"] = configured
+    calls = []
+    monkeypatch.delenv("FUNCTION_VERSION", raising=False)
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(operations_cli, "_values", lambda: values)
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
+    monkeypatch.setattr(operations_cli, "_require", lambda name: name)
+    monkeypatch.setattr(operations_cli, "_run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="commit\n"))
+    monkeypatch.setattr(operations_cli, "_zip_tree", lambda *args: None)
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda *args: None)
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0))
+
+    operations_cli.deploy_function()
+
+    settings = next(call for call in calls if call[:4] == ("functionapp", "config", "appsettings", "set"))
+    assert f"DEFENDER_API_BASE_URL={expected}" in settings
+    assert "COLLECTOR_VERSION=2026.10.19.3" in settings
+
+
+def test_function_deploy_rejects_base_uri_containing_a_dataset_path(monkeypatch):
+    monkeypatch.setattr(operations_cli, "_values", lambda: {"defender_api_base_url": "https://api-us3.securitycenter.microsoft.com/api/vulnerabilities?$top=10"})
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: pytest.fail("Invalid base URI must not modify Azure"))
+
+    with pytest.raises(ValueError, match="without a path or query"):
+        operations_cli.deploy_function()
+
+
 def test_verify_function_does_not_block_on_published_data_status(monkeypatch, capsys):
     outputs = {
         "resource_group_name": "rg-test",

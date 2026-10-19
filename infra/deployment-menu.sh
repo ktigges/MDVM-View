@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DEPLOYMENT_MENU_VERSION="2026.10.19.4"
+DEPLOYMENT_MENU_VERSION="2026.10.19.6"
 
 resolve_python() {
   if [[ -n "${PYTHON:-}" ]]; then
@@ -66,21 +66,66 @@ deploy_verify() {
 
 invoke_collection() {
   local mode=${1:-scheduled}
-  run_cli check-function-logs --hours 1 --limit 3 --status-only
   local confirmation="COLLECT"
   local prompt="This starts a live collection and publishes a new immutable run if successful."
   local args=(invoke function --confirm)
+  local page_size page_default=1000 choice debug_endpoint=machine_vulnerabilities
+  if [[ "$mode" == "scheduled" ]]; then
+    while true; do
+      printf 'D) Debug one page (no publication)\nC) Complete collection\nRun mode [D]: '
+      read -r choice
+      case "${choice:-D}" in
+        D|d)
+          confirmation="DEBUG"
+          prompt="This requests one Defender page once, then stops. No retries or publication."
+          args+=(--debug)
+          page_default=1
+          break
+          ;;
+        C|c) break ;;
+        *) printf 'Select D for debugging or C for complete collection.\n' ;;
+      esac
+    done
+  fi
+  if [[ "$confirmation" == "DEBUG" ]]; then
+    while true; do
+      printf 'M) Machine vulnerability findings\nV) Vulnerability catalog\nDebug endpoint [M]: '
+      read -r choice
+      case "${choice:-M}" in
+        M|m) break ;;
+        V|v) debug_endpoint=vulnerabilities; page_default=1000; break ;;
+        *) printf 'Select M for machine findings or V for the vulnerability catalog.\n' ;;
+      esac
+    done
+    args+=(--endpoint "$debug_endpoint")
+  fi
+  printf 'Page size controls each request, not the total records collected.\n'
+  while true; do
+    printf 'Records per page (1-1000) [%s]: ' "$page_default"
+    read -r page_size
+    page_size=${page_size:-$page_default}
+    if [[ "$page_size" =~ ^([1-9][0-9]{0,2}|1000)$ ]]; then
+      break
+    fi
+    printf 'Enter a whole number from 1 to 1000.\n'
+  done
+  args+=(--page-size "$page_size")
   if [[ "$mode" == "full" ]]; then
     confirmation="FULL"
     prompt="This forces a full vulnerability baseline and complete recommendation-machine reconciliation."
     args+=(--full)
+  fi
+  if [[ "$confirmation" != "DEBUG" ]]; then
+    run_cli check-function-logs --hours 1 --limit 3 --status-only
   fi
   if ! confirm_value "$confirmation" "$prompt"; then
     printf 'Live collection canceled.\n'
     return 1
   fi
   run_cli "${args[@]}"
-  run_cli verify function
+  if [[ "$confirmation" != "DEBUG" ]]; then
+    run_cli verify function
+  fi
 }
 
 complete_update() {
@@ -94,7 +139,7 @@ complete_update() {
   local response
   read -r response
   if [[ "$response" =~ ^[Yy]$ ]]; then
-    invoke_collection
+    invoke_collection complete
   fi
 }
 
@@ -180,7 +225,7 @@ while true; do
   2) Plan, review, and apply Web App infrastructure
   3) Deploy and verify Function code
   4) Deploy and verify Web App code
-  5) Invoke a live collection and verify Function
+  5) Debug a Defender page or run a live collection
   6) Verify Function and Web App
   7) Operations and diagnostics
   8) Show saved Web App plan

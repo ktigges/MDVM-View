@@ -37,7 +37,7 @@ def test_deployment_menus_expose_matching_options_and_confirmations():
         "2) Plan, review, and apply Web App infrastructure",
         "3) Deploy and verify Function code",
         "4) Deploy and verify Web App code",
-        "5) Invoke a live collection and verify Function",
+        "5) Debug a Defender page or run a live collection",
         "6) Verify Function and Web App",
         "7) Operations and diagnostics",
         "8) Show saved Web App plan",
@@ -62,6 +62,13 @@ def test_deployment_menus_expose_matching_options_and_confirmations():
         assert identity_notice in powershell
     assert "\n  clear\n" in shell
     assert "Clear-Host" in powershell
+
+
+def test_initial_deployment_keeps_complete_collection_intent():
+    shell, powershell = menu_sources()
+
+    assert "invoke_collection complete" in shell
+    assert "Invoke-LiveCollection -Complete" in powershell
 
 
 def test_deployment_menus_wrap_the_same_operations():
@@ -192,6 +199,79 @@ function Invoke-OperationsCli {{ param([Parameter(ValueFromRemainingArguments)][
     assert result.stdout.count("Enter a positive whole number of days.") == 3
 
 
+COLLECTION_PROMPT_CASES = [
+    (False, ["", "", "", "DEBUG"], "invoke function --confirm --debug --endpoint machine_vulnerabilities --page-size 1", False),
+    (False, ["X", "D", "Z", "M", "0", "-1", "1.5", "1001", "abc", "100", "DEBUG"], "invoke function --confirm --debug --endpoint machine_vulnerabilities --page-size 100", False),
+    (False, ["D", "V", "", "DEBUG"], "invoke function --confirm --debug --endpoint vulnerabilities --page-size 1000", False),
+    (False, ["C", "", "COLLECT"], "invoke function --confirm --page-size 1000", True),
+    (True, ["100", "FULL"], None, True),
+    (False, ["D", "M", "1", "NO"], None, False),
+]
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="Bash is not installed")
+@pytest.mark.parametrize("full,choices,expected,verify", COLLECTION_PROMPT_CASES)
+def test_bash_collection_mode_page_size_and_confirmation(full, choices, expected, verify):
+    shell, _ = menu_sources()
+    definitions = []
+    for name in ("confirm_value", "invoke_collection"):
+        start = shell.index(f"{name}() {{")
+        end = shell.index("\n}\n", start) + 3
+        definitions.append(shell[start:end])
+    script = "\n".join([
+        "set -euo pipefail", *definitions,
+        """run_cli() { printf 'CALL:'; printf ' %s' "$@"; printf '\\n'; }""",
+        "invoke_collection full" if full else "invoke_collection",
+    ])
+    result = subprocess.run(["bash", "-c", script], input="\n".join(choices) + "\n", text=True, capture_output=True, timeout=15)
+    assert result.returncode == (1 if choices[-1] == "NO" else 0), result.stderr
+    if full:
+        assert "CALL: invoke function --confirm --page-size 100 --full" in result.stdout
+    elif expected:
+        assert f"CALL: {expected}" in result.stdout
+    else:
+        assert "CALL: invoke" not in result.stdout
+    assert ("CALL: verify function" in result.stdout) is verify
+    assert ("CALL: check-function-logs" in result.stdout) is verify
+    if "abc" in choices:
+        assert result.stdout.count("Enter a whole number from 1 to 1000.") == 5
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
+@pytest.mark.parametrize("full,choices,expected,verify", COLLECTION_PROMPT_CASES)
+def test_powershell_collection_mode_page_size_and_confirmation(full, choices, expected, verify):
+    path = str(POWERSHELL_MENU.resolve()).replace("'", "''")
+    literals = ", ".join("'" + choice + "'" for choice in choices)
+    script = f"""
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile('{path}', [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count -gt 0) {{ throw 'PowerShell parse failed' }}
+foreach ($name in @('Confirm-Value', 'Invoke-LiveCollection')) {{
+    $definition = $ast.Find({{ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }}, $true)
+    Set-Item -Path ("function:" + $name) -Value ($definition.Body.GetScriptBlock())
+}}
+$script:Choices = [System.Collections.Generic.Queue[string]]::new()
+@({literals}) | ForEach-Object {{ $script:Choices.Enqueue($_) }}
+function Read-Host {{ param($Prompt) $script:Choices.Dequeue() }}
+function Invoke-OperationsCli {{ param([Parameter(ValueFromRemainingArguments)][string[]]$CliArguments) Write-Host ('CALL: ' + ($CliArguments -join ' ')) }}
+Invoke-LiveCollection {"-Full" if full else ""}
+"""
+    result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", script], text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    if full:
+        assert "CALL: invoke function --confirm --full --page-size 100" in result.stdout
+    elif expected:
+        assert f"CALL: {expected}" in result.stdout
+    else:
+        assert "CALL: invoke" not in result.stdout
+    assert ("CALL: verify function" in result.stdout) is verify
+    assert ("CALL: check-function-logs" in result.stdout) is verify
+    if "abc" in choices:
+        assert result.stdout.count("Enter a whole number from 1 to 1000.") == 5
+
+
 def test_deployment_menus_do_not_expose_destructive_operations():
     shell, powershell = menu_sources()
 
@@ -213,9 +293,9 @@ def test_powershell_menu_preserves_python_executable_as_one_value():
 def test_deployment_menus_show_version_and_revision_in_title():
     shell, powershell = menu_sources()
 
-    assert 'DEPLOYMENT_MENU_VERSION="2026.10.19.4"' in shell
+    assert 'DEPLOYMENT_MENU_VERSION="2026.10.19.6"' in shell
     assert 'Vulnerability View deployment menu %s (revision %s)' in shell
-    assert '$DeploymentMenuVersion = "2026.10.19.4"' in powershell
+    assert '$DeploymentMenuVersion = "2026.10.19.6"' in powershell
     assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
 

@@ -1,7 +1,8 @@
 from datetime import UTC, datetime, timedelta
+import os
 from pathlib import Path
 
-from vulnerability_view.config import Settings
+from vulnerability_view.config import DEFAULT_DEFENDER_API_BASE_URL, Settings
 from vulnerability_view.dataprep_cli import _resolve_collection_mode
 
 
@@ -69,6 +70,16 @@ def test_collection_defaults_to_targeted_deltas_with_weekly_full_reconciliation(
     assert settings.dashboard_recommendation_tracking_container == "dvm-workflow"
     assert settings.synthetic_device_count == 2500
 
+
+def test_default_defender_host_matches_customer_requested_host(monkeypatch, tmp_path):
+    monkeypatch.delenv("DEFENDER_API_BASE_URL", raising=False)
+
+    settings = Settings.load(tmp_path / "missing.json", env_path=tmp_path / "missing.env")
+
+    assert DEFAULT_DEFENDER_API_BASE_URL == "https://api-us3.securitycenter.microsoft.com"
+    assert Settings().defender_api_base_url == DEFAULT_DEFENDER_API_BASE_URL
+    assert settings.defender_api_base_url == DEFAULT_DEFENDER_API_BASE_URL
+    assert "DEFENDER_API_BASE_URL" not in os.environ
 
 def test_collection_mode_uses_initial_and_weekly_full_with_daily_delta():
     settings = Settings(full_collection_weekday=6)

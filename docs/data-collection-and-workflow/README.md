@@ -369,11 +369,16 @@ links take priority. When a full inventory page has no next link, the client
 advances `$skip`, retaining filters, until a short or empty page is returned.
 The page size never caps the total inventory.
 
-Vulnerability deltas use `pageSize=1000` and server continuation links, not `$top`
+Vulnerability deltas default to `pageSize=1000` and server continuation links, not `$top`
 (which disables continuation on that API). Recommendation-machine references and
 experimental routes have no documented manual page-size control, so the client
 uses their server-provided continuation links without adding unsupported options.
 Graph Secure Score deliberately requests the latest score rather than an inventory.
+
+For a manual complete collection, option 5 can select 1-1,000 records per page
+without changing scheduled defaults or Terraform. Option 5 defaults to a separate
+one-page debug mode: one inventory request with no retry, continuation, archive,
+normalization, or publication. Debugging never advances the current manifest.
 
 For each successful page:
 
