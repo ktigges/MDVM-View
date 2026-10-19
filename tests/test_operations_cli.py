@@ -267,25 +267,52 @@ def test_log_query_rejects_missing_output(monkeypatch):
         operations_cli._log_query("workspace-id", "subscription-id", "AppTraces | take 1")
 
 
-def test_function_telemetry_includes_uncorrelated_host_and_deployment_logs(monkeypatch):
+def test_function_telemetry_scopes_raw_cli_rows_locally(monkeypatch, capsys):
     queries = []
     rows = [
         {
+            "TimeGenerated": "2026-10-19T17:14:41.7449352Z",
             "SourceTable": "AppTraces",
             "AppRoleName": "func-test",
             "OperationId": "",
             "Message": "[storage] uploaded 156/156 durable run files (100.0%)",
         },
         {
+            "TimeGenerated": "2026-10-19T17:14:42Z",
             "SourceTable": "AppTraces",
             "AppRoleName": "",
+            "_ResourceId": "/INSIGHTS/LINKED-TEST",
             "Properties": '{"deploymentId":"deployment-test"}',
             "Message": "Deployment logs were not retained after instance recycling.",
+        },
+        {
+            "TimeGenerated": "2026-10-19T17:14:43Z",
+            "SourceTable": "FunctionAppLogs",
+            "_ResourceId": (
+                "/subscriptions/sub-test/resourceGroups/rg-test/"
+                "providers/Microsoft.Web/sites/func-test"
+            ),
+            "Message": "Starting host",
+        },
+        {
+            "TimeGenerated": "2026-10-19T17:14:44Z",
+            "SourceTable": "AppTraces",
+            "AppRoleName": "another-app",
+            "_ResourceId": "/insights/linked-test",
+            "Message": "Unrelated application",
+        },
+        {
+            "TimeGenerated": "2026-10-19T17:14:45Z",
+            "SourceTable": "AppTraces",
+            "_ResourceId": "/insights/another-app",
+            "Message": "Unrelated role-less deployment",
         },
     ]
 
     def fake_query(workspace, subscription, query, *, timespan):
         queries.append((workspace, subscription, query, timespan))
+        if "extend TelemetryRole" in query:
+            return []
         return rows
 
     monkeypatch.setattr(operations_cli, "_log_query", fake_query)
@@ -296,7 +323,7 @@ def test_function_telemetry_includes_uncorrelated_host_and_deployment_logs(monke
         "_application_insights_resource_id": "/insights/linked-test",
     }
 
-    assert operations_cli._function_telemetry_rows(values, "workspace-test", 168, 500) == rows
+    assert operations_cli._function_telemetry_rows(values, "workspace-test", 168, 500) == rows[2::-1]
     workspace, subscription, query, timespan = queries[0]
     assert (workspace, subscription, timespan) == ("workspace-test", "sub-test", "PT168H")
     assert "union isfuzzy=true withsource=SourceTable" in query
@@ -304,10 +331,25 @@ def test_function_telemetry_includes_uncorrelated_host_and_deployment_logs(monke
         assert table in query
     assert "OperationId in" not in query
     assert "Message startswith" not in query
-    assert 'isempty(TelemetryRole)' in query
-    assert '"/insights/linked-test"' in query
-    assert '"/subscriptions/sub-test/resourceGroups/rg-test/providers/Microsoft.Web/sites/func-test"' in query
-    assert "take 500" in query
+    assert "| where" not in query
+    assert "| extend" not in query
+    assert '"' not in query
+    assert "\n" not in query
+    assert "take 5000" in query
+    assert "Workspace telemetry scanned: 5; matching Function records: 3" in capsys.readouterr().out
+
+
+def test_application_request_rows_sort_and_limit_raw_cli_results(monkeypatch):
+    rows = [
+        {"TimeGenerated": "2026-10-18T05:00:00Z", "Name": "dataprep_snapshot"},
+        {"TimeGenerated": "2026-10-17T05:00:00Z", "Name": "dataprep_snapshot"},
+        {"TimeGenerated": "2026-10-19T05:00:00Z", "Name": "dataprep_snapshot"},
+    ]
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: rows)
+
+    assert operations_cli._application_request_rows("workspace-test", "sub-test", 168, 2) == [
+        rows[2], rows[0],
+    ]
 
 
 def test_log_query_applies_explicit_timespan(monkeypatch):
@@ -611,6 +653,7 @@ def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, caps
         [{
             "TimeGenerated": "2026-10-14T05:10:00Z",
             "SourceTable": "AppTraces",
+            "AppRoleName": "func-test",
             "Message": "[publication] runId=live-test status=Success",
         }],
     ])
@@ -664,6 +707,67 @@ def test_detailed_logs_render_host_errors_without_invocation_or_operation_id(mon
     assert "Worker failed to index functions" in output
     assert "workspace-test" in output
     assert "sub-test" in output
+
+
+def test_detailed_requests_use_raw_durations_and_newest_first_order(monkeypatch, capsys):
+    values = {"function_app_name": "func-test", "subscription_id": "sub-test"}
+    rows = [
+        {
+            "TimeGenerated": "2026-10-18T05:00:00Z",
+            "Name": "dataprep_snapshot",
+            "Success": "True",
+            "DurationMs": "360751",
+            "ResultCode": "0",
+        },
+        {
+            "TimeGenerated": "2026-10-19T05:00:00Z",
+            "Name": "dataprep_snapshot",
+            "Success": "True",
+            "DurationMs": "74",
+            "ResultCode": 0,
+        },
+    ]
+    queries = []
+
+    def fake_query(workspace, subscription, query, *, timespan):
+        queries.append(query)
+        return rows if query.startswith("AppRequests") else []
+
+    monkeypatch.setattr(operations_cli, "_workspace_context", lambda: (values, "workspace-test"))
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {"published": False})
+    monkeypatch.setattr(operations_cli, "_log_query", fake_query)
+    monkeypatch.setattr(operations_cli, "_function_telemetry_rows", lambda *args: [])
+
+    operations_cli.check_function_logs(168, 25, False)
+
+    output = capsys.readouterr().out
+    assert output.index("UTC:       2026-10-19T05:00:00Z") < output.index("UTC:       2026-10-18T05:00:00Z")
+    assert "Duration:  360.8s" in output
+    assert "Duration:  0.1s" in output
+    assert "Result:    0" in output
+    assert all("DurationSeconds" not in query for query in queries if query.startswith("AppRequests"))
+
+
+def test_function_telemetry_reports_unfiltered_scan_and_display_limits(monkeypatch, capsys):
+    values = {
+        "subscription_id": "sub-test",
+        "function_app_name": "func-test",
+    }
+    row = {
+        "TimeGenerated": "2026-10-19T05:00:00Z",
+        "AppRoleName": "func-test",
+        "Message": "Worker initialized",
+    }
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: [row] * 5000)
+
+    assert len(operations_cli._function_telemetry_rows(values, "workspace-test", 168, 2)) == 2
+    output = capsys.readouterr().out
+    assert "Workspace telemetry scanned: 5000; matching Function records: 5000" in output
+    assert "older matching records may be omitted" in output
+
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: [])
+    assert operations_cli._function_telemetry_rows(values, "workspace-test", 168, 2) == []
+    assert "Azure returned zero rows for the unfiltered telemetry query:" in capsys.readouterr().out
 
 
 def test_function_status_prefers_newer_authoritative_publication(monkeypatch, capsys):

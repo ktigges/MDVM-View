@@ -415,8 +415,17 @@ add operations choices **10** (show seven-day Function logs) and **11** (export
 seven-day Function logs). Use these when the last collection or deployment is
 older than the 24/72-hour windows. The cross-platform CLI's detailed display
 uses the same telemetry query as the export, without message-prefix or
-operation-ID filters, and prints exception stack details. Display and export
-limits are explicit; narrow the window if a record limit is reached.
+operation-ID filters, and prints exception stack details. The query retrieves
+raw workspace rows without computed resource columns or embedded Function
+string literals. Function-role/resource matching is performed locally,
+case-insensitively, and the menu reports both the raw row count and the matching
+Function count. Unrelated applications in a shared workspace are excluded.
+The workspace scan is bounded to 5,000 rows (or the requested display limit,
+if larger); a warning identifies possible omissions when that limit is reached.
+Display and export limits are also explicit; narrow the window if a record
+limit is reached. Recent invocations are sorted locally newest first, and
+durations are calculated from raw `DurationMs` values rather than relying on
+a query-computed duration column.
 
 Diagnostics print the configured subscription, resource group, Function,
 workspace ID, and Terraform variables path. The menu reads its target from
