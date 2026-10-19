@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DEPLOYMENT_MENU_VERSION="2026.10.19.2"
+DEPLOYMENT_MENU_VERSION="2026.10.19.3"
 
 resolve_python() {
   if [[ -n "${PYTHON:-}" ]]; then
@@ -103,6 +103,24 @@ verify_all() {
   run_cli verify webapp
 }
 
+function_logs_for_days() {
+  local action=$1 days
+  while true; do
+    printf 'Lookback in whole days [2]: '
+    read -r days
+    days=${days:-2}
+    if [[ "$days" =~ ^[1-9][0-9]*$ ]]; then
+      break
+    fi
+    printf 'Enter a positive whole number of days.\n'
+  done
+  if [[ "$action" == "export" ]]; then
+    run_cli export-function-logs --days "$days"
+  else
+    run_cli check-function-logs --days "$days" --limit 25
+  fi
+}
+
 operations_menu() {
   while true; do
     cat <<'EOF'
@@ -116,9 +134,9 @@ Operations and diagnostics
   6) Pull sanitized collector logs for the last 24 hours
   7) Verify Function and Web App
   8) Force full vulnerability and relationship reconciliation
-  9) Return to deployment menu
-  10) Show Function execution, host, and deployment logs for the last 7 days
-  11) Pull sanitized Function logs for the last 7 days
+  9) Show Function execution, host, and deployment logs (choose days)
+  10) Pull sanitized Function logs (choose days)
+  11) Return to deployment menu
 EOF
     printf 'Select an option: '
     read -r operations_choice
@@ -131,9 +149,9 @@ EOF
       6) run_cli export-function-logs --hours 24; pause_menu ;;
       7) verify_all; pause_menu ;;
       8) invoke_collection full; pause_menu ;;
-      9) return ;;
-      10) run_cli check-function-logs --hours 168 --limit 25; pause_menu ;;
-      11) run_cli export-function-logs --hours 168; pause_menu ;;
+      9) function_logs_for_days show; pause_menu ;;
+      10) function_logs_for_days export; pause_menu ;;
+      11) return ;;
       *) printf 'Select a number from 1 through 11.\n' ;;
     esac
   done

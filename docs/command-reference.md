@@ -12,8 +12,8 @@ Run commands from the repository root unless a section says otherwise.
 | See whether the collector is active | `python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 3 --status-only` |
 | Show active progress plus managed-identity publication telemetry | `python -m vulnerability_view.operations_cli check-runs --limit 5 --progress` |
 | Inspect recent invocation requests | `python -m vulnerability_view.operations_cli check-function-logs --hours 24 --limit 10` |
-| Inspect retained Function execution, host, and deployment logs over seven days | `python -m vulnerability_view.operations_cli check-function-logs --hours 168 --limit 25` |
-| Export sanitized Function telemetry over seven days | `python -m vulnerability_view.operations_cli export-function-logs --hours 168` |
+| Inspect retained Function execution, host, and deployment logs over two days | `python -m vulnerability_view.operations_cli check-function-logs --days 2 --limit 25` |
+| Export sanitized Function telemetry over two days | `python -m vulnerability_view.operations_cli export-function-logs --days 2` |
 | List completed publication telemetry | `python -m vulnerability_view.operations_cli check-runs --limit 10` |
 | Deploy Function code only | `python -m vulnerability_view.operations_cli deploy function` |
 | Deploy Web App code only | `python -m vulnerability_view.operations_cli deploy webapp` |
@@ -410,10 +410,14 @@ activity-log records for the Function resource. Caller identities, tokens,
 email addresses, IP addresses, URLs, and configured resource identifiers are
 redacted before either file is written.
 
-The PowerShell and Bash deployment menus preserve existing option numbers and
-add operations choices **10** (show seven-day Function logs) and **11** (export
-seven-day Function logs). Use these when the last collection or deployment is
-older than the 24/72-hour windows. The cross-platform CLI's detailed display
+The PowerShell and Bash deployment menus provide operations choices **9**
+(show Function logs) and **10** (export sanitized Function logs), with **11**
+(return to the deployment menu) last. Both log choices ask for a positive whole
+number of lookback days; pressing Enter selects **2 days (48 hours)**. Enter
+`7` when the last collection or deployment is older than the fixed 24/72-hour
+shortcuts. Invalid day counts are explained and prompted again.
+The cross-platform CLI accepts `--days` or `--hours`, but not both; omitting
+both retains its existing 24-hour default. The cross-platform CLI's detailed display
 uses the same telemetry query as the export, without message-prefix or
 operation-ID filters, and prints exception stack details. The query retrieves
 raw workspace rows without computed resource columns or embedded Function

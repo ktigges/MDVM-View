@@ -5,7 +5,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
-$DeploymentMenuVersion = "2026.10.19.2"
+$DeploymentMenuVersion = "2026.10.19.3"
 $RequiredAzureCliExtensions = @("log-analytics")
 
 function Test-PythonCommand {
@@ -214,6 +214,26 @@ function Invoke-VerifyAll {
     Invoke-OperationsCli verify webapp
 }
 
+function Invoke-FunctionLogsForDays {
+    param([switch]$Export)
+
+    while ($true) {
+        $days = (Read-Host "Lookback in whole days [2]").Trim()
+        if (-not $days) {
+            $days = "2"
+        }
+        if ($days -match "^[1-9][0-9]*$") {
+            break
+        }
+        Write-Host "Enter a positive whole number of days."
+    }
+    if ($Export) {
+        Invoke-OperationsCli export-function-logs --days $days
+    } else {
+        Invoke-OperationsCli check-function-logs --days $days --limit 25
+    }
+}
+
 function Invoke-OperationsMenu {
     while ($true) {
         Write-Host @"
@@ -227,9 +247,9 @@ Operations and diagnostics
   6) Pull sanitized collector logs for the last 24 hours
   7) Verify Function and Web App
   8) Force full vulnerability and relationship reconciliation
-  9) Return to deployment menu
-  10) Show Function execution, host, and deployment logs for the last 7 days
-  11) Pull sanitized Function logs for the last 7 days
+  9) Show Function execution, host, and deployment logs (choose days)
+  10) Pull sanitized Function logs (choose days)
+  11) Return to deployment menu
 "@
         switch (Read-Host "Select an option") {
             "1" { Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only; Pause-Menu }
@@ -240,9 +260,9 @@ Operations and diagnostics
             "6" { Invoke-OperationsCli export-function-logs --hours 24; Pause-Menu }
             "7" { Invoke-VerifyAll; Pause-Menu }
             "8" { Invoke-LiveCollection -Full; Pause-Menu }
-            "9" { return }
-            "10" { Invoke-OperationsCli check-function-logs --hours 168 --limit 25; Pause-Menu }
-            "11" { Invoke-OperationsCli export-function-logs --hours 168; Pause-Menu }
+            "9" { Invoke-FunctionLogsForDays; Pause-Menu }
+            "10" { Invoke-FunctionLogsForDays -Export; Pause-Menu }
+            "11" { return }
             default { Write-Host "Select a number from 1 through 11." }
         }
     }

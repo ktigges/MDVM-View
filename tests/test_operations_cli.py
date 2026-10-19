@@ -47,6 +47,37 @@ def test_parser_exposes_identical_cross_platform_commands():
     assert operations_cli.build_parser().parse_args(["invoke", "function", "--confirm", "--full"]).full is True
 
 
+@pytest.mark.parametrize("command", ["check-function-logs", "export-function-logs"])
+@pytest.mark.parametrize("arguments, expected_hours", [
+    ([], 24),
+    (["--hours", "48"], 48),
+    (["--days", "2"], 48),
+    (["--days", "7"], 168),
+])
+def test_log_commands_accept_days_or_hours(monkeypatch, command, arguments, expected_hours):
+    calls = []
+    monkeypatch.setattr(operations_cli, "check_function_logs", lambda hours, *args: calls.append(hours))
+    monkeypatch.setattr(operations_cli, "export_function_logs", lambda hours: calls.append(hours))
+
+    assert operations_cli.main([command, *arguments]) == 0
+    assert calls == [expected_hours]
+
+
+@pytest.mark.parametrize("command", ["check-function-logs", "export-function-logs"])
+@pytest.mark.parametrize("arguments", [
+    ["--days", "0"],
+    ["--days", "-1"],
+    ["--days", "1.5"],
+    ["--days", "abc"],
+    ["--hours", "0"],
+    ["--days", "2", "--hours", "48"],
+])
+def test_log_commands_reject_invalid_or_conflicting_lookbacks(command, arguments):
+    with pytest.raises(SystemExit) as error:
+        operations_cli.build_parser().parse_args([command, *arguments])
+    assert error.value.code == 2
+
+
 def test_version_reports_cli_source(capsys):
     assert operations_cli.main(["version"]) == 0
 
@@ -1201,7 +1232,7 @@ def test_detailed_logs_explain_empty_results_and_record_limits(capsys):
     operations_cli._print_function_telemetry([], 100)
     output = capsys.readouterr().out
     assert "not a health check success" in output
-    assert "seven-day menu options" in output
+    assert "choose a longer custom lookback" in output
     assert "Telemetry records shown: 0" in output
 
     operations_cli._print_function_telemetry([{

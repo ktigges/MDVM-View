@@ -1,4 +1,8 @@
 from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
 
 
 SHELL_MENU = Path("infra/deployment-menu.sh")
@@ -83,12 +87,12 @@ def test_deployment_menus_wrap_the_same_operations():
             "Invoke-OperationsCli export-function-logs --hours 24",
         ),
         (
-            "run_cli check-function-logs --hours 168 --limit 25",
-            "Invoke-OperationsCli check-function-logs --hours 168 --limit 25",
+            'run_cli check-function-logs --days "$days" --limit 25',
+            "Invoke-OperationsCli check-function-logs --days $days --limit 25",
         ),
         (
-            "run_cli export-function-logs --hours 168",
-            "Invoke-OperationsCli export-function-logs --hours 168",
+            'run_cli export-function-logs --days "$days"',
+            "Invoke-OperationsCli export-function-logs --days $days",
         ),
     )
 
@@ -109,14 +113,74 @@ def test_deployment_menus_expose_matching_operations_submenu():
         "6) Pull sanitized collector logs for the last 24 hours",
         "7) Verify Function and Web App",
         "8) Force full vulnerability and relationship reconciliation",
-        "9) Return to deployment menu",
-        "10) Show Function execution, host, and deployment logs for the last 7 days",
-        "11) Pull sanitized Function logs for the last 7 days",
+        "9) Show Function execution, host, and deployment logs (choose days)",
+        "10) Pull sanitized Function logs (choose days)",
+        "11) Return to deployment menu",
     )
 
     for option in options:
         assert option in shell
         assert option in powershell
+    for source in (shell, powershell):
+        positions = [source.index(option) for option in options]
+        assert positions == sorted(positions)
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="Bash is not installed")
+def test_bash_custom_log_days_default_validation_and_return_order():
+    shell, _ = menu_sources()
+    definitions = []
+    for name in ("function_logs_for_days", "operations_menu"):
+        start = shell.index(f"{name}() {{")
+        end = shell.index("\n}\n", start) + 3
+        definitions.append(shell[start:end])
+    script = "\n".join([
+        "set -euo pipefail",
+        *definitions,
+        """run_cli() { printf 'CALL:'; printf ' %s' "$@"; printf '\\n'; }""",
+        "pause_menu() { :; }",
+        "operations_menu",
+    ])
+    result = subprocess.run(
+        ["bash", "-c", script],
+        input="9\n0\n-1\nabc\n\n10\n3\n11\n",
+        text=True, capture_output=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "CALL: check-function-logs --days 2 --limit 25" in result.stdout
+    assert "CALL: export-function-logs --days 3" in result.stdout
+    assert result.stdout.count("CALL:") == 2
+    assert result.stdout.count("Enter a positive whole number of days.") == 3
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
+def test_powershell_custom_log_days_default_validation_and_return_order():
+    path = str(POWERSHELL_MENU.resolve()).replace("'", "''")
+    script = f"""
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile('{path}', [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count -gt 0) {{ throw 'PowerShell parse failed' }}
+$helper = $ast.Find({{ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-FunctionLogsForDays' }}, $true)
+Set-Item -Path function:Invoke-FunctionLogsForDays -Value ($helper.Body.GetScriptBlock())
+$menu = $ast.Find({{ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-OperationsMenu' }}, $true)
+$script:Choices = [System.Collections.Generic.Queue[string]]::new()
+'9', '0', '-1', 'abc', '', '10', '3', '11' | ForEach-Object {{ $script:Choices.Enqueue($_) }}
+function Read-Host {{ param($Prompt) $script:Choices.Dequeue() }}
+function Pause-Menu {{}}
+function Invoke-OperationsCli {{ param([Parameter(ValueFromRemainingArguments)][string[]]$CliArguments) Write-Output ('CALL: ' + ($CliArguments -join ' ')) }}
+& ($menu.Body.GetScriptBlock())
+"""
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
+        text=True, capture_output=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "CALL: check-function-logs --days 2 --limit 25" in result.stdout
+    assert "CALL: export-function-logs --days 3" in result.stdout
+    assert result.stdout.count("CALL:") == 2
+    assert result.stdout.count("Enter a positive whole number of days.") == 3
 
 
 def test_deployment_menus_do_not_expose_destructive_operations():
@@ -140,9 +204,9 @@ def test_powershell_menu_preserves_python_executable_as_one_value():
 def test_deployment_menus_show_version_and_revision_in_title():
     shell, powershell = menu_sources()
 
-    assert 'DEPLOYMENT_MENU_VERSION="2026.10.19.2"' in shell
+    assert 'DEPLOYMENT_MENU_VERSION="2026.10.19.3"' in shell
     assert 'Vulnerability View deployment menu %s (revision %s)' in shell
-    assert '$DeploymentMenuVersion = "2026.10.19.2"' in powershell
+    assert '$DeploymentMenuVersion = "2026.10.19.3"' in powershell
     assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
 
