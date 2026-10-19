@@ -1387,11 +1387,12 @@ def test_deployment_preflight_rejects_missing_management_group_role_write(monkey
         operations_cli.deployment_preflight()
 
 
-def test_function_version_prefers_override_then_values(monkeypatch):
-    monkeypatch.setenv("FUNCTION_VERSION", "release/one")
-    assert operations_cli._function_version({"function_version": "values-version"}) == "release-one"
-    monkeypatch.delenv("FUNCTION_VERSION")
-    assert operations_cli._function_version({"function_version": "2026.10.08.1"}) == "2026.10.08.1"
+def test_function_version_uses_source_file_not_environment(monkeypatch, tmp_path):
+    (tmp_path / "function-version.json").write_text('{"version":"2026.10.19.6"}')
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
+    monkeypatch.setenv("FUNCTION_VERSION", "2026.10.11.2")
+
+    assert operations_cli._function_version() == "2026.10.19.6"
 
 
 def test_zip_tree_excludes_generated_dashboard_data(monkeypatch, tmp_path: Path):
@@ -1842,7 +1843,7 @@ def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch):
 
 
 @pytest.mark.parametrize("debug,full,expected", [
-    (True, False, "dataprep_debug_page"),
+    (True, False, "debug-page"),
     (False, False, "dataprep_manual_snapshot"),
     (False, True, "dataprep_full_snapshot"),
 ])
@@ -1856,21 +1857,27 @@ def test_manual_invoke_forwards_page_size_to_correct_trigger(monkeypatch, capsys
         def raise_for_status(self):
             pass
 
-    monkeypatch.setattr(operations_cli.requests, "post", lambda url, **kwargs: calls.append((url, kwargs)) or AcceptedResponse())
+    result = _debug_response() if debug else AcceptedResponse()
+    monkeypatch.setattr(operations_cli.requests, "post", lambda url, **kwargs: calls.append((url, kwargs)) or result)
 
     operations_cli.invoke(True, full=full, page_size=1, debug=debug)
 
-    assert calls[0][0].endswith(f"/admin/functions/{expected}")
+    route = f"/api/{expected}" if debug else f"/admin/functions/{expected}"
+    assert calls[0][0].endswith(route)
     expected_payload = {"pageSize": 1, "endpoint": "machine_vulnerabilities"} if debug else {"pageSize": 1}
-    assert json.loads(calls[0][1]["json"]["input"]) == expected_payload
+    payload = calls[0][1]["json"] if debug else json.loads(calls[0][1]["json"]["input"])
+    assert payload == expected_payload
     output = capsys.readouterr().out
-    assert "does not confirm collection success" in output
     if debug:
         assert "DEBUG RESULT: PENDING" in output
-        assert "Trigger acceptance is not an API test pass" in output
-        assert "No result line means the outcome is not yet confirmed" in output
+        assert "DEBUG RESULT: PASSED" in output
+        assert "Defender HTTP status: 200" in output
+        assert "Rows returned: 1 (requested up to 1)" in output
+        assert calls[0][1]["timeout"] == (10, 210)
     else:
+        assert "does not confirm collection success" in output
         assert "DEBUG RESULT" not in output
+    assert "host-key" not in output
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "1001", "1.5", "abc"])
@@ -1890,17 +1897,122 @@ def test_invoke_forwards_catalog_debug_selection(monkeypatch, page_size):
     calls = []
     monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
     monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="host-key\n"))
-    class AcceptedResponse:
-        status_code = 202
-
-        def raise_for_status(self):
-            pass
-
-    monkeypatch.setattr(operations_cli.requests, "post", lambda url, **kwargs: calls.append(kwargs) or AcceptedResponse())
+    monkeypatch.setattr(operations_cli.requests, "post", lambda url, **kwargs: calls.append(kwargs) or _debug_response("vulnerabilities", 1000))
 
     operations_cli.invoke(True, debug=True, page_size=page_size, endpoint="vulnerabilities")
 
-    assert json.loads(calls[0]["json"]["input"]) == {"pageSize": 1000, "endpoint": "vulnerabilities"}
+    assert calls[0]["json"] == {"pageSize": 1000, "endpoint": "vulnerabilities"}
+
+
+def _debug_response(endpoint="machine_vulnerabilities", page_size=1, row_count=1):
+    path = "/api/vulnerabilities" if endpoint == "vulnerabilities" else "/api/vulnerabilities/machinesVulnerabilities"
+    result = operations_cli.requests.Response()
+    result.status_code = 200
+    result._content = json.dumps({
+        "Status": "PASSED", "Endpoint": endpoint, "HttpStatus": 200,
+        "RequestedRows": page_size, "RowCount": row_count, "DurationSeconds": 1.25,
+        "RequestUrl": f"https://api-us3.securitycenter.microsoft.com{path}?%24top={page_size}",
+        "CollectorVersion": "2026.10.19.6",
+    }).encode()
+    return result
+
+
+def test_debug_response_prints_empty_result_without_claiming_matching_findings(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli.requests, "post", lambda *args, **kwargs: _debug_response(row_count=0))
+
+    operations_cli._invoke_debug_page("func-test", "secret-key", 1, "machine_vulnerabilities")
+
+    output = capsys.readouterr().out
+    assert "DEBUG RESULT: PASSED" in output
+    assert "EMPTY RESULT" in output
+    assert "secret-key" not in output
+
+
+@pytest.mark.parametrize("field,value", [
+    ("Status", "Success"), ("HttpStatus", 202), ("Endpoint", "vulnerabilities"),
+    ("RequestedRows", 1000), ("RequestedRows", True),
+    ("RowCount", -1), ("RowCount", 2), ("RowCount", True), ("RowCount", "1"),
+    ("DurationSeconds", -1), ("DurationSeconds", True), ("DurationSeconds", float("nan")),
+    ("DurationSeconds", float("inf")), ("DurationSeconds", None),
+    ("RequestUrl", "https://example.test/wrong?%24top=1"),
+    ("RequestUrl", "https://[invalid"),
+    ("RequestUrl", "https://example.test/api/vulnerabilities/machinesVulnerabilities?%24top=1000"),
+    ("CollectorVersion", ""),
+])
+def test_debug_response_does_not_pass_malformed_or_mismatched_results(monkeypatch, capsys, field, value):
+    result = _debug_response()
+    report = result.json()
+    report[field] = value
+    result._content = json.dumps(report).encode()
+    monkeypatch.setattr(operations_cli.requests, "post", lambda *args, **kwargs: result)
+
+    with pytest.raises(RuntimeError, match="DEBUG RESULT: UNCONFIRMED"):
+        operations_cli._invoke_debug_page("func-test", "secret-key", 1, "machine_vulnerabilities")
+
+    assert "DEBUG RESULT: PASSED" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("status", [202, 401, 403, 500])
+def test_debug_response_requires_a_successful_function_http_response(monkeypatch, status):
+    result = _debug_response()
+    result.status_code = status
+    monkeypatch.setattr(operations_cli.requests, "post", lambda *args, **kwargs: result)
+
+    with pytest.raises(RuntimeError, match="DEBUG RESULT: UNCONFIRMED"):
+        operations_cli._invoke_debug_page("func-test", "secret-key", 1, "machine_vulnerabilities")
+
+
+def test_debug_older_function_has_no_unsafe_fallback(monkeypatch):
+    calls = []
+    result = operations_cli.requests.Response()
+    result.status_code = 404
+    monkeypatch.setattr(operations_cli.requests, "post", lambda url, **kwargs: calls.append(url) or result)
+
+    with pytest.raises(RuntimeError, match="Deploy the updated Function using option 3"):
+        operations_cli._invoke_debug_page("func-test", "secret-key", 1, "machine_vulnerabilities")
+
+    assert calls == ["https://func-test.azurewebsites.net/api/debug-page"]
+
+
+def test_debug_missing_json_is_unconfirmed_not_passed(monkeypatch):
+    result = operations_cli.requests.Response()
+    result.status_code = 200
+    result._content = b"Function health page, not an API result"
+    monkeypatch.setattr(operations_cli.requests, "post", lambda *args, **kwargs: result)
+
+    with pytest.raises(RuntimeError, match="without a valid JSON debug result"):
+        operations_cli._invoke_debug_page("func-test", "secret-key", 1, "machine_vulnerabilities")
+
+
+def test_debug_transport_timeout_is_not_reported_as_api_failure_or_retried(monkeypatch):
+    calls = []
+
+    def post(url, **kwargs):
+        calls.append(url)
+        raise operations_cli.requests.ReadTimeout("Function response not received")
+
+    monkeypatch.setattr(operations_cli.requests, "post", post)
+
+    with pytest.raises(RuntimeError, match="UNCONFIRMED.*test may still be running"):
+        operations_cli._invoke_debug_page("func-test", "secret-key", 1, "machine_vulnerabilities")
+
+    assert len(calls) == 1
+
+
+def test_debug_failed_api_result_returns_failure_exit_code(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="secret-key\n"))
+    result = operations_cli.requests.Response()
+    result.status_code = 504
+    result._content = b'{"Status":"FAILED","ErrorType":"ReadTimeout","Error":"Defender read timed out"}'
+    monkeypatch.setattr(operations_cli.requests, "post", lambda *args, **kwargs: result)
+
+    assert operations_cli.main(["invoke", "function", "--confirm", "--debug"]) == 1
+    output = capsys.readouterr()
+    assert "DEBUG RESULT: FAILED" in output.err
+    assert "ReadTimeout: Defender read timed out" in output.err
+    assert "DEBUG RESULT: PASSED" not in output.out
+    assert "secret-key" not in output.out + output.err
 
 
 @pytest.mark.parametrize("configured,expected", [
@@ -1912,13 +2024,15 @@ def test_function_deploy_synchronizes_base_uri_from_terraform_values(monkeypatch
     if configured is not None:
         values["defender_api_base_url"] = configured
     calls = []
-    monkeypatch.delenv("FUNCTION_VERSION", raising=False)
+    packaged = []
+    (tmp_path / "function-version.json").write_text('{"version":"2026.10.19.6"}')
+    monkeypatch.setenv("FUNCTION_VERSION", "2026.10.11.2")
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     monkeypatch.setattr(operations_cli, "_values", lambda: values)
     monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
     monkeypatch.setattr(operations_cli, "_require", lambda name: name)
     monkeypatch.setattr(operations_cli, "_run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="commit\n"))
-    monkeypatch.setattr(operations_cli, "_zip_tree", lambda *args: None)
+    monkeypatch.setattr(operations_cli, "_zip_tree", lambda package, paths: packaged.extend(paths))
     monkeypatch.setattr(operations_cli.time, "sleep", lambda *args: None)
     monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0))
 
@@ -1926,7 +2040,8 @@ def test_function_deploy_synchronizes_base_uri_from_terraform_values(monkeypatch
 
     settings = next(call for call in calls if call[:4] == ("functionapp", "config", "appsettings", "set"))
     assert f"DEFENDER_API_BASE_URL={expected}" in settings
-    assert "COLLECTOR_VERSION=2026.10.19.3" in settings
+    assert "COLLECTOR_VERSION=2026.10.19.6" in settings
+    assert tmp_path / "function-version.json" in packaged
 
 
 def test_function_deploy_rejects_base_uri_containing_a_dataset_path(monkeypatch):

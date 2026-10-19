@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DEPLOYMENT_MENU_VERSION="2026.10.19.7"
+DEPLOYMENT_MENU_VERSION="2026.10.19.8"
 
 resolve_python() {
   if [[ -n "${PYTHON:-}" ]]; then

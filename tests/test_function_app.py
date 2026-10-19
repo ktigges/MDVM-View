@@ -1,4 +1,5 @@
 import json
+import importlib
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,16 @@ import requests
 from azure.core.exceptions import ResourceNotFoundError
 
 import function_app
+
+
+def test_function_runtime_version_comes_from_packaged_source_not_old_app_settings(monkeypatch):
+    expected = json.loads(Path(function_app.__file__).with_name("function-version.json").read_text())["version"]
+    monkeypatch.setenv("COLLECTOR_VERSION", "2026.10.11.2")
+    monkeypatch.setenv("FUNCTION_VERSION", "2026.10.11.2")
+
+    importlib.reload(function_app)
+
+    assert function_app.COLLECTOR_VERSION == expected
 
 
 def test_run_dataprep_uses_temporary_writable_workspace(monkeypatch):
@@ -131,6 +142,124 @@ def test_debug_function_logs_actual_successful_api_result(monkeypatch, caplog, c
     assert "endpoint=vulnerabilities; 1 rows received" in caplog.text
     assert '"Status": "PASSED"' in capsys.readouterr().out
     assert "not-a-real-token" not in caplog.text
+
+
+@pytest.fixture
+def http_debug_context(monkeypatch):
+    class Credential:
+        def get_token(self, scope):
+            return type("Token", (), {"token": "not-a-real-token"})()
+
+    calls = []
+    result = requests.Response()
+    result.status_code = 200
+    result._content = b'{"value":[{"id":"finding"}]}'
+    monkeypatch.setattr(function_app.Settings, "load", lambda: function_app.Settings(defender_api_base_url="https://api-us3.securitycenter.microsoft.com"))
+    monkeypatch.setattr(function_app, "create_credential", lambda *args: Credential())
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append((url, kwargs)) or result)
+    monkeypatch.setattr(function_app.tempfile, "TemporaryDirectory", lambda **kwargs: pytest.fail("Debug must not create a collection workspace"))
+    monkeypatch.setattr(function_app, "download_current_manifest", lambda *args: pytest.fail("Debug must not access snapshot Storage"))
+    return calls, result
+
+
+@pytest.mark.parametrize("endpoint", ["machine_vulnerabilities", "vulnerabilities"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_http_debug_returns_actual_api_result_without_logs_or_storage(http_debug_context, endpoint, empty):
+    calls, result = http_debug_context
+    if empty:
+        result._content = b'{"value":[]}'
+    request = function_app.func.HttpRequest(
+        method="POST", url="https://func-test.azurewebsites.net/api/debug-page",
+        body=json.dumps({"endpoint": endpoint, "pageSize": 1}).encode(),
+    )
+
+    response = function_app.dataprep_debug_http(request)
+
+    report = json.loads(response.get_body())
+    assert response.status_code == 200
+    assert report["Status"] == "PASSED"
+    assert report["HttpStatus"] == 200
+    assert report["Endpoint"] == endpoint
+    assert report["RowCount"] == (0 if empty else 1)
+    assert report["CollectorVersion"] == function_app.COLLECTOR_VERSION
+    assert len(calls) == 1
+    assert report["RequestUrl"] == calls[0][0]
+    assert calls[0][1]["timeout"] == (10, 90)
+    assert "not-a-real-token" not in response.get_body().decode()
+
+
+@pytest.mark.parametrize("body", [b"not JSON", b"[]", b'{"pageSize":0}', b'{"pageSize":true}', b'{"endpoint":"invalid"}'])
+def test_http_debug_rejects_invalid_input_without_calling_defender(http_debug_context, body):
+    calls, _ = http_debug_context
+    request = function_app.func.HttpRequest(method="POST", url="https://func-test/api/debug-page", body=body)
+
+    response = function_app.dataprep_debug_http(request)
+
+    assert response.status_code == 400
+    assert json.loads(response.get_body())["Status"] == "FAILED"
+    assert calls == []
+
+
+@pytest.mark.parametrize("status", [401, 403, 429, 503])
+def test_http_debug_reports_defender_failure_without_retrying(http_debug_context, status):
+    calls, result = http_debug_context
+    result.status_code = status
+    request = function_app.func.HttpRequest(method="POST", url="https://func-test/api/debug-page", body=b'{"pageSize":1}')
+
+    response = function_app.dataprep_debug_http(request)
+
+    assert response.status_code == 502
+    report = json.loads(response.get_body())
+    assert report["Status"] == "FAILED"
+    assert str(status) in report["Error"]
+    assert len(calls) == 1
+
+
+def test_http_debug_returns_timeout_as_failed_api_test(http_debug_context, monkeypatch):
+    def get(*args, **kwargs):
+        raise requests.ReadTimeout("Defender response timed out")
+
+    monkeypatch.setattr(requests.Session, "get", get)
+    request = function_app.func.HttpRequest(method="POST", url="https://func-test/api/debug-page", body=b'{"pageSize":1}')
+
+    response = function_app.dataprep_debug_http(request)
+
+    assert response.status_code == 504
+    report = json.loads(response.get_body())
+    assert report["Status"] == "FAILED"
+    assert report["ErrorType"] == "ReadTimeout"
+
+
+def test_debug_menu_receives_same_invocations_actual_api_result(http_debug_context, monkeypatch, capsys):
+    from vulnerability_view import operations_cli
+
+    calls, _ = http_debug_context
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: type("Result", (), {"stdout": "host-key\n"})())
+    monkeypatch.setattr(operations_cli, "_workspace_context", lambda: pytest.fail("Debug does not require Log Analytics access"))
+
+    def post(url, **kwargs):
+        assert url == "https://func-test.azurewebsites.net/api/debug-page"
+        assert kwargs["headers"] == {"x-functions-key": "host-key"}
+        request = function_app.func.HttpRequest(method="POST", url=url, body=json.dumps(kwargs["json"]).encode())
+        response = function_app.dataprep_debug_http(request)
+        result = requests.Response()
+        result.status_code = response.status_code
+        result._content = response.get_body()
+        return result
+
+    monkeypatch.setattr(requests, "post", post)
+
+    operations_cli.invoke(True, debug=True, page_size=1, endpoint="vulnerabilities")
+
+    output = capsys.readouterr().out
+    assert "DEBUG RESULT: PASSED" in output
+    assert "Defender HTTP status: 200" in output
+    assert "Rows returned: 1 (requested up to 1)" in output
+    assert calls[0][0] in output
+    assert f"Function collector version: {function_app.COLLECTOR_VERSION}" in output
+    assert len(calls) == 1
+    assert "host-key" not in output
 
 
 @pytest.mark.parametrize("payload", ['{"pageSize":1000,"endpoint":"vulnerabilities"}', '{"endpoint":"vulnerabilities"}'])

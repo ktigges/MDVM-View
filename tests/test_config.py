@@ -1,8 +1,11 @@
 from datetime import UTC, datetime, timedelta
+import json
 import os
 from pathlib import Path
 
-from vulnerability_view.config import DEFAULT_DEFENDER_API_BASE_URL, Settings
+import pytest
+
+from vulnerability_view.config import DEFAULT_DEFENDER_API_BASE_URL, Settings, load_function_version
 from vulnerability_view.dataprep_cli import _resolve_collection_mode
 
 
@@ -80,6 +83,31 @@ def test_default_defender_host_matches_customer_requested_host(monkeypatch, tmp_
     assert Settings().defender_api_base_url == DEFAULT_DEFENDER_API_BASE_URL
     assert settings.defender_api_base_url == DEFAULT_DEFENDER_API_BASE_URL
     assert "DEFENDER_API_BASE_URL" not in os.environ
+
+
+def test_function_version_is_authoritative_over_stale_environment(monkeypatch, tmp_path):
+    source = tmp_path / "function-version.json"
+    source.write_text('{"version":"2026.10.19.6"}')
+    monkeypatch.setenv("COLLECTOR_VERSION", "2026.10.11.2")
+    monkeypatch.setenv("FUNCTION_VERSION", "2026.10.11.2")
+
+    assert load_function_version(source) == "2026.10.19.6"
+
+
+def test_function_version_never_falls_back_to_environment_when_source_is_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("COLLECTOR_VERSION", "2026.10.11.2")
+
+    with pytest.raises(FileNotFoundError):
+        load_function_version(tmp_path / "function-version.json")
+
+
+@pytest.mark.parametrize("value", [{}, [], {"version": "bad"}, {"version": None}, {"version": 123}])
+def test_function_version_rejects_invalid_source(tmp_path, value):
+    source = tmp_path / "function-version.json"
+    source.write_text(json.dumps(value))
+
+    with pytest.raises(ValueError, match="YYYY.MM.DD.N"):
+        load_function_version(source)
 
 def test_collection_mode_uses_initial_and_weekly_full_with_daily_delta():
     settings = Settings(full_collection_weekday=6)

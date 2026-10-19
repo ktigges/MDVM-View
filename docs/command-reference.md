@@ -332,6 +332,33 @@ group containing it. Review the generated destroy plan before approval.
 
 ## 6. Collection progress, runs, failures, and memory
 
+### Function release version
+
+The tracked root file [`function-version.json`](../function-version.json) is the
+authoritative collector version, like the Web App's checked-in version.
+The Function reads its packaged copy at startup, and both deployment paths use
+the same file when stamping release metadata and Azure's `COLLECTOR_VERSION`.
+Old `function_version` Terraform values and `FUNCTION_VERSION` /
+`COLLECTOR_VERSION` environment labels cannot override the source version.
+Missing or invalid source metadata is an explicit error, not a fallback to an old
+label.
+
+When a Function version bump is requested, run:
+
+```bash
+./bump-version.sh function
+```
+
+This updates the tracked version/revision and example Terraform value. It also
+synchronizes the local legacy `function_version` field if that file/field exists,
+but a customer Terraform configuration is not required to bump the source.
+The script's `--dry-run` changes no files; Web App versioning is unchanged.
+Ordinary deployment does not increment the version automatically.
+
+After publishing/promoting and pulling the release, deployment menu **3** packages
+the version file with the Function. No Terraform initialization/apply, customer
+version edit, or Web App deployment is required merely to pick up the new label.
+
 ### One-page debugging versus complete collection
 
 Deployment menu option **5** offers:
@@ -371,10 +398,19 @@ python -m vulnerability_view.operations_cli invoke function --confirm --debug --
 python -m vulnerability_view.operations_cli invoke function --confirm --page-size 100
 ```
 
-Debug uses the dedicated `dataprep_debug_page` trigger, so it cannot fall back to
-a full collection on an older deployed Function. Deploy updated Function code
-before using it. Trigger acceptance is not debug completion; inspect informational
-Function logs for `[debug]` messages or the final exception.
+Menu debug uses the function-key-protected `POST /api/debug-page` route and waits
+for that exact request's result, rather than polling Log Analytics. It prints
+`DEBUG RESULT: PASSED` with the Defender HTTP status, validated row count, elapsed
+time, actual API URL, and the packaged Function version. A reported API failure
+prints `DEBUG RESULT: FAILED` and exits unsuccessfully. A transport timeout,
+missing endpoint on an older deployment, or malformed/mismatched response is
+`UNCONFIRMED`, never a pass. Deploy updated Function code before using it; an
+HTTP 404 does not fall back to any other trigger or full collection.
+The client allows a 10-second connection and 210-second response wait to cover
+Function cold start and the Defender request. A lost response can leave a test
+running; inspect logs before retrying. No automatic HTTP retry is performed.
+The existing asynchronous `dataprep_debug_page` trigger remains available for
+legacy callers; acceptance of that trigger still does not prove completion.
 
 Debug results are explicit and are emitted through both progress output and
 application logging (so they can appear in `AppTraces`):
@@ -388,9 +424,10 @@ application logging (so they can appear in `AppTraces`):
 still means the API call passed, but is explicitly labeled `EMPTY RESULT`; it
 does not prove that findings exist. Authentication failures, HTTP errors,
 timeouts, and malformed or oversized responses log `FAILED` and propagate the
-error. Trigger acceptance remains `PENDING`, not a successful API result.
+error. The menu shows `PENDING` while waiting for the direct response.
 Neither result means a full collection completed or a snapshot was published.
-In the Function's linked workspace, query without an operation-ID filter:
+Log Analytics access is not needed for the automatic menu result. For retained
+logs, query the Function's linked workspace without an operation-ID filter:
 
 ```kusto
 AppTraces

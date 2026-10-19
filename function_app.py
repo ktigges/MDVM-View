@@ -11,17 +11,18 @@ import tempfile
 from pathlib import Path
 
 import azure.functions as func
-from azure.core.exceptions import ResourceNotFoundError
+import requests
+from azure.core.exceptions import AzureError, ResourceNotFoundError
 
-from vulnerability_view.config import Settings
+from vulnerability_view.config import Settings, load_function_version
 from vulnerability_view.credentials import create_credential
 from vulnerability_view.dataprep_cli import main
-from vulnerability_view.defender_client import COLLECTION_PAGE_SIZE, collection_page_size
+from vulnerability_view.defender_client import COLLECTION_PAGE_SIZE, DefenderApiError, collection_page_size, probe_defender_page
 from vulnerability_view.storage_writer import download_current_manifest
 
 
 app = func.FunctionApp()
-COLLECTOR_VERSION = os.getenv("COLLECTOR_VERSION", "not-stamped")
+COLLECTOR_VERSION = load_function_version(Path(__file__).resolve().with_name("function-version.json"))
 
 
 def _run_dataprep(collection_mode: str = "auto", enrichment_mode: str = "auto", *, page_size: int = COLLECTION_PAGE_SIZE, debug: bool = False, debug_endpoint: str = "machine_vulnerabilities") -> int:
@@ -119,6 +120,50 @@ def dataprep_snapshot(timer: func.TimerRequest) -> None:
     if exit_code:
         raise RuntimeError(f"Scheduled vulnerability dataprep failed with exit code {exit_code}")
     logging.info("Scheduled vulnerability dataprep collector version %s completed", COLLECTOR_VERSION)
+
+
+@app.route(route="debug-page", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+def dataprep_debug_http(req: func.HttpRequest) -> func.HttpResponse:
+    """Return the actual one-page API result without waiting for telemetry."""
+    try:
+        options = req.get_json()
+        if not isinstance(options, dict):
+            raise ValueError("Debug request must be a JSON object")
+        endpoint = options.get("endpoint", "machine_vulnerabilities")
+        if endpoint not in ("machine_vulnerabilities", "vulnerabilities"):
+            raise ValueError("Debug endpoint must be machine_vulnerabilities or vulnerabilities")
+        page_size = collection_page_size(options.get("pageSize", COLLECTION_PAGE_SIZE if endpoint == "vulnerabilities" else 1))
+    except ValueError as error:
+        logging.warning("[debug] FAILED: Invalid debug request: %s", error)
+        return func.HttpResponse(
+            json.dumps({"Status": "FAILED", "Error": str(error), "CollectorVersion": COLLECTOR_VERSION}),
+            status_code=400, mimetype="application/json",
+        )
+    logging.info(
+        "Starting synchronous Defender page debug version %s; endpoint %s; page size %s; no publication",
+        COLLECTOR_VERSION, endpoint, page_size,
+    )
+    try:
+        settings = Settings.load()
+        credential = create_credential(
+            settings.auth_mode, settings.client_id, settings.tenant_id,
+            settings.client_secret, settings.allow_local_client_secret,
+        )
+        result = probe_defender_page(settings.defender_api_base_url, credential, page_size, endpoint=endpoint)
+    except (requests.RequestException, DefenderApiError, AzureError, RuntimeError, ValueError) as error:
+        logging.exception("[debug] FAILED: Synchronous debug request failed")
+        return func.HttpResponse(
+            json.dumps({
+                "Status": "FAILED", "Endpoint": endpoint, "ErrorType": type(error).__name__,
+                "Error": str(error), "CollectorVersion": COLLECTOR_VERSION,
+            }),
+            status_code=504 if isinstance(error, requests.Timeout) else 502,
+            mimetype="application/json",
+        )
+    return func.HttpResponse(
+        json.dumps({**result, "CollectorVersion": COLLECTOR_VERSION}),
+        status_code=200, mimetype="application/json",
+    )
 
 
 def _manual_options(input: str) -> dict:

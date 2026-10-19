@@ -33,7 +33,7 @@ variable "defender_api_base_url" {
 }
 
 variable "function_version" {
-  description = "Operator-managed release number stamped on Function code deployments."
+  description = "Legacy compatibility value. Function releases now use the tracked function-version.json file instead."
   type        = string
   default     = "unversioned"
 

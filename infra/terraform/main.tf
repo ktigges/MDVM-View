@@ -464,7 +464,7 @@ resource "azurerm_function_app_flex_consumption" "collector" {
     "AZURE_CLIENT_ID"                  = azurerm_user_assigned_identity.collector[each.key].client_id
     "AZURE_MANAGEMENT_GROUP_ID"        = var.collector_management_group_id
     "AzureWebJobsFeatureFlags"         = "EnableWorkerIndexing"
-    "COLLECTOR_VERSION"                = var.function_version
+    "COLLECTOR_VERSION"                = jsondecode(file("${path.module}/../../function-version.json")).version
     "AzureWebJobsStorage__accountName" = azurerm_storage_account.function_runtime[each.key].name
     "AzureWebJobsStorage__clientId"    = azurerm_user_assigned_identity.collector[each.key].client_id
     "AzureWebJobsStorage__credential"  = "managedidentity"

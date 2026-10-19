@@ -226,16 +226,17 @@ tf_deploy() {
     function)
       require_command jq
       require_command git
-      local configured_function_version function_app function_version version_file defender_base_url
+      local function_app function_version version_file defender_base_url
       defender_base_url="$(jq -r '.defender_api_base_url // "https://api-us3.securitycenter.microsoft.com"' "$TF_VARS")"
       if [[ ! "$defender_base_url" =~ ^https://[A-Za-z0-9.-]+/?$ ]]; then
         echo "defender_api_base_url must be an HTTPS base URI without a path or query." >&2
         return 1
       fi
       function_app="$(tf_output function_app_name 2>/dev/null || true)"
-      configured_function_version="$(jq -r '.function_version // empty' "$TF_VARS")"
-      function_version="${FUNCTION_VERSION:-${configured_function_version:-$(git -C "$ROOT_DIR" describe --tags --always --dirty)}}"
-      function_version="${function_version//[^A-Za-z0-9._+-]/-}"
+      if ! function_version="$(jq -er '.version | select(type == "string" and test("^[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}\\.[0-9]+$"))' "$ROOT_DIR/function-version.json")"; then
+        echo "Missing or invalid function-version.json; cannot identify the Function release." >&2
+        return 1
+      fi
       version_file="$ROOT_DIR/build-version.json"
       package="$ROOT_DIR/function-source.zip"
       if [[ -z "$function_app" ]]; then
@@ -251,7 +252,7 @@ tf_deploy() {
         '{version:$version,deployedUtc:$deployedUtc,commit:$commit}' > "$version_file"
       (
         cd "$ROOT_DIR"
-        zip -q -r "$package" function_app.py host.json requirements.txt pyproject.toml build-version.json src config/sla-policies.json \
+        zip -q -r "$package" function_app.py function-version.json host.json requirements.txt pyproject.toml build-version.json src config/sla-policies.json \
           -x '*/__pycache__/*' '*.pyc'
       )
       rm -f "$version_file"
@@ -574,9 +575,9 @@ Terraform workflow:
     refresh the plan automatically.
   - tfdeploy publishes application code to infrastructure that already exists.
     It does not run terraform init, plan, or apply.
-  - Function deployments stamp COLLECTOR_VERSION. The normal value comes from
-    function_version in main.tfvars.json. FUNCTION_VERSION can override it once;
-    otherwise deploy.sh falls back to the Git tag/commit and dirty-worktree marker.
+  - Function deployments stamp COLLECTOR_VERSION from function-version.json.
+    The Function reads that packaged file; old Terraform/environment labels do not override it.
+    Bump it explicitly with ./bump-version.sh function before publishing a new release.
 
 For an existing Web App infrastructure change, run in this order:
   ./infra/deploy.sh tfplan webapp
