@@ -309,9 +309,12 @@ Vulnerability deltas default to `pageSize=1000` and follow server continuation
 links. They do not use `$top`, which disables continuation on the delta export API.
 Manual complete collections can select a smaller per-run page size (1-1,000)
 through deployment menu option 5. Its default debug mode instead requests one
-page once and stops without archiving or publishing any data.
-The machine-findings debug probe remains an unfiltered, single-request
-diagnostic; it does not exercise the device-by-device complete-collection path.
+page and stops without archiving or publishing any data. Machine debug first
+discovers one device with `/api/machines?$top=1`, then requests one findings page
+using the same `machineId` filter as full collection (two requests total).
+It follows neither discovery nor findings next links. Catalog debug makes just
+one request. A successful machine debug sample validates one device/page, not
+the whole device-by-device collection.
 Recommendation-machine references and experimental routes have no documented
 manual page-size control; their server-provided next links are followed without
 inventing query parameters. Graph Secure Score intentionally requests only the

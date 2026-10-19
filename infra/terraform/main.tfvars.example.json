@@ -1,7 +1,7 @@
 {
   "subscription_id": "00000000-0000-0000-0000-000000000000",
   "tenant_id": "00000000-0000-0000-0000-000000000000",
-  "function_version": "2026.10.19.7",
+  "function_version": "2026.10.19.8",
   "dashboard_version": "2026.10.12.13",
   "collector_management_group_id": "customer-management-group-id",
   "resource_group_name": "rg-dvmviewer-test-replace123",

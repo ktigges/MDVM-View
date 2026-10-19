@@ -1906,13 +1906,23 @@ def test_invoke_forwards_catalog_debug_selection(monkeypatch, page_size):
 
 def _debug_response(endpoint="machine_vulnerabilities", page_size=1, row_count=1):
     path = "/api/vulnerabilities" if endpoint == "vulnerabilities" else "/api/vulnerabilities/machinesVulnerabilities"
+    details = {"RequestCount": 1}
+    query = f"%24top={page_size}"
+    if endpoint == "machine_vulnerabilities":
+        query = f"%24filter=machineId+eq+%27device-1%27&%24top={page_size}"
+        details = {
+            "RequestCount": 2, "MachineId": "device-1", "MachineName": "debug-device",
+            "InventoryRequestUrl": "https://api-us3.securitycenter.microsoft.com/api/machines?%24top=1",
+            "InventoryHttpStatus": 200,
+        }
     result = operations_cli.requests.Response()
     result.status_code = 200
     result._content = json.dumps({
         "Status": "PASSED", "Endpoint": endpoint, "HttpStatus": 200,
         "RequestedRows": page_size, "RowCount": row_count, "DurationSeconds": 1.25,
-        "RequestUrl": f"https://api-us3.securitycenter.microsoft.com{path}?%24top={page_size}",
+        "RequestUrl": f"https://api-us3.securitycenter.microsoft.com{path}?{query}",
         "CollectorVersion": "2026.10.19.6",
+        **details,
     }).encode()
     return result
 
@@ -1938,6 +1948,9 @@ def test_debug_response_prints_empty_result_without_claiming_matching_findings(m
     ("RequestUrl", "https://[invalid"),
     ("RequestUrl", "https://example.test/api/vulnerabilities/machinesVulnerabilities?%24top=1000"),
     ("CollectorVersion", ""),
+    ("MachineId", ""), ("MachineId", "wrong-device"), ("MachineName", None),
+    ("InventoryHttpStatus", 403), ("InventoryRequestUrl", "https://example.test/api/machines?%24top=1"),
+    ("RequestCount", 1), ("RequestCount", True),
 ])
 def test_debug_response_does_not_pass_malformed_or_mismatched_results(monkeypatch, capsys, field, value):
     result = _debug_response()

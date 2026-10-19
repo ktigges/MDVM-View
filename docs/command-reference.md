@@ -366,7 +366,9 @@ Deployment menu option **5** offers:
 - **D — Debug one page** (default): choose **M — Machine vulnerability findings**
   or **V — Vulnerability catalog**, then ask for a maximum of 1-1,000 records
   (default **1** for machine findings or **1,000** for the catalog), require
-  `DEBUG`, make one Defender request, and stop.
+  `DEBUG`, and stop after the bounded test. **M** makes two Defender requests:
+  `/api/machines?$top=1` to discover one device, then one findings page filtered by
+  its Defender ID with the selected `$top`. **V** makes one catalog request.
   It does not retry, follow next links, archive responses, normalize findings,
   access snapshot Storage, or publish a manifest. A missing current manifest
   remains missing after a successful debug request.
@@ -380,10 +382,12 @@ each Defender machine ID. The request is
 `/api/vulnerabilities/machinesVulnerabilities?$filter=machineId eq '<id>'&$top=<page-size>`,
 not an unfiltered tenant-wide findings query. Progress names the current device
 and reports completed machines and aggregate rows. A failed device query aborts
-publication. Delta collection is unchanged. The **D → M** debug probe deliberately
-remains the original unfiltered one-request test; use **C** to exercise the
-device-scoped full baseline when no current baseline is published, or the existing
-full reconciliation action to force it when a baseline already exists.
+publication. Delta collection is unchanged. The **D → M** debug probe now uses the
+same machine-ID filter but samples only one discovered device and one findings
+page. It never makes the unfiltered tenant-wide findings request. Use **C** to
+exercise the complete device-scoped baseline when no current baseline is
+published, or the existing full reconciliation action to force it when a baseline
+already exists. A successful sample does not prove every device/page will succeed.
 
 These choices apply only to this invocation. They do not modify Terraform,
 app settings, or the scheduled collector's default page size. The full
@@ -401,7 +405,11 @@ python -m vulnerability_view.operations_cli invoke function --confirm --page-siz
 Menu debug uses the function-key-protected `POST /api/debug-page` route and waits
 for that exact request's result, rather than polling Log Analytics. It prints
 `DEBUG RESULT: PASSED` with the Defender HTTP status, validated row count, elapsed
-time, actual API URL, and the packaged Function version. A reported API failure
+time, actual API URL, and the packaged Function version. Machine debug also
+prints the selected device name/ID and inventory request/result. It requires a
+valid device discovery and a successful, matching machine-filtered findings
+response; no available devices is a failed/unperformed findings test, not a pass.
+A reported API failure
 prints `DEBUG RESULT: FAILED` and exits unsuccessfully. A transport timeout,
 missing endpoint on an older deployment, or malformed/mismatched response is
 `UNCONFIRMED`, never a pass. Deploy updated Function code before using it; an
@@ -441,10 +449,13 @@ AppTraces
 The debug API request is:
 
 ```http
-GET https://api-us3.securitycenter.microsoft.com/api/vulnerabilities/machinesVulnerabilities?$top=1
+GET https://api-us3.securitycenter.microsoft.com/api/machines?$top=1
+GET https://api-us3.securitycenter.microsoft.com/api/vulnerabilities/machinesVulnerabilities?$filter=machineId eq '<discovered-id>'&$top=1
 GET https://api-us3.securitycenter.microsoft.com/api/vulnerabilities?$top=1000
 ```
 
+The first two calls are **M**, in order; the last call is the independent **V**
+test. Each stops without following any inventory or findings continuation links.
 It uses the collector's managed identity and configured Defender base URL.
 Both paths remain distinct. The operator-selected default base URI is
 `https://api-us3.securitycenter.microsoft.com`; it is not a claim that this
@@ -456,7 +467,7 @@ override new code defaults. No shell environment override is required.
 Debug logs print the actual request URI before making the request.
 Results report requested/returned row counts, HTTP status, and elapsed time,
 not raw finding contents or tokens. Debug retains the 10-second connection and
-90-second read timeouts but makes no automatic retry.
+90-second read timeouts per Defender request but makes no automatic retry.
 
 ### Active status only
 

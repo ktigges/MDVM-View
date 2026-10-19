@@ -378,19 +378,33 @@ def test_custom_client_page_size_bounds_all_inventory_and_delta_requests(monkeyp
         assert query[key] == [str(page_size)]
 
 
-def test_debug_probe_requests_once_and_ignores_continuation(monkeypatch):
+def test_debug_machine_probe_discovers_one_device_and_ignores_both_continuations(monkeypatch):
     calls = []
     progress = []
-    result = response({"value": [{"id": "one"}], "@odata.nextLink": "https://example.test/never-follow"})
-    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append(url) or result)
+    result = response({"value": [{"id": "one", "machineId": "device-1"}], "@odata.nextLink": "https://example.test/never-follow"})
+
+    def get(self, url, **kwargs):
+        calls.append(url)
+        if urlsplit(url).path == "/api/machines":
+            return response({"value": [{"id": "device-1", "computerDnsName": "devbox"}], "@odata.nextLink": "https://example.test/never-follow-inventory"})
+        assert parse_qs(urlsplit(url).query)["$filter"] == ["machineId eq 'device-1'"]
+        return result
+
+    monkeypatch.setattr(requests.Session, "get", get)
 
     report = probe_defender_page("https://example.test", Credential(), 1, progress.append)
 
-    assert calls == ["https://example.test/api/vulnerabilities/machinesVulnerabilities?%24top=1"]
+    assert calls == [
+        "https://example.test/api/machines?%24top=1",
+        "https://example.test/api/vulnerabilities/machinesVulnerabilities?%24filter=machineId+eq+%27device-1%27&%24top=1",
+    ]
     assert report["RequestedRows"] == report["RowCount"] == 1
     assert report["HttpStatus"] == 200
     assert "no data published" in progress[-1]
     assert "one" not in report.values()
+    assert report["MachineId"] == "device-1"
+    assert report["MachineName"] == "devbox"
+    assert report["RequestCount"] == 2
 
 
 @pytest.mark.parametrize("failure", ["timeout", 400, 401, 429, 503, 403])
@@ -424,7 +438,12 @@ def test_debug_probe_never_retries_failures(monkeypatch, failure, caplog):
 def test_debug_pass_is_explicit_and_logged_only_after_http_and_body_validation(monkeypatch, caplog, endpoint, rows):
     caplog.set_level("INFO")
     progress = []
-    monkeypatch.setattr(requests.Session, "get", lambda *args, **kwargs: response({"value": rows}))
+    def get(self, url, **kwargs):
+        if urlsplit(url).path == "/api/machines":
+            return response({"value": [{"id": "selected", "computerDnsName": "devbox"}]})
+        return response({"value": [{**row, "machineId": "selected"} for row in rows]})
+
+    monkeypatch.setattr(requests.Session, "get", get)
 
     report = probe_defender_page("https://example.test", Credential(), 1, progress.append, endpoint=endpoint)
 
@@ -506,17 +525,81 @@ def test_debug_authentication_failure_is_explicit_without_an_http_request(monkey
 def test_debug_calls_requested_regional_host_and_selected_dataset(monkeypatch, endpoint, path, count, trailing_slash):
     calls = []
     progress = []
-    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append(url) or response({"value": []}))
+    def get(self, url, **kwargs):
+        calls.append(url)
+        return response({"value": [{"id": "selected"}] if urlsplit(url).path == "/api/machines" else []})
+
+    monkeypatch.setattr(requests.Session, "get", get)
 
     report = probe_defender_page(
         Settings().defender_api_base_url + trailing_slash, Credential(), count,
         progress.append, endpoint=endpoint,
     )
 
-    assert calls == [f"https://api-us3.securitycenter.microsoft.com{path}?%24top={count}"]
-    assert requests.Request("GET", calls[0]).prepare().url == calls[0]
+    expected = [f"https://api-us3.securitycenter.microsoft.com{path}?%24top={count}"]
+    if endpoint == "machine_vulnerabilities":
+        expected = [
+            "https://api-us3.securitycenter.microsoft.com/api/machines?%24top=1",
+            f"https://api-us3.securitycenter.microsoft.com{path}?%24filter=machineId+eq+%27selected%27&%24top={count}",
+        ]
+    assert calls == expected
+    assert all(requests.Request("GET", url).prepare().url == url for url in calls)
     assert report["Endpoint"] == endpoint
     assert calls[0] in progress[0]
+
+
+def test_debug_machine_discovery_empty_inventory_cannot_pass(monkeypatch, caplog):
+    calls = []
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append(url) or response({"value": []}))
+
+    with pytest.raises(DefenderApiError, match="no device returned"):
+        probe_defender_page("https://example.test", Credential(), 1)
+
+    assert calls == ["https://example.test/api/machines?%24top=1"]
+    assert "[debug] FAILED:" in caplog.text
+    assert "[debug] PASSED:" not in caplog.text
+
+
+@pytest.mark.parametrize("machine_id", [None, "", 123, " device-1"])
+def test_debug_machine_discovery_invalid_id_cannot_make_findings_request(monkeypatch, machine_id):
+    calls = []
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append(url) or response({"value": [{"id": machine_id}]}))
+
+    with pytest.raises(DefenderApiError, match="invalid Defender machine ID"):
+        probe_defender_page("https://example.test", Credential(), 1)
+
+    assert len(calls) == 1
+
+
+def test_debug_machine_findings_timeout_is_not_retried_or_replaced_with_unfiltered_query(monkeypatch, caplog):
+    calls = []
+
+    def get(self, url, **kwargs):
+        calls.append(url)
+        if urlsplit(url).path == "/api/machines":
+            return response({"value": [{"id": "device-1"}]})
+        assert parse_qs(urlsplit(url).query)["$filter"] == ["machineId eq 'device-1'"]
+        raise requests.ReadTimeout("Filtered findings timed out")
+
+    monkeypatch.setattr(requests.Session, "get", get)
+    monkeypatch.setattr("vulnerability_view.defender_client.time.sleep", lambda delay: pytest.fail("Debug must not retry"))
+
+    with pytest.raises(requests.ReadTimeout):
+        probe_defender_page("https://example.test", Credential(), 10)
+
+    assert len(calls) == 2
+    assert "[debug] FAILED:" in caplog.text
+    assert "[debug] PASSED:" not in caplog.text
+
+
+def test_debug_rejects_findings_for_a_different_device(monkeypatch):
+    def get(self, url, **kwargs):
+        return response({"value": [{"id": "selected"}] if urlsplit(url).path == "/api/machines" else [{"machineId": "wrong"}]})
+
+    monkeypatch.setattr(requests.Session, "get", get)
+
+    with pytest.raises(DefenderApiError, match="different machine"):
+        probe_defender_page("https://example.test", Credential(), 1)
 
 
 @pytest.mark.parametrize("endpoint_name,path", [
@@ -791,11 +874,16 @@ def test_debug_cli_does_not_collect_or_access_storage(monkeypatch, capsys):
     for name in ("_read_existing", "_read_outputs", "collect_live", "upload_run_bundle", "write_outputs"):
         monkeypatch.setattr(dataprep_cli, name, lambda *args, **kwargs: pytest.fail("Debug must not collect or touch storage"))
     calls = []
-    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append(url) or response({"value": [{"id": 1}]}))
+    def get(self, url, **kwargs):
+        calls.append(url)
+        rows = [{"id": "device-1"}] if urlsplit(url).path == "/api/machines" else [{"id": "finding", "machineId": "device-1"}]
+        return response({"value": rows})
+
+    monkeypatch.setattr(requests.Session, "get", get)
 
     assert dataprep_cli.main(["probe-live", "--page-size", "1"]) == 0
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert '"RowCount": 1' in capsys.readouterr().out
 
 

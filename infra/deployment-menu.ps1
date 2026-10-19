@@ -5,7 +5,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
-$DeploymentMenuVersion = "2026.10.19.8"
+$DeploymentMenuVersion = "2026.10.19.9"
 $RequiredAzureCliExtensions = @("log-analytics")
 
 function Test-PythonCommand {
@@ -222,7 +222,7 @@ function Invoke-LiveCollection {
     }
     $expected = if ($debugOnly) { "DEBUG" } elseif ($Full) { "FULL" } else { "COLLECT" }
     $prompt = if ($debugOnly) {
-        "This requests one Defender page once, then stops. No retries or publication."
+        "Machine debug discovers one device, then requests one filtered findings page; catalog debug requests one page. No retries or publication."
     } elseif ($Full) {
         "This forces a full vulnerability baseline and complete recommendation-machine reconciliation."
     } else {

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DEPLOYMENT_MENU_VERSION="2026.10.19.8"
+DEPLOYMENT_MENU_VERSION="2026.10.19.9"
 
 resolve_python() {
   if [[ -n "${PYTHON:-}" ]]; then
@@ -77,7 +77,7 @@ invoke_collection() {
       case "${choice:-D}" in
         D|d)
           confirmation="DEBUG"
-          prompt="This requests one Defender page once, then stops. No retries or publication."
+          prompt="Machine debug discovers one device, then requests one filtered findings page; catalog debug requests one page. No retries or publication."
           args+=(--debug)
           page_default=1
           break

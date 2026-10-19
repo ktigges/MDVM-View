@@ -153,10 +153,19 @@ def http_debug_context(monkeypatch):
     calls = []
     result = requests.Response()
     result.status_code = 200
-    result._content = b'{"value":[{"id":"finding"}]}'
+    result._content = b'{"value":[{"id":"finding","machineId":"device-1"}]}'
     monkeypatch.setattr(function_app.Settings, "load", lambda: function_app.Settings(defender_api_base_url="https://api-us3.securitycenter.microsoft.com"))
     monkeypatch.setattr(function_app, "create_credential", lambda *args: Credential())
-    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append((url, kwargs)) or result)
+    def get(self, url, **kwargs):
+        calls.append((url, kwargs))
+        if "/api/machines?" in url:
+            inventory = requests.Response()
+            inventory.status_code = 200
+            inventory._content = b'{"value":[{"id":"device-1","computerDnsName":"debug-device"}]}'
+            return inventory
+        return result
+
+    monkeypatch.setattr(requests.Session, "get", get)
     monkeypatch.setattr(function_app.tempfile, "TemporaryDirectory", lambda **kwargs: pytest.fail("Debug must not create a collection workspace"))
     monkeypatch.setattr(function_app, "download_current_manifest", lambda *args: pytest.fail("Debug must not access snapshot Storage"))
     return calls, result
@@ -182,8 +191,9 @@ def test_http_debug_returns_actual_api_result_without_logs_or_storage(http_debug
     assert report["Endpoint"] == endpoint
     assert report["RowCount"] == (0 if empty else 1)
     assert report["CollectorVersion"] == function_app.COLLECTOR_VERSION
-    assert len(calls) == 1
-    assert report["RequestUrl"] == calls[0][0]
+    assert len(calls) == (2 if endpoint == "machine_vulnerabilities" else 1)
+    assert report["RequestCount"] == len(calls)
+    assert report["RequestUrl"] == calls[-1][0]
     assert calls[0][1]["timeout"] == (10, 90)
     assert "not-a-real-token" not in response.get_body().decode()
 
@@ -212,7 +222,7 @@ def test_http_debug_reports_defender_failure_without_retrying(http_debug_context
     report = json.loads(response.get_body())
     assert report["Status"] == "FAILED"
     assert str(status) in report["Error"]
-    assert len(calls) == 1
+    assert len(calls) == 2
 
 
 def test_http_debug_returns_timeout_as_failed_api_test(http_debug_context, monkeypatch):
@@ -230,7 +240,8 @@ def test_http_debug_returns_timeout_as_failed_api_test(http_debug_context, monke
     assert report["ErrorType"] == "ReadTimeout"
 
 
-def test_debug_menu_receives_same_invocations_actual_api_result(http_debug_context, monkeypatch, capsys):
+@pytest.mark.parametrize("endpoint", ["machine_vulnerabilities", "vulnerabilities"])
+def test_debug_menu_receives_same_invocations_actual_api_result(http_debug_context, monkeypatch, capsys, endpoint):
     from vulnerability_view import operations_cli
 
     calls, _ = http_debug_context
@@ -250,15 +261,17 @@ def test_debug_menu_receives_same_invocations_actual_api_result(http_debug_conte
 
     monkeypatch.setattr(requests, "post", post)
 
-    operations_cli.invoke(True, debug=True, page_size=1, endpoint="vulnerabilities")
+    operations_cli.invoke(True, debug=True, page_size=1, endpoint=endpoint)
 
     output = capsys.readouterr().out
     assert "DEBUG RESULT: PASSED" in output
     assert "Defender HTTP status: 200" in output
     assert "Rows returned: 1 (requested up to 1)" in output
-    assert calls[0][0] in output
+    assert calls[-1][0] in output
     assert f"Function collector version: {function_app.COLLECTOR_VERSION}" in output
-    assert len(calls) == 1
+    assert len(calls) == (2 if endpoint == "machine_vulnerabilities" else 1)
+    if endpoint == "machine_vulnerabilities":
+        assert "Selected machine: debug-device (Defender ID: device-1)" in output
     assert "host-key" not in output
 
 
