@@ -103,7 +103,7 @@ the endpoint name and page number:
 | Call | When | Telemetry collected | Raw file |
 |---|---|---|---|
 | `GET /api/machines` | Every run | Defender device inventory, OS/platform, health, exposure, tags, and Azure resource evidence supplied by Defender | `machines-page-####.json.gz` |
-| `GET /api/vulnerabilities/machinesVulnerabilities` | Full vulnerability run | Complete device/CVE/product/version finding relationships | `machine_vulnerabilities-page-####.json.gz` |
+| `GET /api/vulnerabilities/machinesVulnerabilities?$filter=machineId eq '<id>'&$top=<page-size>` | Full vulnerability run, separately paged for every device returned by machine inventory | Device/CVE/product/version finding relationships; avoids the unfiltered tenant-wide query | `machine_vulnerabilities-page-####.json.gz`, numbered continuously across devices |
 | `GET /api/machines/SoftwareVulnerabilityChangesByMachine?sinceTime=<prior-snapshot>` | Delta run | New, fixed, and updated device vulnerability relationships since the prior published snapshot | `vulnerability_changes-page-####.json.gz` |
 | `GET /api/vulnerabilities` | Full vulnerability run | Defender CVE catalog, including description, severity, CVSS, exploit indicators, dates, and status when supplied | `vulnerabilities-page-####.json.gz` |
 | `GET /api/vulnerabilities?$filter=updatedOn ge <prior-snapshot>` | Delta run | CVE catalog rows changed since the prior snapshot | `vulnerabilities-page-####.json.gz` |
@@ -111,6 +111,13 @@ the endpoint name and page number:
 | `GET /api/recommendations` | Every run | Defender recommendation name, product, category, remediation text, exposure impact, score impact, status, and exposed-machine count | `recommendations-page-####.json.gz` |
 | `GET /api/recommendations/{id}/machineReferences` | Based on enrichment mode | Machines affected by a recommendation when the relationship cannot be derived locally, or for every applicable recommendation during manual full enrichment | `recommendation_machines--<id>-page-####.json.gz` |
 | `GET /api/remediationTasks` | Only when experimental endpoints are enabled | Supporting Defender remediation-task evidence | `remediation_tasks-page-####.json.gz` |
+
+Full runs collect machine inventory, the CVE catalog, and recommendations before
+device-scoped findings. A failed device query aborts publication rather than
+silently skipping that device. Device names appear in progress logs, but Defender
+machine IDs are used in filters. Dashboard schemas and delta collection are
+unchanged. This serial per-device path still depends on API throughput and the
+Function execution limit.
 
 Targeted recommendation enrichment avoids repeating expensive API calls:
 

@@ -2,14 +2,16 @@ import json
 from copy import deepcopy
 import gzip
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import requests
 import pytest
 
+from vulnerability_view import live_collector
 from vulnerability_view.config import Settings
 from vulnerability_view.defender_client import ENDPOINTS, DefenderApiError, DefenderClient, Endpoint, collection_endpoints, collection_page_size, probe_defender_page
-from vulnerability_view.live_collector import apply_vulnerability_delta, merge_vulnerability_delta, normalize_live, recommendation_requires_api_enrichment, reconcile_live_findings, replay_raw_snapshot
+from vulnerability_view.live_collector import apply_vulnerability_delta, collect_live, merge_vulnerability_delta, normalize_live, recommendation_requires_api_enrichment, reconcile_live_findings, replay_raw_snapshot
 
 
 class Credential:
@@ -450,6 +452,251 @@ def test_complete_collection_uses_exact_regional_dataset_uri(monkeypatch, endpoi
     assert calls == [f"https://api-us3.securitycenter.microsoft.com{path}?%24top={count}"]
     assert requests.Request("GET", calls[0]).prepare().url == calls[0]
     assert report["Status"] == "Success"
+
+
+@pytest.fixture
+def device_scoped_run(monkeypatch, tmp_path):
+    policy_source = Path(live_collector.__file__).resolve().parents[2] / "config/sla-policies.json"
+    policy_target = tmp_path / "config/sla-policies.json"
+    policy_target.parent.mkdir()
+    policy_target.write_bytes(policy_source.read_bytes())
+    monkeypatch.chdir(tmp_path)
+    machines = [
+        {"id": "device-1", "computerDnsName": "standalone", "osPlatform": "Windows11"},
+        {"id": "device-2", "computerDnsName": "scale-set-instance", "vmMetadata": {"resourceId": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachineScaleSets/pool/virtualMachines/1"}},
+        {"id": "device-3", "computerDnsName": "no-findings"},
+    ]
+    findings = {
+        machine["id"]: [
+            {"id": f"{machine['id']}-finding-{index}", "machineId": machine["id"], "cveId": "CVE-2026-0001", "productName": "Product", "severity": "High"}
+            for index in range(count)
+        ]
+        for machine, count in zip(machines, [3, 2, 0])
+    }
+    payloads = {
+        "machines": machines,
+        "vulnerabilities": [{"id": "CVE-2026-0001", "severity": "High", "cvssV3": 8.2}],
+        "recommendations": [{"id": "va-_-Product", "productName": "Product", "exposedMachinesCount": 2}],
+    }
+    calls = []
+    failures = {}
+
+    def get(self, url, **kwargs):
+        calls.append(url)
+        parsed = urlsplit(url)
+        assert parsed.netloc == "api-us3.securitycenter.microsoft.com"
+        query = parse_qs(parsed.query)
+        limit = int(query.get("$top", query.get("pageSize", ["2"]))[0])
+        offset = int(query.get("$skip", ["0"])[0])
+        if parsed.path == "/api/vulnerabilities/machinesVulnerabilities":
+            assert "$filter" in query, "Full collection must never use the tenant-wide findings query"
+            machine_id = next(key for key in findings if query["$filter"] == [f"machineId eq '{key}'"])
+            if machine_id in failures:
+                raise failures[machine_id]
+            rows = findings[machine_id]
+        else:
+            name = next(item.name for item in ENDPOINTS if item.path == parsed.path)
+            rows = payloads[name]
+        return response({"value": rows[offset:offset + limit]}, url)
+
+    monkeypatch.setattr(requests.Session, "get", get)
+    monkeypatch.setattr(live_collector, "collect_secure_scores", lambda *args: ([], {"Endpoint": "secure_scores", "Status": "Success", "DurationSeconds": 0}))
+    monkeypatch.setattr(live_collector, "collect_azure_subscriptions", lambda *args: ([], {"Endpoint": "azure_subscriptions", "Status": "Success", "DurationSeconds": 0}))
+    monkeypatch.setattr("vulnerability_view.defender_client.time.sleep", lambda delay: None)
+    return payloads, findings, calls, failures
+
+
+def test_full_collection_pages_every_device_and_preserves_normalization_and_replay(device_scoped_run, tmp_path):
+    payloads, findings, calls, _ = device_scoped_run
+    progress = []
+
+    actual, statuses = collect_live(Settings().defender_api_base_url, Credential(), progress.append, page_size=2)
+
+    expected_payloads = deepcopy(payloads)
+    expected_payloads["machine_vulnerabilities"] = [row for rows in findings.values() for row in rows]
+    expected_payloads["recommendation_machines"] = [
+        {**machine, "_recommendationId": "va-_-Product", "_relationshipSource": "machine_vulnerabilities"}
+        for machine in payloads["machines"][:2]
+    ]
+    run_folder = next((tmp_path / "output/raw").iterdir())
+    snapshot = datetime.strptime(run_folder.name, "live-%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    expected = normalize_live(expected_payloads, snapshot, run_folder.name)
+    assert actual == expected
+    assert len(actual["findings"]) == 5
+    assert {row["DeviceName"] for row in actual["findings"]} == {"standalone", "scale-set-instance"}
+    paths = [urlsplit(url).path for url in calls]
+    assert paths[:4] == ["/api/machines", "/api/machines", "/api/vulnerabilities", "/api/recommendations"]
+    finding_calls = [url for url in calls if urlsplit(url).path.endswith("/machinesVulnerabilities")]
+    assert len(finding_calls) == 5
+    pages = sorted(run_folder.glob("machine_vulnerabilities-page-*.json.gz"))
+    assert [page.name for page in pages] == [f"machine_vulnerabilities-page-{page:04d}.json.gz" for page in range(1, 6)]
+    retained = []
+    for page in pages:
+        with gzip.open(page, "rt", encoding="utf-8") as handle:
+            retained.extend(json.load(handle)["value"])
+    assert retained == expected_payloads["machine_vulnerabilities"]
+    status = next(row for row in statuses if row["Endpoint"] == "machine_vulnerabilities")
+    assert status["RowCount"] == 5
+    assert status["PageCount"] == 5
+    assert status["MachineCount"] == 3
+    assert status["CollectionMethod"] == "PerMachine"
+    assert any('machine 2/3: "scale-set-instance" (machineId=device-2)' in message for message in progress)
+    assert any("machines complete: 3/3; 5 total rows" in message for message in progress)
+    replayed, _ = replay_raw_snapshot(run_folder)
+    for dataset in ("findings", "devices", "vulnerabilities", "recommendations"):
+        assert replayed[dataset] == actual[dataset]
+
+
+def test_device_query_failure_prevents_normalization_and_publication(device_scoped_run, monkeypatch):
+    from vulnerability_view import dataprep_cli
+
+    _, _, calls, failures = device_scoped_run
+    failures["device-2"] = requests.ReadTimeout("Device-scoped request timed out")
+    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity"))
+    monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
+    monkeypatch.setattr(dataprep_cli, "_read_existing", lambda *args: {})
+    monkeypatch.setattr(dataprep_cli, "_resolve_collection_mode", lambda *args: ("full", None))
+    monkeypatch.setattr(live_collector, "normalize_live", lambda *args, **kwargs: pytest.fail("Incomplete collection must not normalize"))
+    monkeypatch.setattr(dataprep_cli, "_persist_live_run", lambda *args, **kwargs: pytest.fail("Incomplete collection must not publish"))
+
+    with pytest.raises(requests.ReadTimeout, match="Device-scoped request timed out"):
+        dataprep_cli.main(["collect-live", "--page-size", "2"])
+
+    queries = [parse_qs(urlsplit(url).query) for url in calls if urlsplit(url).path.endswith("/machinesVulnerabilities")]
+    assert sum(query["$filter"] == ["machineId eq 'device-2'"] for query in queries) == 5
+    assert all(query["$filter"] != ["machineId eq 'device-3'"] for query in queries)
+
+
+def test_delta_collection_keeps_existing_delta_api_and_does_not_query_per_device(device_scoped_run, monkeypatch):
+    payloads, _, calls, _ = device_scoped_run
+    payloads["vulnerability_changes"] = []
+    previous = [{"FindingKey": "baseline", "DeviceId": "device-1", "CveId": "CVE-2026-0001", "SoftwareName": "Product", "SoftwareVersion": "1", "FindingStatus": "Open", "DataOrigin": "Live"}]
+    monkeypatch.setattr(DefenderClient, "collect_machine_vulnerabilities", lambda *args: pytest.fail("Delta runs must not recollect findings by machine"))
+
+    actual, statuses = collect_live(
+        Settings().defender_api_base_url, Credential(),
+        vulnerability_collection_mode="delta",
+        previous_findings=previous, previous_snapshot=datetime(2026, 10, 18, tzinfo=timezone.utc),
+        page_size=2,
+    )
+
+    assert [row["FindingKey"] for row in actual["findings"]] == ["baseline"]
+    assert all(not urlsplit(url).path.endswith("/machinesVulnerabilities") for url in calls)
+    delta_url = next(url for url in calls if "/SoftwareVulnerabilityChangesByMachine?" in url)
+    query = parse_qs(urlsplit(delta_url).query)
+    assert query["pageSize"] == ["2"]
+    assert "$top" not in query
+    assert query["sinceTime"] == ["2026-10-18T00:00:00Z"]
+    assert all(row["VulnerabilityCollectionMode"] == "delta" for row in statuses)
+
+
+def test_device_scoped_collection_follows_next_links_and_retries_without_archive_collisions(monkeypatch):
+    archived = []
+    calls = []
+    next_link = "https://api-us3.securitycenter.microsoft.com/api/vulnerabilities/machinesVulnerabilities?cursor=opaque"
+    client = DefenderClient(
+        Settings().defender_api_base_url, Credential(),
+        lambda name, page, content: archived.append((name, page, json.loads(content))),
+        page_size=2,
+    )
+
+    def get(url, **kwargs):
+        calls.append(url)
+        if url == next_link:
+            if calls.count(next_link) == 1:
+                raise requests.ReadTimeout("Retry this page only")
+            return response({"value": [{"id": "third", "machineId": "device-1"}]})
+        query = parse_qs(urlsplit(url).query)
+        if query["$filter"] == ["machineId eq 'device-1'"]:
+            return response({"value": [{"id": "first", "machineId": "device-1"}, {"id": "second", "machineId": "device-1"}], "@odata.nextLink": next_link})
+        assert query["$filter"] == ["machineId eq 'device-2'"]
+        return response({"value": []})
+
+    monkeypatch.setattr(client.session, "get", get)
+    monkeypatch.setattr("vulnerability_view.defender_client.time.sleep", lambda delay: None)
+
+    rows, status = client.collect_machine_vulnerabilities([{"id": "device-1"}, {"id": "device-2"}])
+
+    assert rows == []
+    assert status["RowCount"] == 3
+    assert status["PageCount"] == 3
+    assert calls[1:3] == [next_link, next_link]
+    assert [(name, page) for name, page, _ in archived] == [("machine_vulnerabilities", 1), ("machine_vulnerabilities", 2), ("machine_vulnerabilities", 3)]
+    assert [row["id"] for _, _, payload in archived for row in payload["value"]] == ["first", "second", "third"]
+
+
+@pytest.mark.parametrize("invalid_id", [None, "", 123, True, " device-1", "device-1 "])
+def test_device_scoped_collection_rejects_invalid_inventory_ids_before_any_query(monkeypatch, invalid_id):
+    client = DefenderClient(Settings().defender_api_base_url, Credential(), lambda *args: None)
+    monkeypatch.setattr(client.session, "get", lambda *args, **kwargs: pytest.fail("Invalid inventory must not be queried"))
+
+    with pytest.raises(DefenderApiError, match="invalid Defender machine ID"):
+        client.collect_machine_vulnerabilities([{"id": "valid"}, {"id": invalid_id}])
+
+
+def test_device_scoped_collection_deduplicates_ids_and_escapes_filters(monkeypatch):
+    calls = []
+    archived = []
+    progress = []
+    client = DefenderClient(
+        Settings().defender_api_base_url, Credential(),
+        lambda name, page, content: archived.append((name, page)),
+        progress_callback=progress.append,
+    )
+    monkeypatch.setattr(client.session, "get", lambda url, **kwargs: calls.append(url) or response({"value": []}))
+
+    _, status = client.collect_machine_vulnerabilities([{"id": "device'1"}, {"id": "device'1"}])
+
+    assert len(calls) == 1
+    assert parse_qs(urlsplit(calls[0]).query)["$filter"] == ["machineId eq 'device''1'"]
+    assert status["MachineCount"] == 1
+    assert archived == [("machine_vulnerabilities", 1)]
+    assert any("deduplicated 1 repeated inventory machine IDs" in message for message in progress)
+
+
+def test_device_scoped_collection_rejects_findings_for_another_device(monkeypatch):
+    client = DefenderClient(Settings().defender_api_base_url, Credential(), lambda *args: None)
+    monkeypatch.setattr(client.session, "get", lambda *args, **kwargs: response({"value": [{"machineId": "different-device"}]}))
+
+    with pytest.raises(DefenderApiError, match="different machine"):
+        client.collect_machine_vulnerabilities([{"id": "requested-device"}])
+
+
+def test_device_scoped_collection_requires_archiving_to_avoid_discarding_findings(monkeypatch):
+    client = DefenderClient(Settings().defender_api_base_url, Credential())
+    monkeypatch.setattr(client.session, "get", lambda *args, **kwargs: pytest.fail("No query without an archive"))
+
+    with pytest.raises(ValueError, match="requires a raw-page archive callback"):
+        client.collect_machine_vulnerabilities([{"id": "device-1"}])
+
+
+def test_empty_inventory_produces_a_replayable_empty_snapshot(device_scoped_run, tmp_path):
+    payloads, _, calls, _ = device_scoped_run
+    payloads["machines"].clear()
+    payloads["recommendations"].clear()
+
+    actual, statuses = collect_live(Settings().defender_api_base_url, Credential(), page_size=2)
+
+    assert actual["findings"] == []
+    assert all(not urlsplit(url).path.endswith("/machinesVulnerabilities") for url in calls)
+    run_folder = next((tmp_path / "output/raw").iterdir())
+    assert (run_folder / "derived_machine_vulnerabilities-page-0001.json.gz").is_file()
+    replayed, _ = replay_raw_snapshot(run_folder)
+    assert replayed == actual
+    status = next(row for row in statuses if row["Endpoint"] == "machine_vulnerabilities")
+    assert status["RowCount"] == 0
+    assert status["PageCount"] == 0
+    assert status["MachineCount"] == 0
+
+
+def test_retained_machine_pages_are_read_in_numeric_collection_order(tmp_path):
+    from vulnerability_view.live_collector import _iter_archived_endpoint_rows
+
+    for number in [9999, 10000, 10001]:
+        with gzip.open(tmp_path / f"machine_vulnerabilities-page-{number:04d}.json.gz", "wt") as handle:
+            json.dump({"value": [{"id": number}]}, handle)
+
+    assert [row["id"] for row in _iter_archived_endpoint_rows(tmp_path, "machine_vulnerabilities")] == [9999, 10000, 10001]
 
 
 def test_debug_cli_does_not_collect_or_access_storage(monkeypatch, capsys):

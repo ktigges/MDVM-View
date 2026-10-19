@@ -347,6 +347,17 @@ Deployment menu option **5** offers:
   require `COLLECT`, and collect the complete dataset with normal paging,
   retries, validation, and publication.
 
+For full baselines, complete collection retrieves the paged device inventory,
+CVE catalog, and recommendations first, then pages findings separately for
+each Defender machine ID. The request is
+`/api/vulnerabilities/machinesVulnerabilities?$filter=machineId eq '<id>'&$top=<page-size>`,
+not an unfiltered tenant-wide findings query. Progress names the current device
+and reports completed machines and aggregate rows. A failed device query aborts
+publication. Delta collection is unchanged. The **D → M** debug probe deliberately
+remains the original unfiltered one-request test; use **C** to exercise the
+device-scoped full baseline when no current baseline is published, or the existing
+full reconciliation action to force it when a baseline already exists.
+
 These choices apply only to this invocation. They do not modify Terraform,
 app settings, or the scheduled collector's default page size. The full
 reconciliation action also accepts a per-run page size and retains its `FULL`

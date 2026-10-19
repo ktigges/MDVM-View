@@ -284,11 +284,34 @@ when provided; otherwise, a full inventory page advances `$skip` while preservin
 filters until a short or empty page is returned. An exact page-size boundary
 requires a final empty request; 1,000 is a page size, not a total collection limit.
 
+Full collection first downloads the paged machine inventory, CVE catalog, and
+recommendations. It then retrieves machine-vulnerability findings separately for
+every distinct Defender machine ID using
+`/api/vulnerabilities/machinesVulnerabilities?$filter=machineId eq '<id>'&$top=1000`
+(or the selected page size). This avoids the unfiltered tenant-wide findings
+query. Device names are logged for identification; the filter uses IDs, not
+names. Scale-set instances and inactive devices returned by inventory are not
+excluded. Findings outside the returned device inventory cannot be discovered
+through this method; existing lifecycle handling for missing devices is unchanged.
+Each device is fully paged, including devices with zero findings, and progress
+reports completed machines and aggregate rows. A failed device query or findings
+returned for a different device fails the run before publication; no partial
+baseline is presented as complete.
+
+Raw findings page numbers continue across devices rather than restarting and
+overwriting earlier device evidence. An empty inventory produces an explicitly
+derived empty findings archive for replay, not a fabricated API response.
+More device requests can increase runtime and encounter throttling; existing
+bounded retries and the Function execution limit still apply. This is not a
+resumable or bulk-export implementation.
+
 Vulnerability deltas default to `pageSize=1000` and follow server continuation
 links. They do not use `$top`, which disables continuation on the delta export API.
 Manual complete collections can select a smaller per-run page size (1-1,000)
 through deployment menu option 5. Its default debug mode instead requests one
 page once and stops without archiving or publishing any data.
+The machine-findings debug probe remains an unfiltered, single-request
+diagnostic; it does not exercise the device-by-device complete-collection path.
 Recommendation-machine references and experimental routes have no documented
 manual page-size control; their server-provided next links are followed without
 inventing query parameters. Graph Secure Score intentionally requests only the
