@@ -184,6 +184,13 @@ probes, returns only non-secret service configuration, and does not access
 Azure Storage or load a dataset. The data-browser APIs additionally require
 the feature to be enabled and may require the `Data.Evidence.Reader` role.
 
+The health response includes `startedAtUtc`, the UTC time this application
+instance was initialized. It stays unchanged between requests and changes when
+a new application instance is created. It is not the collection snapshot time,
+deployment completion time, or a platform-wide restart timestamp; separate
+worker instances can report different values. Health responses use
+`Cache-Control: no-store` so startup checks do not reuse a cached timestamp.
+
 | Method and route | Retrieval or diagnostic purpose |
 |---|---|
 | `GET /api/health` | Public liveness endpoint used by App Service Health Check. It confirms server availability and non-secret configuration without forcing a dataset download. |

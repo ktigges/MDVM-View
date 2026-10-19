@@ -1,11 +1,13 @@
 import asyncio
 import base64
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
 
+from vulnerability_view import dashboard_server
 from vulnerability_view.config import Settings
 from vulnerability_view.dashboard_server import (
     DashboardDataStore,
@@ -290,6 +292,38 @@ def test_dashboard_health_is_available_to_app_service_without_user_identity(
 
     assert status == 200
     assert json.loads(body)["status"] == "ok"
+
+
+def test_health_start_time_is_utc_stable_and_changes_for_a_new_instance(monkeypatch, tmp_path: Path):
+    (tmp_path / "dashboard").mkdir()
+    current_time = datetime(2026, 10, 19, 17, 30, tzinfo=timezone.utc)
+
+    class StartupClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is timezone.utc
+            return current_time
+
+    monkeypatch.setattr(dashboard_server, "datetime", StartupClock)
+    monkeypatch.setattr(
+        DashboardDataStore, "status",
+        lambda self: pytest.fail("Health must not load the current manifest"),
+    )
+    app = create_app(Settings(dashboard_data_source="local"), project_root=tmp_path)
+
+    first_status, headers, first_body = asgi_response(app, "/api/health")
+    current_time = datetime(2026, 10, 19, 17, 45, tzinfo=timezone.utc)
+    second_status, second_body = asgi_get(app, "/api/health")
+    assert first_status == second_status == 200
+    assert json.loads(first_body)["startedAtUtc"] == "2026-10-19T17:30:00Z"
+    assert json.loads(second_body)["startedAtUtc"] == "2026-10-19T17:30:00Z"
+    assert headers[b"cache-control"] == b"no-store"
+
+    current_time = datetime(2026, 10, 19, 18, 0, tzinfo=timezone.utc)
+    restarted_app = create_app(Settings(dashboard_data_source="local"), project_root=tmp_path)
+    status, body = asgi_get(restarted_app, "/api/health")
+    assert status == 200
+    assert json.loads(body)["startedAtUtc"] == "2026-10-19T18:00:00Z"
 
 
 def test_dashboard_rejects_client_secret_mode_on_azure_host(monkeypatch, tmp_path: Path):
