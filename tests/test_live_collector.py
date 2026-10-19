@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 import requests
 import pytest
 
+from vulnerability_view.config import Settings
 from vulnerability_view.defender_client import ENDPOINTS, DefenderApiError, DefenderClient, Endpoint, collection_endpoints, collection_page_size, probe_defender_page
 from vulnerability_view.live_collector import apply_vulnerability_delta, merge_vulnerability_delta, normalize_live, recommendation_requires_api_enrichment, reconcile_live_findings, replay_raw_snapshot
 
@@ -411,23 +412,44 @@ def test_debug_probe_never_retries_failures(monkeypatch, failure):
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("endpoint,path,count", [
-    ("machine_vulnerabilities", "/api/vulnerabilities/machinesVulnerabilities", 10),
-    ("vulnerabilities", "/api/vulnerabilities", 1000),
+@pytest.mark.parametrize("endpoint,path", [
+    ("machine_vulnerabilities", "/api/vulnerabilities/machinesVulnerabilities"),
+    ("vulnerabilities", "/api/vulnerabilities"),
 ])
-def test_debug_calls_requested_regional_host_and_selected_dataset(monkeypatch, endpoint, path, count):
+@pytest.mark.parametrize("count", [1, 10, 100, 1000])
+@pytest.mark.parametrize("trailing_slash", ["", "/"])
+def test_debug_calls_requested_regional_host_and_selected_dataset(monkeypatch, endpoint, path, count, trailing_slash):
     calls = []
     progress = []
     monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: calls.append(url) or response({"value": []}))
 
     report = probe_defender_page(
-        "https://api-us3.securitycenter.microsoft.com", Credential(), count,
+        Settings().defender_api_base_url + trailing_slash, Credential(), count,
         progress.append, endpoint=endpoint,
     )
 
     assert calls == [f"https://api-us3.securitycenter.microsoft.com{path}?%24top={count}"]
+    assert requests.Request("GET", calls[0]).prepare().url == calls[0]
     assert report["Endpoint"] == endpoint
     assert calls[0] in progress[0]
+
+
+@pytest.mark.parametrize("endpoint_name,path", [
+    ("machine_vulnerabilities", "/api/vulnerabilities/machinesVulnerabilities"),
+    ("vulnerabilities", "/api/vulnerabilities"),
+])
+@pytest.mark.parametrize("count", [1, 100, 1000])
+def test_complete_collection_uses_exact_regional_dataset_uri(monkeypatch, endpoint_name, path, count):
+    calls = []
+    client = DefenderClient(Settings().defender_api_base_url, Credential(), page_size=count)
+    monkeypatch.setattr(client.session, "get", lambda url, **kwargs: calls.append(url) or response({"value": []}))
+    endpoint = next(item for item in ENDPOINTS if item.name == endpoint_name)
+
+    _, report = client.collect(endpoint)
+
+    assert calls == [f"https://api-us3.securitycenter.microsoft.com{path}?%24top={count}"]
+    assert requests.Request("GET", calls[0]).prepare().url == calls[0]
+    assert report["Status"] == "Success"
 
 
 def test_debug_cli_does_not_collect_or_access_storage(monkeypatch, capsys):
