@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+import requests
 from azure.core.exceptions import ResourceNotFoundError
 
 import function_app
@@ -106,6 +107,30 @@ def test_debug_dataprep_bypasses_workspace_and_publication(monkeypatch):
 
     assert function_app._run_dataprep(page_size=1, debug=True) == 0
     assert calls == [["probe-live", "--page-size", "1", "--endpoint", "machine_vulnerabilities"]]
+
+
+def test_debug_function_logs_actual_successful_api_result(monkeypatch, caplog, capsys):
+    from vulnerability_view import dataprep_cli
+
+    class Credential:
+        def get_token(self, scope):
+            return type("Token", (), {"token": "not-a-real-token"})()
+
+    caplog.set_level("INFO")
+    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: function_app.Settings(defender_api_base_url="https://example.test"))
+    monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
+    result = requests.Response()
+    result.status_code = 200
+    result._content = b'{"value":[{"id":"finding"}]}'
+    monkeypatch.setattr(requests.Session, "get", lambda *args, **kwargs: result)
+    monkeypatch.setattr(function_app.tempfile, "TemporaryDirectory", lambda **kwargs: pytest.fail("Debug must not create a collection workspace"))
+
+    function_app.dataprep_debug_page('{"endpoint":"vulnerabilities","pageSize":1}')
+
+    assert "[debug] PASSED: API call returned HTTP 200" in caplog.text
+    assert "endpoint=vulnerabilities; 1 rows received" in caplog.text
+    assert '"Status": "PASSED"' in capsys.readouterr().out
+    assert "not-a-real-token" not in caplog.text
 
 
 @pytest.mark.parametrize("payload", ['{"pageSize":1000,"endpoint":"vulnerabilities"}', '{"endpoint":"vulnerabilities"}'])

@@ -393,9 +393,10 @@ def test_debug_probe_requests_once_and_ignores_continuation(monkeypatch):
     assert "one" not in report.values()
 
 
-@pytest.mark.parametrize("failure", ["timeout", 429, 503, 403])
-def test_debug_probe_never_retries_failures(monkeypatch, failure):
+@pytest.mark.parametrize("failure", ["timeout", 400, 401, 429, 503, 403])
+def test_debug_probe_never_retries_failures(monkeypatch, failure, caplog):
     calls = []
+    progress = []
 
     def get(self, url, **kwargs):
         calls.append(url)
@@ -408,10 +409,92 @@ def test_debug_probe_never_retries_failures(monkeypatch, failure):
     monkeypatch.setattr(requests.Session, "get", get)
     monkeypatch.setattr("vulnerability_view.defender_client.time.sleep", lambda delay: pytest.fail("Debug must never retry"))
 
-    with pytest.raises((requests.ReadTimeout, DefenderApiError)):
-        probe_defender_page("https://example.test", Credential(), 1)
+    with pytest.raises((requests.RequestException, DefenderApiError)):
+        probe_defender_page("https://example.test", Credential(), 1, progress.append)
 
     assert len(calls) == 1
+    assert "[debug] FAILED: API test did not succeed" in progress[-1]
+    assert "[debug] FAILED:" in caplog.text
+    assert "[debug] PASSED:" not in caplog.text
+    assert "not-a-real-token" not in caplog.text
+
+
+@pytest.mark.parametrize("endpoint", ["machine_vulnerabilities", "vulnerabilities"])
+@pytest.mark.parametrize("rows", [[], [{"id": "finding"}]])
+def test_debug_pass_is_explicit_and_logged_only_after_http_and_body_validation(monkeypatch, caplog, endpoint, rows):
+    caplog.set_level("INFO")
+    progress = []
+    monkeypatch.setattr(requests.Session, "get", lambda *args, **kwargs: response({"value": rows}))
+
+    report = probe_defender_page("https://example.test", Credential(), 1, progress.append, endpoint=endpoint)
+
+    assert report["Status"] == "PASSED"
+    assert report["HttpStatus"] == 200
+    assert report["RowCount"] == len(rows)
+    assert report["RequestUrl"] in progress[-1]
+    assert "[debug] PASSED: API call returned HTTP 200" in progress[-1]
+    assert f"{len(rows)} rows received (requested up to 1)" in progress[-1]
+    assert f"endpoint={endpoint}" in progress[-1]
+    assert "valid JSON response" in progress[-1]
+    assert ("EMPTY RESULT" in progress[-1]) == (not rows)
+    assert progress[-1] in caplog.text
+    assert "not-a-real-token" not in caplog.text
+    assert "[debug] FAILED:" not in caplog.text
+
+
+@pytest.mark.parametrize("payload", [{}, {"value": "invalid"}, {"value": [1]}, {"value": [{}, {}]}, []])
+def test_debug_invalid_body_reports_failed_and_never_passes(monkeypatch, caplog, payload):
+    caplog.set_level("INFO")
+    progress = []
+    monkeypatch.setattr(requests.Session, "get", lambda *args, **kwargs: response(payload))
+
+    with pytest.raises(DefenderApiError, match="invalid"):
+        probe_defender_page("https://example.test", Credential(), 1, progress.append)
+
+    assert "[debug] FAILED:" in progress[-1]
+    assert "[debug] FAILED:" in caplog.text
+    assert "[debug] PASSED:" not in caplog.text
+
+
+def test_debug_invalid_json_reports_failed_and_propagates_exception(monkeypatch, caplog):
+    result = response({})
+    result._content = b"not JSON"
+    monkeypatch.setattr(requests.Session, "get", lambda *args, **kwargs: result)
+
+    with pytest.raises(requests.exceptions.JSONDecodeError):
+        probe_defender_page("https://example.test", Credential(), 1)
+
+    assert "[debug] FAILED:" in caplog.text
+    assert "[debug] PASSED:" not in caplog.text
+
+
+def test_debug_accepted_response_is_not_reported_as_a_completed_api_test(monkeypatch, caplog):
+    result = response({"value": []})
+    result.status_code = 202
+    monkeypatch.setattr(requests.Session, "get", lambda *args, **kwargs: result)
+
+    with pytest.raises(DefenderApiError, match="unexpected HTTP 202"):
+        probe_defender_page("https://example.test", Credential(), 1)
+
+    assert "[debug] FAILED:" in caplog.text
+    assert "[debug] PASSED:" not in caplog.text
+
+
+def test_debug_authentication_failure_is_explicit_without_an_http_request(monkeypatch, caplog):
+    from azure.core.exceptions import ClientAuthenticationError
+
+    class FailedCredential:
+        def get_token(self, scope):
+            raise ClientAuthenticationError("Managed identity token unavailable")
+
+    monkeypatch.setattr(requests.Session, "get", lambda *args, **kwargs: pytest.fail("No request without authentication"))
+
+    with pytest.raises(ClientAuthenticationError):
+        probe_defender_page("https://example.test", FailedCredential(), 1)
+
+    assert "[debug] FAILED:" in caplog.text
+    assert "ClientAuthenticationError" in caplog.text
+    assert "[debug] PASSED:" not in caplog.text
 
 
 @pytest.mark.parametrize("endpoint,path", [

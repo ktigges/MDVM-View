@@ -1846,7 +1846,7 @@ def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch):
     (False, False, "dataprep_manual_snapshot"),
     (False, True, "dataprep_full_snapshot"),
 ])
-def test_manual_invoke_forwards_page_size_to_correct_trigger(monkeypatch, debug, full, expected):
+def test_manual_invoke_forwards_page_size_to_correct_trigger(monkeypatch, capsys, debug, full, expected):
     calls = []
     monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
     monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="host-key\n"))
@@ -1863,6 +1863,14 @@ def test_manual_invoke_forwards_page_size_to_correct_trigger(monkeypatch, debug,
     assert calls[0][0].endswith(f"/admin/functions/{expected}")
     expected_payload = {"pageSize": 1, "endpoint": "machine_vulnerabilities"} if debug else {"pageSize": 1}
     assert json.loads(calls[0][1]["json"]["input"]) == expected_payload
+    output = capsys.readouterr().out
+    assert "does not confirm collection success" in output
+    if debug:
+        assert "DEBUG RESULT: PENDING" in output
+        assert "Trigger acceptance is not an API test pass" in output
+        assert "No result line means the outcome is not yet confirmed" in output
+    else:
+        assert "DEBUG RESULT" not in output
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "1001", "1.5", "abc"])

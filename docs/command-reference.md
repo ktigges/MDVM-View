@@ -376,6 +376,31 @@ a full collection on an older deployed Function. Deploy updated Function code
 before using it. Trigger acceptance is not debug completion; inspect informational
 Function logs for `[debug]` messages or the final exception.
 
+Debug results are explicit and are emitted through both progress output and
+application logging (so they can appear in `AppTraces`):
+
+```text
+[debug] PASSED: API call returned HTTP 200; endpoint=vulnerabilities; 1 rows received (requested up to 1); valid JSON response; ...; no data published
+[debug] FAILED: API test did not succeed; endpoint=machine_vulnerabilities; ReadTimeout: ...; no data published
+```
+
+`PASSED` requires HTTP 200 and a validated collection response. An empty list
+still means the API call passed, but is explicitly labeled `EMPTY RESULT`; it
+does not prove that findings exist. Authentication failures, HTTP errors,
+timeouts, and malformed or oversized responses log `FAILED` and propagate the
+error. Trigger acceptance remains `PENDING`, not a successful API result.
+Neither result means a full collection completed or a snapshot was published.
+In the Function's linked workspace, query without an operation-ID filter:
+
+```kusto
+AppTraces
+| where TimeGenerated > ago(1h)
+| where AppRoleName =~ "<function-app-name>"
+| where Message contains "[debug] PASSED:" or Message contains "[debug] FAILED:"
+| project TimeGenerated, Message
+| order by TimeGenerated desc
+```
+
 The debug API request is:
 
 ```http
