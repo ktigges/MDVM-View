@@ -1429,17 +1429,117 @@ def test_web_package_stamps_version_revision_and_cache_keys(tmp_path: Path):
     assert html.count("?v=20261008150000") == 3
 
 
-def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, tmp_path: Path):
+@pytest.mark.parametrize("reverse", [False, True])
+def test_webapp_onedeploy_normalizes_numeric_history_and_selects_newest(monkeypatch, reverse):
+    payload = {
+        "value": [
+            {"properties": {
+                "id": "older-active-deployment",
+                "status": 4,
+                "active": True,
+                "complete": True,
+                "start_time": "2026-10-13T23:32:28.2137438Z",
+            }},
+            {"properties": {
+                "id": "new-deployment",
+                "status": 4,
+                "active": False,
+                "complete": True,
+                "start_time": "2026-10-19T17:35:44.6548457Z",
+                "end_time": "2026-10-19T17:36:15.2034945Z",
+                "build_summary": {"errors": [], "warnings": []},
+            }},
+        ],
+    }
+    if reverse:
+        payload["value"].reverse()
+    monkeypatch.setattr(
+        operations_cli, "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload)),
+    )
+
+    deployment, error = operations_cli._webapp_onedeploy_status("/resource/id")
+
+    assert error == ""
+    assert deployment["deploymentId"] == "new-deployment"
+    assert deployment["status"] == "BuildSuccessful"
+    assert deployment["end_time"] == "2026-10-19T17:36:15.2034945Z"
+    assert deployment["errors"] == []
+
+
+@pytest.mark.parametrize("status, expected", [
+    (0, "Pending"), (1, "Building"), (2, "Deploying"),
+    (3, "BuildFailed"), (4, "BuildSuccessful"), ("4", "BuildSuccessful"),
+    ("PostBuildRestartRequired", "PostBuildRestartRequired"),
+    ("RuntimeSuccessful", "RuntimeSuccessful"),
+])
+def test_webapp_onedeploy_normalizes_status_without_claiming_runtime_success(monkeypatch, status, expected):
+    payload = {"properties": {
+        "id": "deployment-test",
+        "status": status,
+        "build_summary": {"errors": ["example build error"]},
+    }}
+    monkeypatch.setattr(
+        operations_cli, "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload)),
+    )
+
+    deployment, error = operations_cli._webapp_onedeploy_status("/resource/id")
+
+    assert error == ""
+    assert deployment["deploymentId"] == "deployment-test"
+    assert deployment["status"] == expected
+    assert deployment["errors"] == ["example build error"]
+
+
+@pytest.mark.parametrize("payload", [
+    None,
+    {"value": "not a list"},
+    {"value": [{}]},
+    {"value": [{"properties": {"id": "deployment-test", "status": 4, "complete": False}}]},
+])
+def test_webapp_onedeploy_reports_invalid_response_shapes(monkeypatch, payload):
+    monkeypatch.setattr(
+        operations_cli, "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload)),
+    )
+
+    deployment, error = operations_cli._webapp_onedeploy_status("/resource/id")
+
+    assert deployment == {}
+    assert error
+
+
+def test_webapp_onedeploy_allows_empty_history_before_first_deployment(monkeypatch):
+    monkeypatch.setattr(
+        operations_cli, "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='{"value":[]}'),
+    )
+
+    assert operations_cli._webapp_onedeploy_status("/resource/id") == ({}, "")
+
+
+@pytest.mark.parametrize("replacement_status", [None, 3, 4])
+def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, tmp_path: Path, replacement_status):
     calls: list[tuple[object, ...]] = []
-    statuses = iter([
-        ({"deploymentId": "previous-deployment", "status": "RuntimeSuccessful"}, ""),
-        ({"deploymentId": "new-deployment", "status": "BuildSuccessful"}, ""),
+    responses = iter([
+        None if replacement_status is None else {"value": [{"properties": {
+            "id": "previous-deployment", "status": 4, "complete": True,
+            "start_time": "2026-10-13T23:32:28Z",
+        }}]},
+        {"value": [{"properties": {
+            "id": "new-deployment", "status": replacement_status, "complete": True,
+            "start_time": "2026-10-19T17:35:44Z",
+        }}]},
     ])
 
     def fake_az(*args, **kwargs):
         calls.append(args)
-        stdout = "/subscriptions/test/resourceGroups/rg-test/providers/Microsoft.Web/sites/app-test\n" \
-            if args[:2] == ("webapp", "show") else ""
+        if args[0] == "rest":
+            stdout = json.dumps(next(responses))
+        else:
+            stdout = "/subscriptions/test/resourceGroups/rg-test/providers/Microsoft.Web/sites/app-test\n" \
+                if args[:2] == ("webapp", "show") else ""
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
@@ -1453,7 +1553,19 @@ def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, 
     monkeypatch.setattr(operations_cli, "_zip_tree", lambda *args, **kwargs: None)
     monkeypatch.setattr(operations_cli, "_stamp_web_package", lambda *args, **kwargs: None)
     monkeypatch.setattr(operations_cli, "_az", fake_az)
-    monkeypatch.setattr(operations_cli, "_webapp_onedeploy_status", lambda *args: next(statuses))
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda *args: pytest.fail("Completed numeric deployment must not keep polling"))
+
+    if replacement_status is None:
+        with pytest.raises(RuntimeError, match="Could not inspect the previous Web App deployment"):
+            operations_cli.deploy_webapp()
+        assert not any(call[:2] == ("webapp", "deploy") for call in calls)
+        return
+    if replacement_status == 3:
+        with pytest.raises(RuntimeError, match="BuildFailed"):
+            operations_cli.deploy_webapp()
+        assert not any(call[:2] in {("webapp", "restart"), ("webapp", "start")} for call in calls)
+        assert not any(call[:4] == ("webapp", "config", "appsettings", "set") for call in calls)
+        return
 
     operations_cli.deploy_webapp()
 
@@ -1462,11 +1574,14 @@ def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, 
         index for index, call in enumerate(calls)
         if call[:4] == ("webapp", "config", "appsettings", "set")
     )
-    start_index = next(index for index, call in enumerate(calls) if call[:2] == ("webapp", "start"))
+    restart_index = next(index for index, call in enumerate(calls) if call[:2] == ("webapp", "restart"))
     assert calls[deploy_index][calls[deploy_index].index("--restart") + 1] == "false"
     assert calls[deploy_index][calls[deploy_index].index("--async") + 1] == "true"
-    assert calls[deploy_index][calls[deploy_index].index("--track-status") + 1] == "true"
-    assert deploy_index < settings_index < start_index
+    assert calls[deploy_index][calls[deploy_index].index("--track-status") + 1] == "false"
+    assert calls[deploy_index][calls[deploy_index].index("--timeout") + 1] == "600000"
+    status_indexes = [index for index, call in enumerate(calls) if call[0] == "rest"]
+    assert status_indexes[0] < deploy_index < status_indexes[1] < settings_index < restart_index
+    assert not any(call[:2] == ("webapp", "start") for call in calls)
     assert not any(call[:4] == ("webapp", "log", "deployment", "list") for call in calls)
 
 

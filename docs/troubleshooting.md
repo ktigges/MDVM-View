@@ -148,6 +148,15 @@ and Terraform do not delete retained paths.
 | ZipDeploy returns HTTP 504 | The client can time out while Kudu continues. Inspect the newest deployment record before retrying. Do not start a second deployment while the newest Kudu record is still building. |
 | Function code changed but infrastructure did not | Run `tfdeploy function`, then `tfverify function`; do not create a new Terraform plan solely for code. |
 | Dashboard code changed but infrastructure did not | Run `tfdeploy webapp`, then `tfverify webapp`. |
+| Web App deployment waits at “Starting the site” while the old app still answers | Runtime tracking must not wait for startup while restart is deliberately deferred. The deployment menus disable CLI runtime tracking, wait for the new OneDeploy build to finish, update the version setting, and explicitly restart the app. A successful build alone does not prove the new application instance is serving. |
+
+OneDeploy can return deployment history as `value[].properties`, rather than
+a single runtime-status object. The menus select the newest record by deployment
+time, compare its `id` with the previous deployment, and interpret numeric status
+`4` as build/deployment success and `3` as failure. They also support named runtime
+statuses. Do not project only top-level `properties` when inspecting a history
+response: that projection hides the records. An older successful deployment does
+not confirm the replacement succeeded.
 
 Inspect a Web App deployment:
 

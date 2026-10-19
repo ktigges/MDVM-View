@@ -21,6 +21,15 @@ def menu_sources() -> tuple[str, str]:
     return SHELL_MENU.read_text(encoding="utf-8"), POWERSHELL_MENU.read_text(encoding="utf-8")
 
 
+def test_legacy_webapp_deployment_defers_runtime_tracking_until_explicit_restart():
+    deploy = SHELL_DEPLOY.read_text(encoding="utf-8")
+    deployment = deploy.split('--track-status false', 1)[1]
+
+    assert "--timeout 600000" in deployment
+    assert deployment.index('DASHBOARD_VERSION=$dashboard_version') < deployment.index("az webapp restart")
+    assert "az webapp start " not in deployment
+
+
 def test_deployment_menus_expose_matching_options_and_confirmations():
     shell, powershell = menu_sources()
     options = (
@@ -204,9 +213,9 @@ def test_powershell_menu_preserves_python_executable_as_one_value():
 def test_deployment_menus_show_version_and_revision_in_title():
     shell, powershell = menu_sources()
 
-    assert 'DEPLOYMENT_MENU_VERSION="2026.10.19.3"' in shell
+    assert 'DEPLOYMENT_MENU_VERSION="2026.10.19.4"' in shell
     assert 'Vulnerability View deployment menu %s (revision %s)' in shell
-    assert '$DeploymentMenuVersion = "2026.10.19.3"' in powershell
+    assert '$DeploymentMenuVersion = "2026.10.19.4"' in powershell
     assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
 

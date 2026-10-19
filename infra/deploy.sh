@@ -381,7 +381,7 @@ PY
         --clean true \
         --restart false \
         --track-status false \
-        --timeout 600 \
+        --timeout 600000 \
         --output none
       deploy_exit=$?
       set -e
@@ -421,7 +421,7 @@ PY
         --name "$web_app" \
         --settings "DASHBOARD_VERSION=$dashboard_version" \
         --output none
-      az webapp start \
+      az webapp restart \
         --resource-group "$resource_group" \
         --name "$web_app" \
         --output none
