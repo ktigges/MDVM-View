@@ -243,7 +243,71 @@ def test_log_query_has_bounded_timeout(monkeypatch):
         ("extension", "show", "--name", "log-analytics", "--output", "none"),
         {"check": False, "capture": True},
     )
-    assert captured[1][1] == {"capture": True, "timeout": 90}
+    assert captured[1][1] == {"capture": True, "check": False, "timeout": 90}
+
+
+def test_log_query_surfaces_captured_azure_error(monkeypatch):
+    responses = iter([
+        subprocess.CompletedProcess((), 0, stdout=""),
+        subprocess.CompletedProcess((), 1, stdout="", stderr="BadArgumentError: invalid KQL column"),
+    ])
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: next(responses))
+
+    with pytest.raises(RuntimeError, match="BadArgumentError: invalid KQL column"):
+        operations_cli._log_query("workspace-id", "subscription-id", "AppTraces | take 1")
+
+
+def test_log_query_rejects_missing_output(monkeypatch):
+    monkeypatch.setattr(
+        operations_cli, "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess((), 0, stdout=""),
+    )
+
+    with pytest.raises(RuntimeError, match="returned no JSON"):
+        operations_cli._log_query("workspace-id", "subscription-id", "AppTraces | take 1")
+
+
+def test_function_telemetry_includes_uncorrelated_host_and_deployment_logs(monkeypatch):
+    queries = []
+    rows = [
+        {
+            "SourceTable": "AppTraces",
+            "AppRoleName": "func-test",
+            "OperationId": "",
+            "Message": "[storage] uploaded 156/156 durable run files (100.0%)",
+        },
+        {
+            "SourceTable": "AppTraces",
+            "AppRoleName": "",
+            "Properties": '{"deploymentId":"deployment-test"}',
+            "Message": "Deployment logs were not retained after instance recycling.",
+        },
+    ]
+
+    def fake_query(workspace, subscription, query, *, timespan):
+        queries.append((workspace, subscription, query, timespan))
+        return rows
+
+    monkeypatch.setattr(operations_cli, "_log_query", fake_query)
+    values = {
+        "subscription_id": "sub-test",
+        "resource_group_name": "rg-test",
+        "function_app_name": "func-test",
+        "_application_insights_resource_id": "/insights/linked-test",
+    }
+
+    assert operations_cli._function_telemetry_rows(values, "workspace-test", 168, 500) == rows
+    workspace, subscription, query, timespan = queries[0]
+    assert (workspace, subscription, timespan) == ("workspace-test", "sub-test", "PT168H")
+    assert "union isfuzzy=true withsource=SourceTable" in query
+    for table in ("AppTraces", "AppExceptions", "AppDependencies", "FunctionAppLogs", "AzureDiagnostics"):
+        assert table in query
+    assert "OperationId in" not in query
+    assert "Message startswith" not in query
+    assert 'isempty(TelemetryRole)' in query
+    assert '"/insights/linked-test"' in query
+    assert '"/subscriptions/sub-test/resourceGroups/rg-test/providers/Microsoft.Web/sites/func-test"' in query
+    assert "take 500" in query
 
 
 def test_log_query_applies_explicit_timespan(monkeypatch):
@@ -317,6 +381,7 @@ def test_workspace_context_uses_application_insights_workspace(monkeypatch):
 
     assert values["function_app_name"] == "function-test"
     assert workspace_id == "workspace-customer-id"
+    assert values["_application_insights_resource_id"].endswith("/insights-test")
     assert json_calls[0][:2] == ("functionapp", "show")
     assert json_calls[1][:2] == ("resource", "show")
     assert "microsoft.insights/components/insights-test" in json_calls[1][json_calls[1].index("--ids") + 1]
@@ -339,6 +404,34 @@ def test_workspace_context_requires_linked_application_insights(monkeypatch):
 
     with pytest.raises(RuntimeError, match="linked Application Insights"):
         operations_cli._workspace_context()
+
+
+@pytest.mark.parametrize("workspace_id", ["workspace-test", ""])
+def test_workspace_override_preserves_link_for_roleless_deployment_logs(monkeypatch, workspace_id):
+    monkeypatch.setenv("LOG_ANALYTICS_WORKSPACE_NAME", "log-test")
+    monkeypatch.setattr(operations_cli, "_values", lambda: {
+        "subscription_id": "sub-test",
+        "resource_group_name": "rg-test",
+        "function_app_name": "func-test",
+    })
+    monkeypatch.setattr(operations_cli, "_az_json", lambda *args: {
+        "tags": {"hidden-link: /app-insights-resource-id": "/insights/test"},
+    })
+    calls = []
+
+    def fake_az(*args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout=workspace_id)
+
+    monkeypatch.setattr(operations_cli, "_az", fake_az)
+    if workspace_id:
+        values, resolved_id = operations_cli._workspace_context()
+        assert resolved_id == workspace_id
+        assert values["_application_insights_resource_id"] == "/insights/test"
+        assert calls[0][calls[0].index("--workspace-name") + 1] == "log-test"
+    else:
+        with pytest.raises(RuntimeError, match="selected Log Analytics workspace has no customer ID"):
+            operations_cli._workspace_context()
 
 
 def test_log_query_reports_missing_extension(monkeypatch):
@@ -517,10 +610,9 @@ def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, caps
         [request],
         [{
             "TimeGenerated": "2026-10-14T05:10:00Z",
-            "Kind": "Trace",
-            "Detail": "[publication] runId=live-test status=Success",
+            "SourceTable": "AppTraces",
+            "Message": "[publication] runId=live-test status=Success",
         }],
-        [],
     ])
     monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
 
@@ -534,10 +626,44 @@ def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, caps
     assert "Reported issues:   0" in output
     assert "Duration:  unavailable" in output
     assert "Result:    0" in output
-    assert "Collector execution evidence:" in output
+    assert "Function telemetry (execution, host, and deployment):" in output
     assert "[publication] runId=live-test status=Success" in output
-    assert "Function platform evidence:" in output
-    assert "No Function host or platform failure evidence was retained" in output
+    assert "Telemetry records shown: 1" in output
+
+
+def test_detailed_logs_render_host_errors_without_invocation_or_operation_id(monkeypatch, capsys):
+    values = {"function_app_name": "func-test", "subscription_id": "sub-test"}
+    responses = iter([[], [], [], []])
+    monkeypatch.setattr(operations_cli, "_workspace_context", lambda: (values, "workspace-test"))
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {"published": False})
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(operations_cli, "_function_telemetry_rows", lambda *args: [
+        {
+            "TimeGenerated": "2026-10-19T12:00:00Z",
+            "SourceTable": "AppExceptions",
+            "ExceptionType": "ModuleNotFoundError",
+            "OuterMessage": "No module named 'example'",
+            "Details": '[{"rawStack":"worker startup stack"}]',
+            "OperationId": "",
+        },
+        {
+            "TimeGenerated": "2026-10-19T12:00:01Z",
+            "SourceTable": "FunctionAppLogs",
+            "Message": "Worker failed to index functions",
+        },
+    ])
+
+    operations_cli.check_function_logs(168, 25, False)
+
+    output = capsys.readouterr().out
+    assert "No invocation was found" in output
+    assert "No collector request records" in output
+    assert "ModuleNotFoundError" in output
+    assert "No module named 'example'" in output
+    assert "worker startup stack" in output
+    assert "Worker failed to index functions" in output
+    assert "workspace-test" in output
+    assert "sub-test" in output
 
 
 def test_function_status_prefers_newer_authoritative_publication(monkeypatch, capsys):
@@ -820,7 +946,7 @@ def test_export_function_logs_writes_timestamped_diagnostics(monkeypatch, tmp_pa
     output = capsys.readouterr().out
     assert "collector-sanitized-logs.json" in output
     assert "collector-sanitized-platform-failures.json" in output
-    assert "Collector records exported: 1 (1 requests, 0 correlated records)" in output
+    assert "Collector records exported: 1 (1 requests, 0 execution/host/deployment records)" in output
     assert "Application request records scanned: 2" in output
 
 
@@ -889,7 +1015,7 @@ def test_export_uses_proven_manual_query_shape_and_filters_locally(monkeypatch, 
     assert "OperationId, DurationMs" in correlation_query
     assert correlation_timespan == "PT24H"
     output = capsys.readouterr().out
-    assert "Collector records exported: 18 (18 requests, 0 correlated records)" in output
+    assert "Collector records exported: 18 (18 requests, 0 execution/host/deployment records)" in output
     assert "Application request records scanned: 18" in output
 
 
@@ -919,6 +1045,70 @@ def test_export_refuses_silent_empty_when_apprequests_count_is_nonzero(monkeypat
         operations_cli.export_function_logs(24)
 
     assert list((tmp_path / "output" / "diagnostics").glob("*/collector-sanitized-logs.json")) == []
+
+
+def test_export_keeps_uncorrelated_logs_when_no_request_was_recorded(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(operations_cli, "_workspace_context", lambda: ({
+        "subscription_id": "subscription-test",
+        "resource_group_name": "resource-group-test",
+        "function_app_name": "function-test",
+    }, "workspace-test"))
+    responses = iter([[], [{"AppRequestCount": "0"}]])
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
+    telemetry_calls = []
+
+    def telemetry(values, workspace, hours, limit):
+        telemetry_calls.append((workspace, hours, limit))
+        return [
+            {
+                "TimeGenerated": "2026-10-13T23:41:56Z",
+                "SourceTable": "AppTraces",
+                "OperationId": "",
+                "AppRoleName": "",
+                "Message": "[storage] uploaded 156/156 durable run files (100.0%)",
+            },
+            {
+                "TimeGenerated": "2026-10-19T12:00:00Z",
+                "SourceTable": "AppExceptions",
+                "Details": [{"rawStack": "Worker failed for user@example.com"}],
+            },
+        ]
+
+    monkeypatch.setattr(operations_cli, "_function_telemetry_rows", telemetry)
+    monkeypatch.setattr(
+        operations_cli, "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="/function/id"),
+    )
+    monkeypatch.setattr(operations_cli, "_az_json", lambda *args: [])
+
+    output_directory = operations_cli.export_function_logs(168)
+
+    records = json.loads((output_directory / "collector-sanitized-logs.json").read_text())
+    assert len(records) == 2
+    assert records[0]["Message"].startswith("[storage] uploaded 156/156")
+    assert records[0]["OperationId"] == ""
+    assert records[1]["Details"] == [{"rawStack": "Worker failed for [REDACTED_EMAIL]"}]
+    assert telemetry_calls == [("workspace-test", 168, 5000)]
+    assert "0 requests, 2 execution/host/deployment records" in capsys.readouterr().out
+
+
+def test_detailed_logs_explain_empty_results_and_record_limits(capsys):
+    operations_cli._print_function_telemetry([], 100)
+    output = capsys.readouterr().out
+    assert "not a health check success" in output
+    assert "seven-day menu options" in output
+    assert "Telemetry records shown: 0" in output
+
+    operations_cli._print_function_telemetry([{
+        "TimeGenerated": "2026-10-19T12:00:00Z",
+        "SourceTable": "AppTraces",
+        "SeverityLevel": "0",
+        "Message": "Starting worker",
+    }], 1)
+    output = capsys.readouterr().out
+    assert "level=0" in output
+    assert "Record limit reached" in output
 
 
 def test_require_prefers_repository_local_terraform_exe(monkeypatch, tmp_path: Path):

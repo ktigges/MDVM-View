@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DEPLOYMENT_MENU_VERSION="2026.10.14.7"
+DEPLOYMENT_MENU_VERSION="2026.10.19.1"
 
 resolve_python() {
   if [[ -n "${PYTHON:-}" ]]; then
@@ -117,6 +117,8 @@ Operations and diagnostics
   7) Verify Function and Web App
   8) Force full vulnerability and relationship reconciliation
   9) Return to deployment menu
+  10) Show Function execution, host, and deployment logs for the last 7 days
+  11) Pull sanitized Function logs for the last 7 days
 EOF
     printf 'Select an option: '
     read -r operations_choice
@@ -130,7 +132,9 @@ EOF
       7) verify_all; pause_menu ;;
       8) invoke_collection full; pause_menu ;;
       9) return ;;
-      *) printf 'Select a number from 1 through 9.\n' ;;
+      10) run_cli check-function-logs --hours 168 --limit 25; pause_menu ;;
+      11) run_cli export-function-logs --hours 168; pause_menu ;;
+      *) printf 'Select a number from 1 through 11.\n' ;;
     esac
   done
 }

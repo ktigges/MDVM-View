@@ -5,7 +5,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
-$DeploymentMenuVersion = "2026.10.14.7"
+$DeploymentMenuVersion = "2026.10.19.1"
 $RequiredAzureCliExtensions = @("log-analytics")
 
 function Test-PythonCommand {
@@ -228,6 +228,8 @@ Operations and diagnostics
   7) Verify Function and Web App
   8) Force full vulnerability and relationship reconciliation
   9) Return to deployment menu
+  10) Show Function execution, host, and deployment logs for the last 7 days
+  11) Pull sanitized Function logs for the last 7 days
 "@
         switch (Read-Host "Select an option") {
             "1" { Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only; Pause-Menu }
@@ -239,7 +241,9 @@ Operations and diagnostics
             "7" { Invoke-VerifyAll; Pause-Menu }
             "8" { Invoke-LiveCollection -Full; Pause-Menu }
             "9" { return }
-            default { Write-Host "Select a number from 1 through 9." }
+            "10" { Invoke-OperationsCli check-function-logs --hours 168 --limit 25; Pause-Menu }
+            "11" { Invoke-OperationsCli export-function-logs --hours 168; Pause-Menu }
+            default { Write-Host "Select a number from 1 through 11." }
         }
     }
 }

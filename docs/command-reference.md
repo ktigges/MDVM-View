@@ -12,6 +12,8 @@ Run commands from the repository root unless a section says otherwise.
 | See whether the collector is active | `python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 3 --status-only` |
 | Show active progress plus managed-identity publication telemetry | `python -m vulnerability_view.operations_cli check-runs --limit 5 --progress` |
 | Inspect recent invocation requests | `python -m vulnerability_view.operations_cli check-function-logs --hours 24 --limit 10` |
+| Inspect retained Function execution, host, and deployment logs over seven days | `python -m vulnerability_view.operations_cli check-function-logs --hours 168 --limit 25` |
+| Export sanitized Function telemetry over seven days | `python -m vulnerability_view.operations_cli export-function-logs --hours 168` |
 | List completed publication telemetry | `python -m vulnerability_view.operations_cli check-runs --limit 10` |
 | Deploy Function code only | `python -m vulnerability_view.operations_cli deploy function` |
 | Deploy Web App code only | `python -m vulnerability_view.operations_cli deploy webapp` |
@@ -398,11 +400,39 @@ Use **Pull sanitized collector logs for the last 24 hours** in the operations me
 when the summarized evidence is insufficient. It writes a new timestamped
 folder under `output/diagnostics/` containing `collector-sanitized-logs.json`
 and `collector-sanitized-platform-failures.json`. The first file contains
-correlated Application Insights request, trace, exception, and dependency
-records. The second contains an allowlisted summary of failed Azure
+collector request records plus Function-scoped Application Insights traces,
+exceptions (including stack details), dependencies, host/platform logs, and
+retained deployment telemetry. Console and startup logs do not need an
+invocation or operation ID; deployment-service traces with an empty app role
+are included when they belong to the Function's linked Application Insights
+resource. The second file contains an allowlisted summary of failed Azure
 activity-log records for the Function resource. Caller identities, tokens,
 email addresses, IP addresses, URLs, and configured resource identifiers are
 redacted before either file is written.
+
+The PowerShell and Bash deployment menus preserve existing option numbers and
+add operations choices **10** (show seven-day Function logs) and **11** (export
+seven-day Function logs). Use these when the last collection or deployment is
+older than the 24/72-hour windows. The cross-platform CLI's detailed display
+uses the same telemetry query as the export, without message-prefix or
+operation-ID filters, and prints exception stack details. Display and export
+limits are explicit; narrow the window if a record limit is reached.
+
+Diagnostics print the configured subscription, resource group, Function,
+workspace ID, and Terraform variables path. The menu reads its target from
+`infra/terraform/main.tfvars.json`, not ordinary PowerShell variables such as
+`$SUB`, `$RG`, `$FUNC`, `$WEB`, or `$log`. By default, the workspace is resolved
+from the Function's linked Application Insights resource. To select a workspace
+explicitly, set `LOG_ANALYTICS_WORKSPACE_NAME` (PowerShell:
+`$env:LOG_ANALYTICS_WORKSPACE_NAME = "<workspace-name>"`). An empty window is
+reported explicitly and does not establish application health; Azure query
+errors and warnings are shown rather than converted into empty results.
+
+Flex Consumption can recycle the instance holding local deployment logs.
+`az functionapp log deployment show` may therefore report that logs are no
+longer available even for a successful deployment. The menu queries retained
+Application Insights deployment telemetry, but cannot recover logs that were
+never ingested or have expired.
 
 All three diagnostic forms are read-only.
 

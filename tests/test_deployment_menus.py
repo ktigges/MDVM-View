@@ -82,6 +82,14 @@ def test_deployment_menus_wrap_the_same_operations():
             "run_cli export-function-logs --hours 24",
             "Invoke-OperationsCli export-function-logs --hours 24",
         ),
+        (
+            "run_cli check-function-logs --hours 168 --limit 25",
+            "Invoke-OperationsCli check-function-logs --hours 168 --limit 25",
+        ),
+        (
+            "run_cli export-function-logs --hours 168",
+            "Invoke-OperationsCli export-function-logs --hours 168",
+        ),
     )
 
     for shell_call, powershell_call in equivalent_calls:
@@ -102,6 +110,8 @@ def test_deployment_menus_expose_matching_operations_submenu():
         "7) Verify Function and Web App",
         "8) Force full vulnerability and relationship reconciliation",
         "9) Return to deployment menu",
+        "10) Show Function execution, host, and deployment logs for the last 7 days",
+        "11) Pull sanitized Function logs for the last 7 days",
     )
 
     for option in options:
@@ -130,9 +140,9 @@ def test_powershell_menu_preserves_python_executable_as_one_value():
 def test_deployment_menus_show_version_and_revision_in_title():
     shell, powershell = menu_sources()
 
-    assert 'DEPLOYMENT_MENU_VERSION="2026.10.14.7"' in shell
+    assert 'DEPLOYMENT_MENU_VERSION="2026.10.19.1"' in shell
     assert 'Vulnerability View deployment menu %s (revision %s)' in shell
-    assert '$DeploymentMenuVersion = "2026.10.14.7"' in powershell
+    assert '$DeploymentMenuVersion = "2026.10.19.1"' in powershell
     assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
 
