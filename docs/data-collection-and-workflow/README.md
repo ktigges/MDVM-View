@@ -392,8 +392,12 @@ Retry delay uses the service's `Retry-After` header when available. Otherwise, i
 
 HTTP 401 and 403 errors fail immediately with an authentication or permission message.
 
-Progress output reports the initial page-size bound, cumulative rows, and elapsed
-time. When Defender supplies `@odata.count`, it also reports a percentage.
+Progress output reports the initial page-size bound, each page request before it
+blocks on Defender, and each received page after validation and archival.
+Received-page messages include the page number, page rows, cumulative rows,
+page elapsed time (including retries), and total elapsed time. No received-page
+message is emitted for a failed request. When Defender supplies `@odata.count`,
+progress also reports a percentage.
 Recommendation-machine enrichment reports overall recommendations completed
 instead of logging each one-page request separately.
 

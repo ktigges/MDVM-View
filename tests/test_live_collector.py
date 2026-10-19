@@ -405,7 +405,8 @@ def test_pagination_archives_before_normalization(monkeypatch):
     assert status["PageCount"] == 2
     assert [page for _, page, _ in archived] == [1, 2]
     assert any("1 rows downloaded; more data available" in message for message in progress)
-    assert all("page 1" not in message for message in progress)
+    assert any("requesting page 1" in message for message in progress)
+    assert any("page 2 received" in message for message in progress)
 
 
 def test_pagination_reports_percentage_when_defender_supplies_total(monkeypatch):
@@ -421,6 +422,70 @@ def test_pagination_reports_percentage_when_defender_supplies_total(monkeypatch)
 
     assert any("1/2 rows (50.0%)" in message for message in progress)
     assert any("2/2 rows (100.0%)" in message for message in progress)
+
+
+def test_page_progress_is_emitted_before_request_and_after_each_archived_page(monkeypatch):
+    progress = []
+    archived = []
+    clock = [0.0]
+    client = DefenderClient(
+        "https://example.test", Credential(),
+        lambda name, page, content: archived.append(page),
+        progress_callback=progress.append,
+    )
+    pages = iter([
+        response({"value": [{"id": 1}], "@odata.nextLink": "https://example.test/page2"}),
+        response({"value": [{"id": 2}, {"id": 3}]}),
+    ])
+    requested = []
+
+    def request(url):
+        requested.append(url)
+        assert f"requesting page {len(requested)}" in progress[-1]
+        clock[0] += 2.5
+        return next(pages)
+
+    def report(message):
+        if "received:" in message:
+            assert len(archived) == len(requested)
+        progress.append(message)
+
+    client.progress_callback = report
+    monkeypatch.setattr(client, "request", request)
+    monkeypatch.setattr("vulnerability_view.defender_client.time.monotonic", lambda: clock[0])
+
+    client.collect(ENDPOINTS[0], retain_rows=False)
+
+    assert "[machine_vulnerabilities] requesting page 1; 0 rows downloaded; 0.0s elapsed" in progress
+    assert "[machine_vulnerabilities] page 1 received: 1 rows; 1 total rows; 2.5s page elapsed; 2.5s elapsed" in progress
+    assert "[machine_vulnerabilities] requesting page 2; 1 rows downloaded; 2.5s elapsed" in progress
+    assert "[machine_vulnerabilities] page 2 received: 2 rows; 3 total rows; 2.5s page elapsed; 5.0s elapsed" in progress
+
+
+def test_page_progress_does_not_claim_failed_request_was_received(monkeypatch):
+    progress = []
+    client = DefenderClient("https://example.test", Credential(), progress_callback=progress.append)
+
+    def request(url):
+        assert "requesting page 1" in progress[-1]
+        raise requests.ReadTimeout("timed out")
+
+    monkeypatch.setattr(client, "request", request)
+
+    with pytest.raises(requests.ReadTimeout):
+        client.collect(ENDPOINTS[0])
+
+    assert not any("received:" in message or "complete:" in message for message in progress)
+
+
+def test_page_progress_respects_suppressed_enrichment_logging(monkeypatch):
+    progress = []
+    client = DefenderClient("https://example.test", Credential(), progress_callback=progress.append)
+    monkeypatch.setattr(client, "request", lambda url: response({"value": [{"id": 1}]}))
+
+    client.collect(ENDPOINTS[1], report_progress=False)
+
+    assert progress == []
 
 
 def test_pagination_can_archive_without_retaining_rows(monkeypatch):
