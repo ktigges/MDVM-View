@@ -1975,14 +1975,27 @@ def test_debug_response_requires_a_successful_function_http_response(monkeypatch
         operations_cli._invoke_debug_page("func-test", "secret-key", 1, "machine_vulnerabilities")
 
 
-def test_debug_older_function_has_no_unsafe_fallback(monkeypatch):
+@pytest.mark.parametrize("endpoint", ["machine_vulnerabilities", "vulnerabilities"])
+def test_debug_older_function_has_no_unsafe_fallback(monkeypatch, capsys, endpoint):
     calls = []
     result = operations_cli.requests.Response()
     result.status_code = 404
-    monkeypatch.setattr(operations_cli.requests, "post", lambda url, **kwargs: calls.append(url) or result)
+
+    def post(url, **kwargs):
+        output = capsys.readouterr().out
+        assert f"Debug Function request: POST {url}" in output
+        assert "Debug Function header: x-functions-key: [REDACTED]" in output
+        assert f"Debug Function JSON body: {json.dumps(kwargs['json'])}" in output
+        assert kwargs["json"] == {"pageSize": 1, "endpoint": endpoint}
+        assert kwargs["headers"] == {"x-functions-key": "secret-key"}
+        assert "secret-key" not in output
+        calls.append(url)
+        return result
+
+    monkeypatch.setattr(operations_cli.requests, "post", post)
 
     with pytest.raises(RuntimeError, match="Deploy the updated Function using option 3"):
-        operations_cli._invoke_debug_page("func-test", "secret-key", 1, "machine_vulnerabilities")
+        operations_cli._invoke_debug_page("func-test", "secret-key", 1, endpoint)
 
     assert calls == ["https://func-test.azurewebsites.net/api/debug-page"]
 

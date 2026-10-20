@@ -403,7 +403,11 @@ python -m vulnerability_view.operations_cli invoke function --confirm --page-siz
 ```
 
 Menu debug uses the function-key-protected `POST /api/debug-page` route and waits
-for that exact request's result, rather than polling Log Analytics. It prints
+for that exact request's result, rather than polling Log Analytics. Before sending,
+it prints the Function request method, URL, and JSON body with the Function key
+redacted, so the attempted call remains visible even on HTTP 404 or timeout.
+This is the call to the Function, not proof that a Defender API call occurred.
+It prints
 `DEBUG RESULT: PASSED` with the Defender HTTP status, validated row count, elapsed
 time, actual API URL, and the packaged Function version. Machine debug also
 prints the selected device name/ID and inventory request/result. It requires a
