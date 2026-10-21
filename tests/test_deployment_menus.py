@@ -132,6 +132,7 @@ def test_deployment_menus_expose_matching_operations_submenu():
         "9) Show Function execution, host, and deployment logs (choose days)",
         "10) Pull sanitized Function logs (choose days)",
         "11) Return to deployment menu",
+        "12) Download durable diagnostics for the latest manual collection",
     )
 
     for option in options:

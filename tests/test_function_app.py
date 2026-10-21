@@ -7,6 +7,16 @@ import requests
 from azure.core.exceptions import ResourceNotFoundError
 
 import function_app
+from vulnerability_view import collection_diagnostics
+
+
+@pytest.fixture(autouse=True)
+def local_manual_diagnostics(monkeypatch, tmp_path):
+    recorder_type = collection_diagnostics.CollectionDiagnostics
+    monkeypatch.setattr(
+        collection_diagnostics, "CollectionDiagnostics",
+        lambda identifier, settings: recorder_type(identifier, function_app.Settings(), root=tmp_path, flush_seconds=0.01),
+    )
 
 
 def test_function_runtime_version_comes_from_packaged_source_not_old_app_settings(monkeypatch):

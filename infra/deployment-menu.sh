@@ -182,6 +182,7 @@ Operations and diagnostics
   9) Show Function execution, host, and deployment logs (choose days)
   10) Pull sanitized Function logs (choose days)
   11) Return to deployment menu
+  12) Download durable diagnostics for the latest manual collection
 EOF
     printf 'Select an option: '
     read -r operations_choice
@@ -197,7 +198,8 @@ EOF
       9) function_logs_for_days show; pause_menu ;;
       10) function_logs_for_days export; pause_menu ;;
       11) return ;;
-      *) printf 'Select a number from 1 through 11.\n' ;;
+      12) run_cli download-collection-diagnostics; pause_menu ;;
+      *) printf 'Select a number from 1 through 12.\n' ;;
     esac
   done
 }

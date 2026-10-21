@@ -25,6 +25,12 @@ The Operations and diagnostics submenu includes a `FULL`-confirmed complete
 vulnerability baseline and recommendation-relationship reconciliation. Normal
 scheduled collection uses deltas between weekly full vulnerability baselines.
 
+For an existing App Service plan, SKU preflight preserves the explicitly
+configured `web_app_sku_name` instead of copying the deployed SKU back into
+`main.tfvars.json`. It still preserves the existing plan's region. If the
+deployed and requested SKUs differ, it reports both; review the Terraform plan
+for the tier change and its cost before approving apply.
+
 ## Cross-platform operations CLI
 
 The same commands work in Windows PowerShell, macOS, and Linux after activating
@@ -41,7 +47,17 @@ python -m vulnerability_view.operations_cli check-runs --limit 10 --progress
 python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 10 --status-only
 python -m vulnerability_view.operations_cli invoke function --confirm
 python -m vulnerability_view.operations_cli invoke function --confirm --full
+python -m vulnerability_view.operations_cli download-collection-diagnostics
 ```
+
+Manual complete collections print a diagnostic ID and automatically retain
+incremental diagnostic chunks in the existing history container. Operations
+submenu **12** downloads a ZIP for the newest local manual invocation receipt.
+Use `download-collection-diagnostics --id <diagnostic-uuid>` to select a run.
+Download requires the signed-in operator's blob read/network access, not Log
+Analytics. DEBUG probes and collection/publication logic are unchanged.
+See [durable manual evidence](../docs/command-reference.md#durable-evidence-for-manual-collections)
+for coverage, redaction, and incomplete-evidence handling.
 
 Install or refresh the editable project once after pulling CLI changes on
 macOS or Linux:

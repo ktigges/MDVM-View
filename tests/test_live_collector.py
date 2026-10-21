@@ -672,11 +672,23 @@ def device_scoped_run(monkeypatch, tmp_path):
     return payloads, findings, calls, failures
 
 
-def test_full_collection_pages_every_device_and_preserves_normalization_and_replay(device_scoped_run, tmp_path):
+@pytest.mark.parametrize("capture", [False, True])
+def test_full_collection_pages_every_device_and_preserves_normalization_and_replay(device_scoped_run, tmp_path, monkeypatch, capture):
+    from contextlib import nullcontext
+    from uuid import uuid4
+    from vulnerability_view import collection_diagnostics
+
     payloads, findings, calls, _ = device_scoped_run
     progress = []
-
-    actual, statuses = collect_live(Settings().defender_api_base_url, Credential(), progress.append, page_size=2)
+    recorder_type = collection_diagnostics.CollectionDiagnostics
+    monkeypatch.setattr(collection_diagnostics.Settings, "load", lambda: Settings())
+    monkeypatch.setattr(
+        collection_diagnostics, "CollectionDiagnostics",
+        lambda identifier, settings: recorder_type(identifier, settings, root=tmp_path / "diagnostics", flush_seconds=0.01),
+    )
+    scope = collection_diagnostics.manual_collection_diagnostics(str(uuid4()), "2026.10.21.1", "full", 2) if capture else nullcontext()
+    with scope:
+        actual, statuses = collect_live(Settings().defender_api_base_url, Credential(), progress.append, page_size=2)
 
     expected_payloads = deepcopy(payloads)
     expected_payloads["machine_vulnerabilities"] = [row for rows in findings.values() for row in rows]

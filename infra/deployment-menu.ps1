@@ -300,6 +300,7 @@ Operations and diagnostics
   9) Show Function execution, host, and deployment logs (choose days)
   10) Pull sanitized Function logs (choose days)
   11) Return to deployment menu
+  12) Download durable diagnostics for the latest manual collection
 "@
         switch (Read-Host "Select an option") {
             "1" { Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only; Pause-Menu }
@@ -313,7 +314,8 @@ Operations and diagnostics
             "9" { Invoke-FunctionLogsForDays; Pause-Menu }
             "10" { Invoke-FunctionLogsForDays -Export; Pause-Menu }
             "11" { return }
-            default { Write-Host "Select a number from 1 through 11." }
+            "12" { Invoke-OperationsCli download-collection-diagnostics; Pause-Menu }
+            default { Write-Host "Select a number from 1 through 12." }
         }
     }
 }

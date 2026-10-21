@@ -473,6 +473,70 @@ Results report requested/returned row counts, HTTP status, and elapsed time,
 not raw finding contents or tokens. Debug retains the 10-second connection and
 90-second read timeouts per Defender request but makes no automatic retry.
 
+### Durable evidence for manual collections
+
+Manual complete collections and forced full reconciliations automatically capture
+diagnostics. One-page DEBUG and scheduled timer collections are unchanged.
+Deploy the updated Function using deployment menu option **3** before relying on
+capture. This feature needs no new Terraform variable.
+
+The invoking CLI prints a diagnostic UUID and saves a local receipt before
+submitting the trigger, even if the trigger response is lost. Azure acceptance
+still does not prove completion. The receipt contains no Function key.
+
+Capture runs independently of collection on the Function and writes numbered,
+immutable JSONL chunks approximately every five seconds to the existing history
+container under `diagnostics/manual/<diagnostic-id>/`. It never updates
+`current/manifest.json`. No container creation or history deletion is performed.
+The collector's existing Storage Blob Data Contributor access permits these writes.
+The signed-in operator needs blob read access and network access to that account
+to download them; Log Analytics is not required.
+
+Use deployment menu **7 → 12** to download evidence for the newest local manual
+receipt. To select a particular invocation or download from another workstation:
+
+```bash
+python -m vulnerability_view.operations_cli download-collection-diagnostics --id <diagnostic-uuid>
+```
+
+The ZIP saved under `output/diagnostics/` contains:
+
+- `events.jsonl`: packaged version, effective policy settings, Azure invocation
+  ID, phase transitions, device/page progress, Defender request starts and finishes,
+  attempt numbers, unchanged timeouts, response status/size, available Microsoft
+  request IDs, retry delays, warnings, and failure stack locations.
+- `summary.json`: observed terminal outcome, publication trace observation, last
+  event, and indicators for missing chunks, unfinished capture, or dropped events.
+
+Heartbeats record the last event while requests or backoff are waiting. A request
+start without a finish identifies an outstanding/interrupted attempt, not a
+successful API response. Optional Graph/ARM outcomes are included in endpoint
+statuses when the collector reaches persistence; their individual HTTP attempts
+and Storage SDK calls are not traced by the Defender request observer.
+
+Download while a collection is running to inspect a point-in-time snapshot, then
+download again after completion. Absence of a terminal event is `UNCONFIRMED`:
+the worker may still be running, the host may have terminated it, or evidence
+may be missing. A missing terminal event alone cannot distinguish these cases.
+Successful collection is not proof of publication; verify the current manifest
+with `check-runs`.
+
+Diagnostic uploads run on a bounded background queue, with separate short
+Storage timeouts and no upload retries. Diagnostic failures are logged explicitly
+and do not alter collection requests, pagination, retry budgets, exclusions, or
+publication decisions. Local chunks are retained outside the temporary collection
+workspace under the Function host's temporary `vulnerability-diagnostics` directory,
+but this disk is ephemeral. Host termination can lose the latest unflushed chunk.
+If remote writes fail, the support download may be incomplete or unavailable;
+also export Function/platform logs using the existing operations submenu.
+
+Authorization headers, Function keys, request headers, and API response bodies
+are not captured. Configured secrets/resource identifiers, recognized device
+identifiers, continuation tokens, email addresses, and IP addresses are redacted
+or pseudonymized. Microsoft request IDs and the Azure invocation ID are retained
+for correlation. Review free-form diagnostic text before sharing it outside the
+customer organization. Evidence is append-only; no automatic cleanup is configured.
+
 ### Active status only
 
 ```bash

@@ -15,6 +15,7 @@ import requests
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 
 from vulnerability_view.config import Settings, load_function_version
+from vulnerability_view.collection_diagnostics import manual_collection_diagnostics
 from vulnerability_view.credentials import create_credential
 from vulnerability_view.dataprep_cli import main
 from vulnerability_view.defender_client import COLLECTION_PAGE_SIZE, DefenderApiError, collection_page_size, probe_defender_page
@@ -195,22 +196,30 @@ def dataprep_debug_page(input: str) -> None:
 
 
 @app.generic_trigger(arg_name="input", type="manualTrigger", data_type=func.DataType.STRING)
-def dataprep_manual_snapshot(input: str) -> None:
+def dataprep_manual_snapshot(input: str, context: func.Context | None = None) -> None:
     """Run an operator-requested collection using scheduled collection policy."""
     page_size = _manual_page_size(input)
-    logging.info("Starting manual vulnerability dataprep collector version %s; page size %s", COLLECTOR_VERSION, page_size)
-    exit_code = _run_dataprep(page_size=page_size)
-    if exit_code:
-        raise RuntimeError(f"Manual vulnerability dataprep failed with exit code {exit_code}")
-    logging.info("Manual vulnerability dataprep collector version %s completed", COLLECTOR_VERSION)
+    with manual_collection_diagnostics(
+        _manual_options(input).get("diagnosticId"), COLLECTOR_VERSION, "scheduled-policy", page_size,
+        context.invocation_id if context else "",
+    ):
+        logging.info("Starting manual vulnerability dataprep collector version %s; page size %s", COLLECTOR_VERSION, page_size)
+        exit_code = _run_dataprep(page_size=page_size)
+        if exit_code:
+            raise RuntimeError(f"Manual vulnerability dataprep failed with exit code {exit_code}")
+        logging.info("Manual vulnerability dataprep collector version %s completed", COLLECTOR_VERSION)
 
 
 @app.generic_trigger(arg_name="input", type="manualTrigger", data_type=func.DataType.STRING)
-def dataprep_full_snapshot(input: str) -> None:
+def dataprep_full_snapshot(input: str, context: func.Context | None = None) -> None:
     """Run an operator-requested full vulnerability and relationship reconciliation."""
     page_size = _manual_page_size(input)
-    logging.info("Starting manual full vulnerability collector version %s; page size %s", COLLECTOR_VERSION, page_size)
-    exit_code = _run_dataprep("full", "full", page_size=page_size)
-    if exit_code:
-        raise RuntimeError(f"Manual full vulnerability dataprep failed with exit code {exit_code}")
-    logging.info("Manual full vulnerability collector version %s completed", COLLECTOR_VERSION)
+    with manual_collection_diagnostics(
+        _manual_options(input).get("diagnosticId"), COLLECTOR_VERSION, "full", page_size,
+        context.invocation_id if context else "",
+    ):
+        logging.info("Starting manual full vulnerability collector version %s; page size %s", COLLECTOR_VERSION, page_size)
+        exit_code = _run_dataprep("full", "full", page_size=page_size)
+        if exit_code:
+            raise RuntimeError(f"Manual full vulnerability dataprep failed with exit code {exit_code}")
+        logging.info("Manual full vulnerability collector version %s completed", COLLECTOR_VERSION)

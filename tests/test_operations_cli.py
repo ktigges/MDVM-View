@@ -217,7 +217,8 @@ def test_configure_webapp_sku_can_select_premium_v4_in_another_region(monkeypatc
     assert updated["web_app_sku_name"] == "P0v4"
 
 
-def test_configure_webapp_sku_preserves_existing_plan_configuration(monkeypatch, tmp_path):
+@pytest.mark.parametrize("existing_sku", ["F1", "P0v4", "B2"])
+def test_configure_webapp_sku_preserves_requested_sku_and_existing_location(monkeypatch, tmp_path, capsys, existing_sku):
     values_file = tmp_path / "main.tfvars.json"
     values = {
         "subscription_id": "subscription-test",
@@ -236,7 +237,7 @@ def test_configure_webapp_sku_preserves_existing_plan_configuration(monkeypatch,
             "name": "plan-test",
             "resourceGroup": "rg-test",
             "location": "East US",
-            "sku": {"name": "P0v4"},
+            "sku": {"name": existing_sku},
         }],
     )
 
@@ -244,7 +245,30 @@ def test_configure_webapp_sku_preserves_existing_plan_configuration(monkeypatch,
 
     updated = json.loads(values_file.read_text(encoding="utf-8"))
     assert updated["web_app_location"] == "eastus"
-    assert updated["web_app_sku_name"] == "P0v4"
+    assert updated["web_app_sku_name"] == "B2"
+    output = capsys.readouterr().out
+    assert "B2" in output
+    if existing_sku != "B2":
+        assert f"currently uses SKU {existing_sku}" in output
+
+
+def test_configure_webapp_sku_does_not_rewrite_requested_sku_when_location_matches(monkeypatch):
+    values = {
+        "subscription_id": "subscription-test",
+        "resource_group_name": "rg-test",
+        "web_app_service_plan_name": "plan-test",
+        "web_app_sku_name": "B2",
+        "location": "eastus",
+    }
+    monkeypatch.setattr(operations_cli, "_values", lambda: values)
+    monkeypatch.setattr(operations_cli, "_azure_json", lambda *args: [{
+        "name": "plan-test", "resourceGroup": "rg-test", "location": "East US", "sku": {"name": "F1"},
+    }])
+    monkeypatch.setattr(operations_cli, "_write_tf_values", lambda *args: pytest.fail("SKU mismatch must not rewrite configuration"))
+
+    operations_cli.configure_webapp_sku()
+
+    assert values["web_app_sku_name"] == "B2"
 
 
 def test_webapp_location_does_not_move_foundation_or_managed_identity():
@@ -1776,7 +1800,8 @@ def test_invoke_requires_platform_neutral_confirmation(monkeypatch):
         raise AssertionError("invoke should require explicit confirmation")
 
 
-def test_invoke_distinguishes_trigger_acceptance_from_collection_success(monkeypatch, capsys):
+def test_invoke_distinguishes_trigger_acceptance_from_collection_success(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     class AcceptedResponse:
         status_code = 202
 
@@ -1805,13 +1830,20 @@ def test_invoke_distinguishes_trigger_acceptance_from_collection_success(monkeyp
 
     output = capsys.readouterr().out
     assert requests[0][0][0].endswith("/admin/functions/dataprep_manual_snapshot")
-    assert requests[0][1]["json"] == {"input": None}
+    payload = json.loads(requests[0][1]["json"]["input"])
+    identifier = operations_cli.diagnostic_id(payload["diagnosticId"])
+    assert payload == {"diagnosticId": identifier}
+    receipt = json.loads((tmp_path / "output/diagnostics/manual-receipts" / f"{identifier}.json").read_text())
+    assert receipt["acceptance"] == "HTTP 202"
+    assert "host-key" not in json.dumps(receipt)
+    assert "download-collection-diagnostics" in output
     assert "trigger accepted" in output
     assert "does not confirm collection success" in output
     assert "check-runs --limit 10 --progress" in output
 
 
-def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch):
+def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch, tmp_path):
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     class AcceptedResponse:
         status_code = 202
 
@@ -1839,7 +1871,8 @@ def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch):
     operations_cli.invoke(True, full=True)
 
     assert requests[0][0][0].endswith("/admin/functions/dataprep_full_snapshot")
-    assert requests[0][1]["json"] == {"input": "full"}
+    payload = json.loads(requests[0][1]["json"]["input"])
+    assert payload == {"diagnosticId": operations_cli.diagnostic_id(payload["diagnosticId"])}
 
 
 @pytest.mark.parametrize("debug,full,expected", [
@@ -1847,7 +1880,8 @@ def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch):
     (False, False, "dataprep_manual_snapshot"),
     (False, True, "dataprep_full_snapshot"),
 ])
-def test_manual_invoke_forwards_page_size_to_correct_trigger(monkeypatch, capsys, debug, full, expected):
+def test_manual_invoke_forwards_page_size_to_correct_trigger(monkeypatch, capsys, tmp_path, debug, full, expected):
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     calls = []
     monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
     monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="host-key\n"))
@@ -1866,6 +1900,8 @@ def test_manual_invoke_forwards_page_size_to_correct_trigger(monkeypatch, capsys
     assert calls[0][0].endswith(route)
     expected_payload = {"pageSize": 1, "endpoint": "machine_vulnerabilities"} if debug else {"pageSize": 1}
     payload = calls[0][1]["json"] if debug else json.loads(calls[0][1]["json"]["input"])
+    if not debug:
+        operations_cli.diagnostic_id(payload.pop("diagnosticId"))
     assert payload == expected_payload
     output = capsys.readouterr().out
     if debug:
