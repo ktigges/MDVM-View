@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
+from unittest.mock import Mock
 from zipfile import ZipFile
 
 import pytest
@@ -189,7 +190,7 @@ def test_manual_function_records_failure_without_changing_exception_or_parameter
     with pytest.raises(RuntimeError) as error:
         function_app.dataprep_full_snapshot(
             json.dumps({"diagnosticId": identifier, "pageSize": 100}),
-            SimpleNamespace(invocation_id=invocation),
+            Mock(spec=function_app.func.Context, invocation_id=invocation),
         )
     assert error.value is expected
     assert calls == [(("full", "full"), {"page_size": 100})]

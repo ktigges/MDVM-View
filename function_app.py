@@ -196,12 +196,12 @@ def dataprep_debug_page(input: str) -> None:
 
 
 @app.generic_trigger(arg_name="input", type="manualTrigger", data_type=func.DataType.STRING)
-def dataprep_manual_snapshot(input: str, context: func.Context | None = None) -> None:
+def dataprep_manual_snapshot(input: str, context: func.Context) -> None:
     """Run an operator-requested collection using scheduled collection policy."""
     page_size = _manual_page_size(input)
     with manual_collection_diagnostics(
         _manual_options(input).get("diagnosticId"), COLLECTOR_VERSION, "scheduled-policy", page_size,
-        context.invocation_id if context else "",
+        context.invocation_id,
     ):
         logging.info("Starting manual vulnerability dataprep collector version %s; page size %s", COLLECTOR_VERSION, page_size)
         exit_code = _run_dataprep(page_size=page_size)
@@ -211,12 +211,12 @@ def dataprep_manual_snapshot(input: str, context: func.Context | None = None) ->
 
 
 @app.generic_trigger(arg_name="input", type="manualTrigger", data_type=func.DataType.STRING)
-def dataprep_full_snapshot(input: str, context: func.Context | None = None) -> None:
+def dataprep_full_snapshot(input: str, context: func.Context) -> None:
     """Run an operator-requested full vulnerability and relationship reconciliation."""
     page_size = _manual_page_size(input)
     with manual_collection_diagnostics(
         _manual_options(input).get("diagnosticId"), COLLECTOR_VERSION, "full", page_size,
-        context.invocation_id if context else "",
+        context.invocation_id,
     ):
         logging.info("Starting manual full vulnerability collector version %s; page size %s", COLLECTOR_VERSION, page_size)
         exit_code = _run_dataprep("full", "full", page_size=page_size)

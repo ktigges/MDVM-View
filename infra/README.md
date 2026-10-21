@@ -59,6 +59,10 @@ Analytics. DEBUG probes and collection/publication logic are unchanged.
 See [durable manual evidence](../docs/command-reference.md#durable-evidence-for-manual-collections)
 for coverage, redaction, and incomplete-evidence handling.
 
+Function verification checks the registered trigger names, including
+`dataprep_debug_http`, and fails on missing triggers. A successful package upload
+or version app setting alone does not prove that the Python worker loaded.
+
 Install or refresh the editable project once after pulling CLI changes on
 macOS or Linux:
 

@@ -1,6 +1,8 @@
 import json
 import importlib
+import inspect
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 import requests
@@ -17,6 +19,22 @@ def local_manual_diagnostics(monkeypatch, tmp_path):
         collection_diagnostics, "CollectionDiagnostics",
         lambda identifier, settings: recorder_type(identifier, function_app.Settings(), root=tmp_path, flush_seconds=0.01),
     )
+
+
+@pytest.fixture
+def invocation_context():
+    return Mock(spec=function_app.func.Context, invocation_id="11111111-2222-3333-4444-555555555555")
+
+
+def test_manual_context_annotations_match_azure_worker_contract():
+    functions = function_app.app.get_functions()
+    checked = set()
+    for function in functions:
+        if function.get_function_name() in {"dataprep_manual_snapshot", "dataprep_full_snapshot"}:
+            signature = inspect.signature(function.get_user_function())
+            assert signature.parameters["context"].annotation is function_app.func.Context
+            checked.add(function.get_function_name())
+    assert checked == {"dataprep_manual_snapshot", "dataprep_full_snapshot"}
 
 
 def test_function_runtime_version_comes_from_packaged_source_not_old_app_settings(monkeypatch):
@@ -69,32 +87,32 @@ def test_run_dataprep_restores_directory_after_failure(monkeypatch):
     assert Path.cwd() == original_directory
 
 
-def test_manual_full_trigger_forces_full_collection_and_enrichment(monkeypatch):
+def test_manual_full_trigger_forces_full_collection_and_enrichment(monkeypatch, invocation_context):
     calls = []
     monkeypatch.setattr(function_app, "_run_dataprep", lambda collection, enrichment, **kwargs: calls.append((collection, enrichment, kwargs)) or 0)
 
-    function_app.dataprep_full_snapshot("full")
+    function_app.dataprep_full_snapshot("full", invocation_context)
 
     assert calls == [("full", "full", {"page_size": 1000})]
 
 
-def test_manual_trigger_uses_scheduled_collection_policy(monkeypatch):
+def test_manual_trigger_uses_scheduled_collection_policy(monkeypatch, invocation_context):
     calls = []
     monkeypatch.setattr(function_app, "_run_dataprep", lambda **kwargs: calls.append(kwargs) or 0)
 
-    function_app.dataprep_manual_snapshot("")
+    function_app.dataprep_manual_snapshot("", invocation_context)
 
     assert calls == [{"page_size": 1000}]
 
 
 @pytest.mark.parametrize("page_size", [1, 100, 1000])
-def test_manual_triggers_forward_per_run_page_size(monkeypatch, page_size):
+def test_manual_triggers_forward_per_run_page_size(monkeypatch, page_size, invocation_context):
     calls = []
     monkeypatch.setattr(function_app, "_run_dataprep", lambda *args, **kwargs: calls.append((args, kwargs)) or 0)
     payload = json.dumps({"pageSize": page_size})
 
-    function_app.dataprep_manual_snapshot(payload)
-    function_app.dataprep_full_snapshot(payload)
+    function_app.dataprep_manual_snapshot(payload, invocation_context)
+    function_app.dataprep_full_snapshot(payload, invocation_context)
     function_app.dataprep_debug_page(payload)
 
     assert calls == [

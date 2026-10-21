@@ -2126,7 +2126,13 @@ def test_verify_function_does_not_block_on_published_data_status(monkeypatch, ca
     monkeypatch.setattr(
         operations_cli,
         "_az",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="2026.10.08.1\n"),
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args, 0,
+            stdout=json.dumps([
+                {"name": f"func-test/{name}"}
+                for name in (*operations_cli.COLLECTOR_FUNCTION_NAMES, "dataprep_debug_http", "dataprep_debug_page", "dataprep_status")
+            ]) if args[:3] == ("functionapp", "function", "list") else "2026.10.08.1\n",
+        ),
     )
     monkeypatch.setattr(
         operations_cli,
@@ -2143,6 +2149,44 @@ def test_verify_function_does_not_block_on_published_data_status(monkeypatch, ca
     output = capsys.readouterr().out
     assert "Function verification complete" in output
     assert "check-runs --progress" in output
+
+
+@pytest.mark.parametrize("functions", [
+    [],
+    [{"name": "func-test/dataprep_snapshot"}],
+    [{"name": "func-test/dataprep_manual_snapshot"}, {"name": "func-test/dataprep_full_snapshot"}],
+    [{"name": name} for name in (*operations_cli.COLLECTOR_FUNCTION_NAMES, "dataprep_debug_page", "dataprep_status")],
+])
+def test_verify_function_rejects_missing_triggers(monkeypatch, capsys, functions):
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
+    monkeypatch.setattr(operations_cli, "_validate_function_runtime_storage_auth", lambda *args: None)
+    calls = []
+
+    def az(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps(functions) if args[:3] == ("functionapp", "function", "list") else "2026.10.21.2\n",
+        )
+
+    monkeypatch.setattr(operations_cli, "_az", az)
+    with pytest.raises(RuntimeError, match="required Function triggers are missing"):
+        operations_cli.verify("function")
+    assert "Function verification complete" not in capsys.readouterr().out
+    assert all(kwargs["timeout"] == 60 for _, kwargs in calls)
+
+
+@pytest.mark.parametrize("functions", [None, {}, ["dataprep_snapshot"], [{"name": None}]])
+def test_verify_function_rejects_invalid_trigger_response(monkeypatch, functions):
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
+    monkeypatch.setattr(operations_cli, "_validate_function_runtime_storage_auth", lambda *args: None)
+    monkeypatch.setattr(
+        operations_cli, "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps(functions) if args[:3] == ("functionapp", "function", "list") else "2026.10.21.2\n",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="invalid deployed-trigger list"):
+        operations_cli.verify("function")
 
 
 def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatch, capsys):
