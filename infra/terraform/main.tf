@@ -471,6 +471,7 @@ resource "azurerm_function_app_flex_consumption" "collector" {
     "COLLECTION_SCHEDULE"              = var.collection_schedule
     "DEFENDER_API_BASE_URL"            = var.defender_api_base_url
     "ENABLE_EXPERIMENTAL_ENDPOINTS"    = tostring(var.enable_experimental_endpoints)
+    "EXCLUDE_SCALE_SETS"               = tostring(var.exclude_scale_sets)
     "FULL_COLLECTION_WEEKDAY"          = tostring(var.full_collection_weekday)
     "RECOMMENDATION_ENRICHMENT_MODE"   = var.recommendation_enrichment_mode
     "VULNERABILITY_COLLECTION_MODE"    = var.vulnerability_collection_mode

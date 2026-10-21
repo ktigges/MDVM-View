@@ -59,6 +59,7 @@ deployment environment. In that case, keep these pairs synchronized:
 | `recommendation_enrichment_mode` | `RECOMMENDATION_ENRICHMENT_MODE` |
 | `vulnerability_collection_mode` | `VULNERABILITY_COLLECTION_MODE` |
 | `enable_experimental_endpoints` | `ENABLE_EXPERIMENTAL_ENDPOINTS` |
+| `exclude_scale_sets` | `EXCLUDE_SCALE_SETS` |
 | `full_collection_weekday` | `FULL_COLLECTION_WEEKDAY` |
 | `collection_schedule` | `COLLECTION_SCHEDULE` |
 | `dashboard_cache_seconds` | `DASHBOARD_CACHE_SECONDS` |
@@ -109,6 +110,7 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `recommendation_enrichment_mode` | `targeted`; `auto`, `targeted`, `full`, or `none` | Controls recommendation-to-machine API enrichment; `auto` resolves to targeted |
 | `vulnerability_collection_mode` | `auto`; `auto`, `delta`, or `full` | Uses daily deltas with initial, weekly, and stale-state full reconciliation |
 | `enable_experimental_endpoints` | `false` | Enables undocumented Defender compatibility probes |
+| `exclude_scale_sets` | `false` | Opt-in exclusion of Azure scale-set devices from live collection |
 | `full_collection_weekday` | `6`; Monday `0` through Sunday `6` | Full vulnerability reconciliation day when collection mode is `auto` |
 | `web_app_name` | Required, globally unique | Dashboard Web App name |
 | `web_app_service_plan_name` | Required | Linux App Service plan name |
@@ -189,6 +191,7 @@ These can be environment variables or keys in
 | `RECOMMENDATION_ENRICHMENT_MODE` | `recommendationEnrichmentMode` | `targeted` | `auto`, `targeted`, `full`, or `none` |
 | `VULNERABILITY_COLLECTION_MODE` | `vulnerabilityCollectionMode` | `auto` | `auto`, `delta`, or `full` |
 | `ENABLE_EXPERIMENTAL_ENDPOINTS` | `enableExperimentalEndpoints` | `false` | Enables undocumented optional endpoint probes |
+| `EXCLUDE_SCALE_SETS` | `excludeScaleSets` | `false` | Set `true` to skip scale-set findings requests in full collection and exclude scale-set devices, findings (including delta baselines/changes), and recommendation-device relationships from new live datasets and raw replays. Matches Azure resource IDs containing `/virtualMachineScaleSets/` (case-insensitive), not device names. Prior findings are excluded before lifecycle reconciliation, not marked fixed. Raw API evidence, retained history, tenant-wide aggregate API counts, and one-page DEBUG probes are unchanged. |
 | `FULL_COLLECTION_WEEKDAY` | `fullCollectionWeekday` | `6` | Weekly full vulnerability reconciliation weekday, Monday 0 through Sunday 6 |
 | `COLLECTION_SCHEDULE` | `collectionSchedule` | `0 0 5 * * *` | UTC Functions timer schedule |
 | `DASHBOARD_DATA_SOURCE` | `dashboardDataSource` | `local` | `local` reads `dashboard/data`; `azure` reads current manifest and curated blobs |
@@ -222,6 +225,7 @@ Terraform input rather than changing the generated setting in the portal.
 | `COLLECTION_SCHEDULE` | `var.collection_schedule` |
 | `DEFENDER_API_BASE_URL` | Microsoft Defender API root |
 | `ENABLE_EXPERIMENTAL_ENDPOINTS` | `var.enable_experimental_endpoints` |
+| `EXCLUDE_SCALE_SETS` | `var.exclude_scale_sets` |
 | `VULNERABILITY_COLLECTION_MODE` | `var.vulnerability_collection_mode` |
 | `FULL_COLLECTION_WEEKDAY` | `var.full_collection_weekday` |
 | `RECOMMENDATION_ENRICHMENT_MODE` | `var.recommendation_enrichment_mode` |

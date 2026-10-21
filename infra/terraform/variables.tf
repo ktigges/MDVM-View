@@ -361,6 +361,12 @@ variable "enable_experimental_endpoints" {
   default     = false
 }
 
+variable "exclude_scale_sets" {
+  description = "Exclude devices identified by Azure virtualMachineScaleSets resource IDs from live collector findings and device datasets."
+  type        = bool
+  default     = false
+}
+
 variable "full_collection_weekday" {
   description = "Weekly full vulnerability reconciliation day, Monday 0 through Sunday 6."
   type        = number

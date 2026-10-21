@@ -733,6 +733,96 @@ def test_device_query_failure_prevents_normalization_and_publication(device_scop
     assert all(query["$filter"] != ["machineId eq 'device-3'"] for query in queries)
 
 
+@pytest.mark.parametrize("all_excluded", [False, True])
+def test_scale_set_exclusion_skips_requests_and_current_datasets(device_scoped_run, tmp_path, all_excluded):
+    payloads, _, calls, failures = device_scoped_run
+    failures["device-2"] = requests.ReadTimeout("Excluded scale set must never be queried")
+    if all_excluded:
+        payloads["machines"][:] = [payloads["machines"][1]]
+    progress = []
+
+    actual, statuses = collect_live(
+        Settings().defender_api_base_url, Credential(), progress.append,
+        page_size=2, exclude_scale_sets=True,
+    )
+
+    assert all(row["DeviceId"] != "device-2" for key in ("devices", "findings", "recommendationMachines") for row in actual[key])
+    queries = [parse_qs(urlsplit(url).query) for url in calls if urlsplit(url).path.endswith("/machinesVulnerabilities")]
+    assert all(query["$filter"] != ["machineId eq 'device-2'"] for query in queries)
+    status = next(row for row in statuses if row["Endpoint"] == "machine_vulnerabilities")
+    assert status["ExcludedScaleSetCount"] == 1
+    assert status["MachineCount"] == (0 if all_excluded else 2)
+    assert len(actual["findings"]) == (0 if all_excluded else 3)
+    assert any("excluding 1 scale-set devices" in message for message in progress)
+    run_folder = next((tmp_path / "output/raw").iterdir())
+    replayed, _ = replay_raw_snapshot(run_folder, exclude_scale_sets=True)
+    for key in ("devices", "findings", "vulnerabilities"):
+        assert replayed[key] == actual[key]
+
+
+@pytest.mark.parametrize("field", ["azureResourceId", "resourceId", "azureResource", "vmMetadata", "AzureResourceId"])
+def test_scale_set_detection_uses_metadata_not_device_names(field):
+    resource_id = "/subscriptions/sub/providers/Microsoft.Compute/VIRTUALMACHINESCALESETS/pool/virtualMachines/1"
+    value = {"resourceId": resource_id} if field in {"azureResource", "vmMetadata"} else resource_id
+    assert live_collector.is_scale_set_device({field: value})
+    assert not live_collector.is_scale_set_device({"computerDnsName": "vmss-instance"})
+    assert not live_collector.is_scale_set_device({"vmMetadata": None})
+
+
+def test_delta_scale_set_exclusion_filters_baseline_and_changes(device_scoped_run):
+    payloads, _, _, _ = device_scoped_run
+    payloads["vulnerability_changes"] = [
+        {"machineId": "device-2", "cveId": "CVE-2026-0001", "productName": "Product", "status": "New"},
+    ]
+    previous = [
+        {"FindingKey": device_id, "DeviceId": device_id, "CveId": "CVE-2026-0001", "SoftwareName": "Product", "FindingStatus": "Open", "DataOrigin": "Live"}
+        for device_id in ("device-1", "device-2")
+    ]
+    actual, _ = collect_live(
+        Settings().defender_api_base_url, Credential(), vulnerability_collection_mode="delta",
+        previous_findings=previous, previous_snapshot=datetime(2026, 10, 18, tzinfo=timezone.utc),
+        exclude_scale_sets=True,
+    )
+    assert {row["DeviceId"] for row in actual["findings"]} == {"device-1"}
+    assert {row["DeviceId"] for row in actual["devices"]} == {"device-1", "device-3"}
+
+
+def test_normalization_excludes_scale_set_findings_and_recommendation_references(device_scoped_run):
+    payloads, findings, _, _ = device_scoped_run
+    sources = deepcopy(payloads)
+    sources["machine_vulnerabilities"] = [row for rows in findings.values() for row in rows]
+    sources["recommendation_machines"] = [
+        {"id": machine["id"], "_recommendationId": "va-_-Product"} for machine in payloads["machines"]
+    ]
+    actual = normalize_live(
+        sources, datetime(2026, 10, 18, tzinfo=timezone.utc), "live-20261018T000000Z",
+        exclude_scale_sets=True,
+    )
+    for key in ("findings", "devices", "recommendationMachines"):
+        assert all(row["DeviceId"] != "device-2" for row in actual[key])
+    assert len(actual["recommendationMachines"]) == 2
+
+
+def test_collector_exclusion_does_not_restore_previous_scale_set_findings(device_scoped_run, monkeypatch, tmp_path):
+    from vulnerability_view import dataprep_cli
+
+    payloads, findings, _, _ = device_scoped_run
+    previous_payloads = deepcopy(payloads)
+    previous_payloads["machine_vulnerabilities"] = [row for rows in findings.values() for row in rows]
+    existing = normalize_live(previous_payloads, datetime(2026, 10, 18, tzinfo=timezone.utc), "live-20261018T000000Z")
+    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity", tenant_id="tenant", exclude_scale_sets=True))
+    monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
+    monkeypatch.setattr(dataprep_cli, "_read_outputs", lambda *args: existing)
+    monkeypatch.setattr(dataprep_cli, "_resolve_collection_mode", lambda *args: ("full", None))
+    published = []
+    monkeypatch.setattr(dataprep_cli, "_persist_live_run", lambda settings, run_id, data, statuses, **kwargs: published.append(data) or (tmp_path, []))
+    monkeypatch.setattr(dataprep_cli, "_write_run_summary", lambda *args: None)
+
+    assert dataprep_cli.main(["collect-live", "--local-only", "--skip-local-exports"]) == 0
+    assert {row["DeviceId"] for row in published[0]["findings"]} == {"device-1"}
+    assert all(row.get("DeviceId") != "device-2" for row in published[0]["findingEvents"])
+
+
 def test_delta_collection_keeps_existing_delta_api_and_does_not_query_per_device(device_scoped_run, monkeypatch):
     payloads, _, calls, _ = device_scoped_run
     payloads["vulnerability_changes"] = []

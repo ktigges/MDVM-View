@@ -13,7 +13,7 @@ ENVIRONMENT_KEYS = (
     "AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "DEFENDER_API_BASE_URL",
     "AZURE_SUBSCRIPTION_ID", "AZURE_MANAGEMENT_GROUP_ID", "AZURE_RESOURCE_GROUP", "AZURE_LOCATION", "STORAGE_ACCOUNT_NAME",
     "STORAGE_CONTAINER_NAME", "STORAGE_CURRENT_CONTAINER_NAME", "APP_MODE", "SYNTHETIC_SEED", "SYNTHETIC_MONTHS", "SYNTHETIC_DEVICE_COUNT",
-    "RECOMMENDATION_ENRICHMENT_MODE", "VULNERABILITY_COLLECTION_MODE", "ENABLE_EXPERIMENTAL_ENDPOINTS", "FULL_COLLECTION_WEEKDAY", "DASHBOARD_DATA_SOURCE", "DASHBOARD_STATIC_DIR", "DASHBOARD_CACHE_SECONDS",
+    "RECOMMENDATION_ENRICHMENT_MODE", "VULNERABILITY_COLLECTION_MODE", "ENABLE_EXPERIMENTAL_ENDPOINTS", "EXCLUDE_SCALE_SETS", "FULL_COLLECTION_WEEKDAY", "DASHBOARD_DATA_SOURCE", "DASHBOARD_STATIC_DIR", "DASHBOARD_CACHE_SECONDS",
     "DASHBOARD_AUTH_ENABLED",
     "DASHBOARD_DATA_BROWSER_ENABLED", "DASHBOARD_DATA_BROWSER_ROLE",
     "DASHBOARD_RECOMMENDATION_TRACKING_ENABLED", "DASHBOARD_RECOMMENDATION_TRACKING_ROLE",
@@ -61,6 +61,7 @@ def test_collection_defaults_to_targeted_deltas_with_weekly_full_reconciliation(
     assert settings.recommendation_enrichment_mode == "targeted"
     assert settings.vulnerability_collection_mode == "auto"
     assert settings.enable_experimental_endpoints is False
+    assert settings.exclude_scale_sets is False
     assert settings.full_collection_weekday == 6
     assert settings.dashboard_data_source == "local"
     assert settings.dashboard_static_dir == ""
@@ -72,6 +73,17 @@ def test_collection_defaults_to_targeted_deltas_with_weekly_full_reconciliation(
     assert settings.dashboard_recommendation_tracking_role == "Recommendation.Tracker"
     assert settings.dashboard_recommendation_tracking_container == "dvm-workflow"
     assert settings.synthetic_device_count == 2500
+
+
+def test_scale_set_exclusion_loads_from_file_and_environment(monkeypatch, tmp_path):
+    monkeypatch.delenv("EXCLUDE_SCALE_SETS", raising=False)
+    config = tmp_path / "settings.json"
+    config.write_text(json.dumps({"excludeScaleSets": True}), encoding="utf-8")
+    assert Settings.load(config, env_path=tmp_path / "missing.env").exclude_scale_sets is True
+    monkeypatch.setenv("EXCLUDE_SCALE_SETS", "false")
+    assert Settings.load(config, env_path=tmp_path / "missing.env").exclude_scale_sets is False
+    monkeypatch.setenv("EXCLUDE_SCALE_SETS", " TRUE ")
+    assert Settings.load(env_path=tmp_path / "missing.env").exclude_scale_sets is True
 
 
 def test_default_defender_host_matches_customer_requested_host(monkeypatch, tmp_path):
