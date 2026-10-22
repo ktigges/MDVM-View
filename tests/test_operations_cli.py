@@ -1916,10 +1916,18 @@ def test_manual_invoke_forwards_page_size_to_correct_trigger(monkeypatch, capsys
     assert "host-key" not in output
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "1001", "1.5", "abc"])
+@pytest.mark.parametrize("value", ["0", "-1", "2501", "1.5", "abc"])
 def test_invoke_parser_rejects_invalid_page_size(value):
     with pytest.raises(SystemExit):
         operations_cli.build_parser().parse_args(["invoke", "function", "--page-size", value])
+
+
+def test_invoke_accepts_2500_for_collection_but_rejects_for_debug_before_azure(monkeypatch):
+    args = operations_cli.build_parser().parse_args(["invoke", "function", "--page-size", "2500"])
+    assert args.page_size == 2500
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda *args: pytest.fail("Invalid debug size must not call Azure"))
+    with pytest.raises(ValueError, match="1 to 1000"):
+        operations_cli.invoke(True, debug=True, page_size=2500)
 
 
 def test_invoke_rejects_debug_with_full_before_azure_calls(monkeypatch):

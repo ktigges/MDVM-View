@@ -362,9 +362,10 @@ Graph Secure Score uses the `https://graph.microsoft.com/.default` scope.
 
 ## Download, pagination, and retry logic
 
-Every endpoint is downloaded one page at a time. Machine-vulnerability, machine,
-vulnerability-catalog, and recommendation inventories explicitly request at most
-1,000 rows per page using `$top`, including the first request. Server continuation
+Every endpoint is downloaded one page at a time. Machine-vulnerability findings
+default to at most 2,500 rows per page; machine, vulnerability-catalog, and
+recommendation inventories remain capped at 1,000. All use `$top`, including
+the first request. Server continuation
 links take priority. When a full inventory page has no next link, the client
 advances `$skip`, retaining filters, until a short or empty page is returned.
 The page size never caps the total inventory.
@@ -375,9 +376,9 @@ experimental routes have no documented manual page-size control, so the client
 uses their server-provided continuation links without adding unsupported options.
 Graph Secure Score deliberately requests the latest score rather than an inventory.
 
-For a manual complete collection, option 5 can select 1-1,000 records per page
+For a manual complete collection, option 5 can select 1-2,500 records per findings page
 without changing scheduled defaults or Terraform. Option 5 defaults to a separate
-one-page debug mode: one inventory request with no retry, continuation, archive,
+one-page debug mode capped at 1,000 rows: one inventory request with no retry, continuation, archive,
 normalization, or publication. Debugging never advances the current manifest.
 
 For each successful page:
@@ -393,7 +394,17 @@ duplicate its archive. Malformed pages, repeated continuation URLs, repeated ful
 pages, and oversized responses fail explicitly rather than publishing a partial
 inventory.
 
-Retry delay uses the service's `Retry-After` header when available. Otherwise, it uses bounded exponential backoff with a small random delay.
+Live findings requests are paced at a minimum 2.5-second start interval across
+devices, pages, and retries (about 24/minute). Response time counts toward the
+interval. Other endpoints and one-page DEBUG do not add pacing waits.
+
+For HTTP 429, retry delay honors the full service `Retry-After` header (seconds
+or HTTP date) or the error message's `You can send requests again in N seconds`
+reset interval, whichever is longer. Without a valid reset, it uses
+60/120/240/480-second backoff with small jitter. Other transient failures retain
+the existing shorter backoff. The shared five-attempt budget and four-hour
+Function timeout still apply; a long cooldown can reach that timeout. This does
+not implement durable resume or guarantee freedom from shared-quota throttling.
 
 HTTP 401 and 403 errors fail immediately with an authentication or permission message.
 

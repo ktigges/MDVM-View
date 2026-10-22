@@ -179,7 +179,7 @@ function Invoke-LiveCollection {
     param([switch]$Full, [switch]$Complete)
 
     $debugOnly = $false
-    $pageDefault = "1000"
+    $pageDefault = "2500"
     if (-not $Full -and -not $Complete) {
         while ($true) {
             $mode = (Read-Host "D) Debug one page (no publication); C) Complete collection [D]").Trim()
@@ -210,15 +210,16 @@ function Invoke-LiveCollection {
         }
     }
     Write-Host "Page size controls each request, not the total records collected."
+    $pageMax = if ($debugOnly) { 1000 } else { 2500 }
     while ($true) {
-        $pageSize = (Read-Host "Records per page (1-1000) [$pageDefault]").Trim()
+        $pageSize = (Read-Host "Records per page (1-$pageMax; other endpoints cap at 1000) [$pageDefault]").Trim()
         if (-not $pageSize) {
             $pageSize = $pageDefault
         }
-        if ($pageSize -match "^(?:[1-9][0-9]{0,2}|1000)$") {
+        if ($pageSize -match "^[1-9][0-9]{0,3}$" -and [int]$pageSize -le $pageMax) {
             break
         }
-        Write-Host "Enter a whole number from 1 to 1000."
+        Write-Host "Enter a whole number from 1 to $pageMax."
     }
     $expected = if ($debugOnly) { "DEBUG" } elseif ($Full) { "FULL" } else { "COLLECT" }
     $prompt = if ($debugOnly) {

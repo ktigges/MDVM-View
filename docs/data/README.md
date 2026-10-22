@@ -277,17 +277,18 @@ flowchart TD
 
 ### Page download and raw archive
 
-Each endpoint is downloaded one page at a time. Machine-vulnerability, machine,
-vulnerability-catalog, and recommendation inventories request at most 1,000 rows
+Each endpoint is downloaded one page at a time. Machine-vulnerability findings
+default to at most 2,500 rows per page; machine, vulnerability-catalog, and
+recommendation inventories remain capped at 1,000 rows. These bounds apply
 from the first page onward using `$top`. The collector follows `@odata.nextLink`
 when provided; otherwise, a full inventory page advances `$skip` while preserving
 filters until a short or empty page is returned. An exact page-size boundary
-requires a final empty request; 1,000 is a page size, not a total collection limit.
+requires a final empty request; the page size is not a total collection limit.
 
 Full collection first downloads the paged machine inventory and applies any
 configured scale-set exclusion. It then retrieves machine-vulnerability findings
 separately for every included distinct Defender machine ID using
-`/api/vulnerabilities/machinesVulnerabilities?$filter=machineId eq '<id>'&$top=1000`
+`/api/vulnerabilities/machinesVulnerabilities?$filter=machineId eq '<id>'&$top=2500`
 (or the selected page size). This avoids the unfiltered tenant-wide findings
 query. Device names are logged for identification; the filter uses IDs, not
 names. Scale-set instances are excluded only when `EXCLUDE_SCALE_SETS=true`;
@@ -310,19 +311,23 @@ and retains an empty catalog archive so the completed run can still be replayed.
 Raw findings page numbers continue across devices rather than restarting and
 overwriting earlier device evidence. An empty inventory produces an explicitly
 derived empty findings archive for replay, not a fabricated API response.
-More device requests can increase runtime and encounter throttling; existing
-bounded retries and the Function execution limit still apply. This is not a
-resumable or bulk-export implementation.
+Live findings request starts are spaced at least 2.5 seconds apart across devices,
+pages, and retries (about 24 requests/minute), counting API response time toward
+that interval. Other consumers of the shared quota can still cause throttling.
+Bounded retries and the Function execution limit still apply. This is not a
+resumable or bulk-export implementation; the Function's raw pages are temporary
+until the completed bundle is uploaded.
 
 Vulnerability deltas default to `pageSize=1000` and follow server continuation
 links. They do not use `$top`, which disables continuation on the delta export API.
-Manual complete collections can select a smaller per-run page size (1-1,000)
+Manual complete collections can select a smaller per-run page size (1-2,500)
 through deployment menu option 5. Its default debug mode instead requests one
 page and stops without archiving or publishing any data. Machine debug first
 discovers one device with `/api/machines?$top=1`, then requests one findings page
 using the same `machineId` filter as full collection (two requests total).
 It follows neither discovery nor findings next links. Catalog debug makes just
-one request. A successful machine debug sample validates one device/page, not
+one request. Debug remains capped at 1,000 rows and does not add pacing waits.
+A successful machine debug sample validates one device/page, not
 the whole device-by-device collection.
 Recommendation-machine references and experimental routes have no documented
 manual page-size control; their server-provided next links are followed without
@@ -347,7 +352,15 @@ Raw pages are written before normalization. If a later transformation fails, the
 
 ### Retry behavior
 
-HTTP 429 and temporary `500`, `502`, `503`, and `504` responses are retried up to five attempts. The collector uses `Retry-After` when supplied; otherwise it uses bounded exponential backoff.
+HTTP 429 and temporary `500`, `502`, `503`, and `504` responses share five total
+attempts per page. For 429, the collector honors the full `Retry-After` delay
+(seconds or HTTP date) and the quota error's `You can send requests again in N
+seconds` message, using the longer delay if both exist. There is no 60-second
+cap on a server-directed 429 wait. Without a valid server delay, 429 uses
+60/120/240/480-second backoff plus small jitter. Invalid `Retry-After` values
+are logged before falling back. Timeouts and 5xx retain their existing shorter
+backoff. Cooldowns consume Function execution time; the four-hour limit still
+applies. Exhausting the attempt budget fails collection without publication.
 
 HTTP 401 and 403 fail immediately with credential or permission guidance.
 

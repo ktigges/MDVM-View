@@ -404,6 +404,14 @@ These choices apply only to this invocation. They do not modify Terraform,
 app settings, or the scheduled collector's default page size. The full
 reconciliation action also accepts a per-run page size and retains its `FULL`
 confirmation. The page size is a per-request maximum, not a total inventory cap.
+Complete/full collections now default to **2,500** findings per page (range
+1-2,500); other inventories and delta export remain capped at 1,000. DEBUG
+retains its 1-1,000 bound and existing defaults. Live machine-findings requests
+are paced about 24/minute across machines, pages, and retries. HTTP 429 honors
+the full server-requested cooldown rather than capping it at 60 seconds.
+The five-attempt budget and four-hour execution limit remain; no durable
+checkpoint/resume is added. Deploy Function code with option **3** and update
+the local menu to use these defaults.
 
 Equivalent cross-platform commands:
 

@@ -204,7 +204,8 @@ COLLECTION_PROMPT_CASES = [
     (False, ["", "", "", "DEBUG"], "invoke function --confirm --debug --endpoint machine_vulnerabilities --page-size 1", False),
     (False, ["X", "D", "Z", "M", "0", "-1", "1.5", "1001", "abc", "100", "DEBUG"], "invoke function --confirm --debug --endpoint machine_vulnerabilities --page-size 100", False),
     (False, ["D", "V", "", "DEBUG"], "invoke function --confirm --debug --endpoint vulnerabilities --page-size 1000", False),
-    (False, ["C", "", "COLLECT"], "invoke function --confirm --page-size 1000", True),
+    (False, ["C", "", "COLLECT"], "invoke function --confirm --page-size 2500", True),
+    (False, ["C", "2501", "2500", "COLLECT"], "invoke function --confirm --page-size 2500", True),
     (True, ["100", "FULL"], None, True),
     (False, ["D", "M", "1", "NO"], None, False),
 ]

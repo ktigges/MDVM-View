@@ -69,7 +69,7 @@ invoke_collection() {
   local confirmation="COLLECT"
   local prompt="This starts a live collection and publishes a new immutable run if successful."
   local args=(invoke function --confirm)
-  local page_size page_default=1000 choice debug_endpoint=machine_vulnerabilities
+  local page_size page_default=2500 page_max=2500 choice debug_endpoint=machine_vulnerabilities
   if [[ "$mode" == "scheduled" ]]; then
     while true; do
       printf 'D) Debug one page (no publication)\nC) Complete collection\nRun mode [D]: '
@@ -88,6 +88,7 @@ invoke_collection() {
     done
   fi
   if [[ "$confirmation" == "DEBUG" ]]; then
+    page_max=1000
     while true; do
       printf 'M) Machine vulnerability findings\nV) Vulnerability catalog\nDebug endpoint [M]: '
       read -r choice
@@ -101,13 +102,13 @@ invoke_collection() {
   fi
   printf 'Page size controls each request, not the total records collected.\n'
   while true; do
-    printf 'Records per page (1-1000) [%s]: ' "$page_default"
+    printf 'Records per page (1-%s; other endpoints cap at 1000) [%s]: ' "$page_max" "$page_default"
     read -r page_size
     page_size=${page_size:-$page_default}
-    if [[ "$page_size" =~ ^([1-9][0-9]{0,2}|1000)$ ]]; then
+    if [[ "$page_size" =~ ^[1-9][0-9]{0,3}$ ]] && (( page_size <= page_max )); then
       break
     fi
-    printf 'Enter a whole number from 1 to 1000.\n'
+    printf 'Enter a whole number from 1 to %s.\n' "$page_max"
   done
   args+=(--page-size "$page_size")
   if [[ "$mode" == "full" ]]; then

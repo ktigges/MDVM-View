@@ -18,7 +18,7 @@ from vulnerability_view.config import Settings, load_function_version
 from vulnerability_view.collection_diagnostics import manual_collection_diagnostics
 from vulnerability_view.credentials import create_credential
 from vulnerability_view.dataprep_cli import main
-from vulnerability_view.defender_client import COLLECTION_PAGE_SIZE, DefenderApiError, collection_page_size, probe_defender_page
+from vulnerability_view.defender_client import COLLECTION_PAGE_SIZE, MACHINE_FINDINGS_PAGE_SIZE, DefenderApiError, collection_page_size, probe_defender_page
 from vulnerability_view.storage_writer import download_current_manifest
 
 
@@ -26,10 +26,10 @@ app = func.FunctionApp()
 COLLECTOR_VERSION = load_function_version(Path(__file__).resolve().with_name("function-version.json"))
 
 
-def _run_dataprep(collection_mode: str = "auto", enrichment_mode: str = "auto", *, page_size: int = COLLECTION_PAGE_SIZE, debug: bool = False, debug_endpoint: str = "machine_vulnerabilities") -> int:
+def _run_dataprep(collection_mode: str = "auto", enrichment_mode: str = "auto", *, page_size: int = MACHINE_FINDINGS_PAGE_SIZE, debug: bool = False, debug_endpoint: str = "machine_vulnerabilities") -> int:
     """Run the data-preparation CLI in the function's temporary workspace."""
     if debug:
-        return main(["probe-live", "--page-size", str(collection_page_size(page_size)), "--endpoint", debug_endpoint])
+        return main(["probe-live", "--page-size", str(collection_page_size(page_size, maximum=COLLECTION_PAGE_SIZE)), "--endpoint", debug_endpoint])
     application_root = Path(__file__).resolve().parent
     policy_source = application_root / "config/sla-policies.json"
     if not policy_source.is_file():
@@ -133,7 +133,7 @@ def dataprep_debug_http(req: func.HttpRequest) -> func.HttpResponse:
         endpoint = options.get("endpoint", "machine_vulnerabilities")
         if endpoint not in ("machine_vulnerabilities", "vulnerabilities"):
             raise ValueError("Debug endpoint must be machine_vulnerabilities or vulnerabilities")
-        page_size = collection_page_size(options.get("pageSize", COLLECTION_PAGE_SIZE if endpoint == "vulnerabilities" else 1))
+        page_size = collection_page_size(options.get("pageSize", COLLECTION_PAGE_SIZE if endpoint == "vulnerabilities" else 1), maximum=COLLECTION_PAGE_SIZE)
     except ValueError as error:
         logging.warning("[debug] FAILED: Invalid debug request: %s", error)
         return func.HttpResponse(
@@ -176,7 +176,7 @@ def _manual_options(input: str) -> dict:
     return options
 
 
-def _manual_page_size(input: str, default: int = COLLECTION_PAGE_SIZE) -> int:
+def _manual_page_size(input: str, default: int = MACHINE_FINDINGS_PAGE_SIZE) -> int:
     options = _manual_options(input)
     return collection_page_size(options.get("pageSize", default))
 
@@ -187,7 +187,7 @@ def dataprep_debug_page(input: str) -> None:
     endpoint = _manual_options(input).get("endpoint", "machine_vulnerabilities")
     if endpoint not in ("machine_vulnerabilities", "vulnerabilities"):
         raise ValueError("Debug endpoint must be machine_vulnerabilities or vulnerabilities.")
-    page_size = _manual_page_size(input, default=COLLECTION_PAGE_SIZE if endpoint == "vulnerabilities" else 1)
+    page_size = collection_page_size(_manual_options(input).get("pageSize", COLLECTION_PAGE_SIZE if endpoint == "vulnerabilities" else 1), maximum=COLLECTION_PAGE_SIZE)
     logging.info("Starting Defender page debug version %s; endpoint %s; page size %s; no publication", COLLECTOR_VERSION, endpoint, page_size)
     exit_code = _run_dataprep(page_size=page_size, debug=True, debug_endpoint=endpoint)
     if exit_code:

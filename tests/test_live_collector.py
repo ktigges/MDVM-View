@@ -1,7 +1,8 @@
 import json
 from copy import deepcopy
 import gzip
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -9,6 +10,7 @@ import requests
 import pytest
 
 from vulnerability_view import live_collector
+from vulnerability_view import defender_client
 from vulnerability_view.config import Settings
 from vulnerability_view.defender_client import ENDPOINTS, DefenderApiError, DefenderClient, Endpoint, collection_endpoints, collection_page_size, probe_defender_page
 from vulnerability_view.live_collector import apply_vulnerability_delta, collect_live, merge_vulnerability_delta, normalize_live, recommendation_requires_api_enrichment, reconcile_live_findings, replay_raw_snapshot
@@ -88,6 +90,169 @@ def test_defender_timeouts_exhaust_shared_attempt_budget(monkeypatch):
     assert len(sleeps) == 2
     assert sleeps[0] == 2
     assert any("3 attempts" in message and "ReadTimeout" in message for message in progress)
+
+
+@pytest.mark.parametrize("header, reset, expected", [
+    ("2472", None, 2472),
+    (None, 2472, 2472),
+    ("60", 2472, 2472),
+    ("3000", 2472, 3000),
+    ("0", None, 0),
+])
+def test_429_honors_full_server_cooldown(header, reset, expected):
+    client = DefenderClient("https://example.test", Credential())
+    result = response({"error": {"message": f"API calls quota exceeded! You can send requests again in {reset} seconds."}} if reset else {})
+    result.status_code = 429
+    if header is not None:
+        result.headers["Retry-After"] = header
+    assert client._retry_delay(result, 0) == expected
+
+
+def test_429_accepts_http_date_without_sixty_second_cap():
+    client = DefenderClient("https://example.test", Credential())
+    result = response({})
+    result.status_code = 429
+    result.headers["Retry-After"] = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=2500), usegmt=True)
+    assert 2498 <= client._retry_delay(result, 0) <= 2500
+
+
+@pytest.mark.parametrize("header", [None, "bad-date", "-10", "NaN", "inf"])
+def test_429_without_valid_reset_uses_increasing_minute_backoff(monkeypatch, header, caplog):
+    client = DefenderClient("https://example.test", Credential())
+    result = response({})
+    result.status_code = 429
+    if header is not None:
+        result.headers["Retry-After"] = header
+    monkeypatch.setattr(defender_client.random, "random", lambda: 0.5)
+    assert [client._retry_delay(result, attempt) for attempt in range(4)] == [60.5, 120.5, 240.5, 480.5]
+    if header is not None:
+        assert "Invalid Defender Retry-After header" in caplog.text
+
+
+def test_429_cooldown_continues_same_request_without_duplicate_archive(monkeypatch):
+    client = DefenderClient("https://example.test", Credential(), page_size=2500)
+    calls = []
+    sleeps = []
+    archived = []
+    progress = []
+    client.archive_callback = lambda name, page, data: archived.append((page, json.loads(data)))
+    client.progress_callback = progress.append
+    throttled = response({"error": {"message": "You can send requests again in 2472 seconds."}})
+    throttled.status_code = 429
+
+    def get(url, **kwargs):
+        calls.append(url)
+        return throttled if len(calls) == 1 else response({"value": [{"machineId": "device-a"}]})
+
+    monkeypatch.setattr(client.session, "get", get)
+    monkeypatch.setattr(defender_client.time, "sleep", sleeps.append)
+    rows, status = client.collect(ENDPOINTS[0], {"$filter": "machineId eq 'device-a'"}, expected_machine_id="device-a")
+    assert calls[0] == calls[1]
+    assert sleeps == [2472]
+    assert rows == [{"machineId": "device-a"}]
+    assert status["PageCount"] == 1
+    assert archived == [(1, {"value": rows})]
+    assert any("waiting 2472.0s before attempt 2/5" in message for message in progress)
+
+
+def test_429_still_fails_after_five_attempts(monkeypatch):
+    client = DefenderClient("https://example.test", Credential())
+    result = response({})
+    result.status_code = 429
+    calls = []
+    sleeps = []
+    monkeypatch.setattr(client.session, "get", lambda *args, **kwargs: calls.append(args) or result)
+    monkeypatch.setattr(defender_client.time, "sleep", sleeps.append)
+    monkeypatch.setattr(defender_client.random, "random", lambda: 0)
+    with pytest.raises(DefenderApiError, match="429 after 5 attempts"):
+        client.request("https://example.test/page")
+    assert len(calls) == 5
+    assert sleeps == [60, 120, 240, 480]
+
+
+def test_live_client_paces_findings_across_requests_and_retries(monkeypatch):
+    clock = [0.0]
+    sleeps = []
+    starts = []
+    client = live_collector.create_client("https://example.test", "test", Credential())
+    assert client.page_size == 2500
+    assert client.findings_request_interval == 2.5
+    throttled = response({})
+    throttled.status_code = 429
+    throttled.headers["Retry-After"] = "1"
+
+    def sleep(delay):
+        sleeps.append(delay)
+        clock[0] += delay
+
+    def get(url, **kwargs):
+        starts.append(clock[0])
+        return throttled if len(starts) == 1 else response({"value": []})
+
+    monkeypatch.setattr(defender_client.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(defender_client.time, "sleep", sleep)
+    monkeypatch.setattr(client.session, "get", get)
+    url = "https://example.test/api/vulnerabilities/machinesVulnerabilities"
+    client.request(url + "?machine=a")
+    client.request(url + "?machine=b")
+    assert starts == [0, 2.5, 5]
+    assert sleeps == [1, 1.5, 2.5]
+    client.request("https://example.test/api/machines")
+    assert starts[-1] == 5
+
+
+def test_live_client_does_not_add_pacing_after_long_api_response(monkeypatch):
+    clock = [0.0]
+    client = live_collector.create_client("https://example.test", "test", Credential())
+
+    def get(url, **kwargs):
+        clock[0] += 3
+        return response({"value": []})
+
+    monkeypatch.setattr(defender_client.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(defender_client.time, "sleep", lambda delay: pytest.fail("Request duration already meets pacing interval"))
+    monkeypatch.setattr(client.session, "get", get)
+    client.request("https://example.test/api/vulnerabilities/machinesVulnerabilities")
+    client.request("https://example.test/api/vulnerabilities/machinesVulnerabilities")
+    assert clock[0] == 6
+
+
+def test_live_findings_pacing_stays_below_1500_calls_per_hour(monkeypatch):
+    clock = [0.0]
+    starts = []
+    client = live_collector.create_client("https://example.test", "test", Credential())
+
+    def sleep(delay):
+        clock[0] += delay
+
+    monkeypatch.setattr(defender_client.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(defender_client.time, "sleep", sleep)
+    monkeypatch.setattr(client.session, "get", lambda *args, **kwargs: starts.append(clock[0]) or response({"value": []}))
+    for _ in range(1501):
+        client.request("https://example.test/api/vulnerabilities/machinesVulnerabilities")
+    assert all(later - earlier >= 2.5 for earlier, later in zip(starts, starts[1:]))
+    assert sum(start < 3600 for start in starts) == 1440
+    assert starts[1500] == 3750
+
+
+@pytest.mark.parametrize("endpoint", ENDPOINTS[:4])
+def test_2500_page_size_is_limited_to_machine_findings(monkeypatch, endpoint):
+    client = DefenderClient("https://example.test", Credential(), page_size=2500)
+    queries = []
+    cap = 2500 if endpoint.name == "machine_vulnerabilities" else 1000
+
+    def request(url):
+        query = parse_qs(urlsplit(url).query)
+        queries.append(query)
+        size = int(query["$top"][0])
+        offset = int(query.get("$skip", ["0"])[0])
+        return response({"value": [{"id": index} for index in range(offset, min(offset + size, 3100))]})
+
+    monkeypatch.setattr(client, "request", request)
+    rows, status = client.collect(endpoint)
+    assert len(rows) == 3100
+    assert all(query["$top"] == [str(cap)] for query in queries)
+    assert status["PageCount"] == (2 if cap == 2500 else 4)
 
 
 def test_defender_page_timeout_does_not_duplicate_archived_pages(monkeypatch):
@@ -357,9 +522,9 @@ def test_delta_caps_explicit_page_size_without_mutating_query(monkeypatch):
     assert query["pageSize"] == "50000"
 
 
-@pytest.mark.parametrize("value", [0, -1, 1001, True, None, 1.5, "1.5", "abc", ""])
+@pytest.mark.parametrize("value", [0, -1, 2501, True, None, 1.5, "1.5", "abc", ""])
 def test_run_page_size_rejects_invalid_values(value):
-    with pytest.raises(ValueError, match="1 to 1000"):
+    with pytest.raises(ValueError, match="1 to 2500"):
         collection_page_size(value)
 
 
