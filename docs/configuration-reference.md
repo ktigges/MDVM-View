@@ -336,6 +336,7 @@ Asset query versions in `dashboard/index.html` control browser cache busting for
 | Setting | Effect |
 |---|---|
 | `version` | Functions host schema version |
+| `functionTimeout` | `04:00:00`: allows up to four hours per execution on the deployed Flex Consumption plan, replacing its 30-minute default. Does not change Defender request timeouts/retries or guarantee survival of platform restarts. Deploy Function code to apply; check for any `AzureFunctionsJobHost__functionTimeout` app-setting override. |
 | `logging.applicationInsights.samplingSettings.isEnabled` | Enables Application Insights sampling |
 | `logging.applicationInsights.samplingSettings.excludedTypes` | Telemetry types excluded from sampling |
 | `extensionBundle.id` | Functions extension bundle |

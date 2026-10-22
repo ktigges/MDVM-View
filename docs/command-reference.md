@@ -285,6 +285,23 @@ applying reviewed updates. It does not create environment-specific
 `main.tfvars.json` values or perform Azure CLI sign-in; complete those
 prerequisites first.
 
+**Operations → 1 (Show current collector activity)** reads a single cumulative
+snapshot from the latest locally requested manual collection's immutable
+diagnostics: current phase, elapsed time, API attempts/retries, downloaded rows
+and pages per endpoint, and the latest progress messages (including device and
+CVE progress). Select it again to refresh; it does not poll or invoke collection.
+The snapshot timestamp and age distinguish fresh evidence from an interrupted
+run. This requires updated Function code (option **3**) and storage read access
+for the signed-in operator; snapshots normally flush about every five seconds.
+The command lists chunk metadata but downloads only the newest chunk, not the
+full diagnostic capture. It does not write, replace, or delete Azure data.
+Use `python -m vulnerability_view.operations_cli check-collector-activity --id UUID`
+for a manual run invoked on another workstation. Without a local receipt, it
+falls back explicitly to Log Analytics, which can lag. Counts describe observed
+API responses, not normalized/published totals; this view is specific to the
+selected manual run, not all scheduled or concurrent invocations. Confirm
+publication with Operations option **2**.
+
 The menus do not expose destroy operations. Option 1 displays the saved Web App
 plan and requires typing `APPLY` before applying it. It then offers an optional
 initial/live collection, which requires typing `COLLECT`.
@@ -377,8 +394,14 @@ Deployment menu option **5** offers:
   retries, validation, and publication.
 
 For full baselines, complete collection retrieves the paged device inventory,
-CVE catalog, and recommendations first, then pages findings separately for
-each Defender machine ID. The request is
+applies any configured scale-set exclusion, then pages findings separately for
+each included Defender machine ID. It then retrieves catalog details only for
+distinct CVEs referenced by those findings, using filtered batches of up to 50
+IDs with normal paging, followed by recommendations. It does not download the
+unfiltered catalog or repeat a CVE lookup per device/software finding. Missing
+requested CVEs or unexpected catalog IDs fail the run before publication.
+An empty finding set requires no catalog API request and retains an explicit
+empty catalog archive for replay. The findings request is
 `/api/vulnerabilities/machinesVulnerabilities?$filter=machineId eq '<id>'&$top=<page-size>`,
 not an unfiltered tenant-wide findings query. Progress names the current device
 and reports completed machines and aggregate rows. A failed device query aborts

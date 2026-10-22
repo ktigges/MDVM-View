@@ -663,6 +663,9 @@ def device_scoped_run(monkeypatch, tmp_path):
         else:
             name = next(item.name for item in ENDPOINTS if item.path == parsed.path)
             rows = payloads[name]
+            if name == "vulnerabilities" and query.get("$filter", [""])[0].startswith("id eq "):
+                requested = query["$filter"][0]
+                rows = [row for row in rows if f"id eq '{row['id']}'" in requested]
         return response({"value": rows[offset:offset + limit]}, url)
 
     monkeypatch.setattr(requests.Session, "get", get)
@@ -703,7 +706,8 @@ def test_full_collection_pages_every_device_and_preserves_normalization_and_repl
     assert len(actual["findings"]) == 5
     assert {row["DeviceName"] for row in actual["findings"]} == {"standalone", "scale-set-instance"}
     paths = [urlsplit(url).path for url in calls]
-    assert paths[:4] == ["/api/machines", "/api/machines", "/api/vulnerabilities", "/api/recommendations"]
+    assert paths[:3] == ["/api/machines", "/api/machines", "/api/vulnerabilities/machinesVulnerabilities"]
+    assert paths.index("/api/vulnerabilities") > max(index for index, path in enumerate(paths) if path.endswith("/machinesVulnerabilities"))
     finding_calls = [url for url in calls if urlsplit(url).path.endswith("/machinesVulnerabilities")]
     assert len(finding_calls) == 5
     pages = sorted(run_folder.glob("machine_vulnerabilities-page-*.json.gz"))
@@ -743,6 +747,92 @@ def test_device_query_failure_prevents_normalization_and_publication(device_scop
     queries = [parse_qs(urlsplit(url).query) for url in calls if urlsplit(url).path.endswith("/machinesVulnerabilities")]
     assert sum(query["$filter"] == ["machineId eq 'device-2'"] for query in queries) == 5
     assert all(query["$filter"] != ["machineId eq 'device-3'"] for query in queries)
+
+
+def test_full_catalog_fetches_only_distinct_included_cves_in_paged_batches(device_scoped_run, tmp_path):
+    payloads, findings, calls, _ = device_scoped_run
+    catalog = [
+        {"id": f"CVE-2026-{index:04d}", "severity": "High", "cvssV3": 8.2}
+        for index in range(1, 122)
+    ]
+    payloads["vulnerabilities"] = catalog
+    findings["device-1"] = [
+        {"id": f"finding-{index}", "machineId": "device-1", "cveId": row["id"], "severity": "High"}
+        for index, row in enumerate(catalog[:51])
+    ]
+    findings["device-1"].append({**findings["device-1"][0], "id": "duplicate-cve-other-software", "productName": "Other"})
+    findings["device-2"] = [
+        {"id": "excluded-only", "machineId": "device-2", "cveId": catalog[-1]["id"]},
+    ]
+
+    actual, statuses = collect_live(
+        Settings().defender_api_base_url, Credential(), page_size=10, exclude_scale_sets=True,
+    )
+
+    catalog_calls = [parse_qs(urlsplit(url).query) for url in calls if urlsplit(url).path == "/api/vulnerabilities"]
+    filters = {query["$filter"][0] for query in catalog_calls}
+    assert len(filters) == 2
+    assert all("$filter" in query for query in catalog_calls)
+    assert all(query["$top"] == ["10"] for query in catalog_calls)
+    assert len(catalog_calls) == 7  # Six pages (including empty terminator) plus one final batch.
+    assert all(catalog[-1]["id"] not in query["$filter"][0] for query in catalog_calls)
+    assert len(actual["findings"]) == 52
+    assert {row["CveId"] for row in actual["vulnerabilities"]} == {row["id"] for row in catalog[:51]}
+    status = next(row for row in statuses if row["Endpoint"] == "vulnerabilities")
+    assert status["CollectionMethod"] == "ReferencedCves"
+    assert status["RequestedCveCount"] == status["RowCount"] == 51
+    assert status["PageCount"] == 7
+    run_folder = next((tmp_path / "output/raw").iterdir())
+    pages = sorted(run_folder.glob("vulnerabilities-page-*.json.gz"))
+    assert len(pages) == 7
+    replayed, _ = replay_raw_snapshot(run_folder, exclude_scale_sets=True)
+    for dataset in ("findings", "devices", "vulnerabilities"):
+        assert replayed[dataset] == actual[dataset]
+
+
+@pytest.mark.parametrize("case", ["missing", "unexpected", "http_error"])
+def test_referenced_catalog_errors_prevent_normalization_and_publication(device_scoped_run, monkeypatch, case):
+    from vulnerability_view import dataprep_cli
+
+    payloads, _, _, _ = device_scoped_run
+    if case == "missing":
+        payloads["vulnerabilities"] = []
+    else:
+        original_collect = DefenderClient.collect
+
+        def collect(self, endpoint, *args, **kwargs):
+            if endpoint.name == "vulnerabilities":
+                if case == "http_error":
+                    raise DefenderApiError("403 authorization denied")
+                return [{"id": "CVE-2099-9999"}], {"PageCount": 1}
+            return original_collect(self, endpoint, *args, **kwargs)
+
+        monkeypatch.setattr(DefenderClient, "collect", collect)
+    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity"))
+    monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
+    monkeypatch.setattr(dataprep_cli, "_read_existing", lambda *args: {})
+    monkeypatch.setattr(dataprep_cli, "_resolve_collection_mode", lambda *args: ("full", None))
+    monkeypatch.setattr(live_collector, "normalize_live", lambda *args, **kwargs: pytest.fail("Missing required CVE metadata must prevent normalization"))
+    monkeypatch.setattr(dataprep_cli, "_persist_live_run", lambda *args, **kwargs: pytest.fail("Missing required CVE metadata must prevent publication"))
+
+    with pytest.raises(RuntimeError, match="authorization denied|referenced-CVE response"):
+        dataprep_cli.main(["collect-live"])
+
+
+def test_no_findings_skips_catalog_api_but_preserves_replay(device_scoped_run, tmp_path):
+    _, findings, calls, _ = device_scoped_run
+    for device_id in findings:
+        findings[device_id] = []
+
+    actual, statuses = collect_live(Settings().defender_api_base_url, Credential())
+
+    assert all(urlsplit(url).path != "/api/vulnerabilities" for url in calls)
+    assert actual["findings"] == actual["vulnerabilities"] == []
+    status = next(row for row in statuses if row["Endpoint"] == "vulnerabilities")
+    assert status["RequestedCveCount"] == 0
+    run_folder = next((tmp_path / "output/raw").iterdir())
+    replayed, _ = replay_raw_snapshot(run_folder)
+    assert replayed["findings"] == replayed["vulnerabilities"] == []
 
 
 @pytest.mark.parametrize("all_excluded", [False, True])

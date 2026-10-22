@@ -1,6 +1,7 @@
 import json
 import logging
 import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -320,6 +321,114 @@ def test_download_absent_evidence_does_not_claim_success(download_storage):
 def test_download_no_local_receipt_requires_explicit_id(download_storage):
     with pytest.raises(RuntimeError, match="Supply --id"):
         operations_cli.download_collection_diagnostics()
+
+
+def test_activity_snapshot_accumulates_pages_across_devices_and_preserves_progress(diagnostic_storage):
+    with diagnostics.manual_collection_diagnostics(str(uuid4()), "test", "full", 1000):
+        diagnostics.record_diagnostic("progress", message="[collection] excluding 41,212 scale-set devices")
+        diagnostics.record_diagnostic("page_received", endpoint="machines", page=1, rowCount=43294)
+        diagnostics.record_diagnostic("request_started")
+        diagnostics.record_diagnostic("retry_wait")
+        diagnostics.record_diagnostic("request_started")
+        diagnostics.record_diagnostic("page_received", endpoint="machine_vulnerabilities", page=1, rowCount=10)
+        diagnostics.record_diagnostic("page_received", endpoint="machine_vulnerabilities", page=1, rowCount=20)
+        diagnostics.record_diagnostic("progress", message="[machine_vulnerabilities] machines complete: 2/2,082; 30 total rows")
+        diagnostics.record_diagnostic("progress", message="[vulnerabilities] CVE details complete: 5/5; 1 archived pages")
+        diagnostics.record_diagnostic("page_received", endpoint="vulnerabilities", page=1, rowCount=5)
+        diagnostics.record_diagnostic("phase_started", phase="persist_run")
+    snapshot = events(diagnostic_storage)[-1]["activity"]
+    assert snapshot["endpoints"] == {
+        "machines": {"rows": 43294, "pages": 1},
+        "machine_vulnerabilities": {"rows": 30, "pages": 2},
+        "vulnerabilities": {"rows": 5, "pages": 1},
+    }
+    assert snapshot["phase"] == "persist_run"
+    assert snapshot["requests"] == 2
+    assert snapshot["retries"] == 1
+    assert "41,212" in snapshot["progress"]["collection"]
+    assert "2/2,082" in snapshot["progress"]["machine_vulnerabilities"]
+    assert "5/5" in snapshot["progress"]["vulnerabilities"]
+    assert snapshot["terminal"] == "collection_completed"
+    assert snapshot["publicationObserved"] is False
+    assert "activity" not in snapshot
+
+
+@pytest.mark.parametrize("age, terminal, expected", [
+    (0, None, "recent manual-run activity"),
+    (120, None, "UNCONFIRMED - stale snapshot"),
+    (120, "collection_completed", "Outcome: collection_completed"),
+    (120, "collection_failed", "Outcome: collection_failed"),
+])
+def test_activity_reads_only_latest_chunk_and_labels_freshness(download_storage, capsys, age, terminal, expected):
+    blobs, reads = download_storage
+    identifier = str(uuid4())
+    prefix = diagnostics.diagnostic_prefix(identifier)
+    blobs[f"{prefix}00000001.jsonl"] = b"not downloaded"
+    snapshot = {
+        "diagnosticId": identifier, "event": "heartbeat",
+        "timeUtc": (datetime.now(UTC) - timedelta(seconds=age)).isoformat(),
+        "activity": {
+            "phase": "machine_vulnerabilities", "elapsedSeconds": 4000.5,
+            "requests": 50, "retries": 2,
+            "endpoints": {"machine_vulnerabilities": {"rows": 12345, "pages": 20}},
+            "progress": {"machine_vulnerabilities": "[machine_vulnerabilities] machines complete: 10/2,082"},
+            "terminal": terminal, "publicationObserved": False,
+        },
+    }
+    blobs[f"{prefix}00000002.jsonl"] = json.dumps(snapshot).encode()
+    assert operations_cli.main(["check-collector-activity", "--id", identifier]) == 0
+    assert reads == [f"{prefix}00000002.jsonl"]
+    output = capsys.readouterr().out
+    assert expected in output
+    assert "12,345 rows / 20 pages" in output
+    assert "10/2,082" in output
+    assert "4,000.5s" in output
+    assert "API attempts: 50; retries: 2" in output
+    assert "not published totals" in output
+    assert "all scheduled/concurrent runs" in output
+
+
+def test_activity_latest_receipt_old_collector_and_missing_chunk(download_storage, tmp_path, capsys):
+    blobs, reads = download_storage
+    identifier = str(uuid4())
+    folder = tmp_path / "output/diagnostics/manual-receipts"
+    folder.mkdir(parents=True)
+    (folder / f"{identifier}.json").write_text(json.dumps({"diagnosticId": identifier}))
+    name = f"{diagnostics.diagnostic_prefix(identifier)}00000002.jsonl"
+    row = {"diagnosticId": identifier, "event": "heartbeat", "timeUtc": datetime.now(UTC).isoformat()}
+    blobs[name] = json.dumps(row).encode()
+    operations_cli.check_collector_activity()
+    assert reads == [name]
+    assert "Deploy updated Function code with option 3" in capsys.readouterr().out
+    row["activity"] = {"droppedEvents": 2}
+    blobs[name] = json.dumps(row).encode()
+    operations_cli.check_collector_activity(identifier)
+    assert "diagnostic evidence is incomplete" in capsys.readouterr().out
+
+
+def test_activity_missing_receipt_falls_back_explicitly(download_storage, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(operations_cli, "check_function_logs", lambda *args: calls.append(args))
+    operations_cli.check_collector_activity()
+    assert calls == [(24, 3, True)]
+    assert "ingestion can lag" in capsys.readouterr().out
+
+
+def test_activity_missing_chunks_falls_back_without_claiming_success(download_storage, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(operations_cli, "check_function_logs", lambda *args: calls.append(args))
+    operations_cli.check_collector_activity(str(uuid4()))
+    assert calls == [(24, 3, True)]
+    assert "diagnostic writes may have failed" in capsys.readouterr().out
+
+
+def test_activity_rejects_mismatched_evidence(download_storage):
+    blobs, _ = download_storage
+    identifier = str(uuid4())
+    name = f"{diagnostics.diagnostic_prefix(identifier)}00000001.jsonl"
+    blobs[name] = json.dumps({"diagnosticId": str(uuid4())}).encode()
+    with pytest.raises(RuntimeError, match="Invalid activity evidence"):
+        operations_cli.check_collector_activity(identifier)
 
 
 def test_lost_trigger_response_preserves_receipt_and_does_not_retry(monkeypatch, tmp_path, capsys):

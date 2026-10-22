@@ -284,19 +284,28 @@ when provided; otherwise, a full inventory page advances `$skip` while preservin
 filters until a short or empty page is returned. An exact page-size boundary
 requires a final empty request; 1,000 is a page size, not a total collection limit.
 
-Full collection first downloads the paged machine inventory, CVE catalog, and
-recommendations. It then retrieves machine-vulnerability findings separately for
-every distinct Defender machine ID using
+Full collection first downloads the paged machine inventory and applies any
+configured scale-set exclusion. It then retrieves machine-vulnerability findings
+separately for every included distinct Defender machine ID using
 `/api/vulnerabilities/machinesVulnerabilities?$filter=machineId eq '<id>'&$top=1000`
 (or the selected page size). This avoids the unfiltered tenant-wide findings
 query. Device names are logged for identification; the filter uses IDs, not
-names. Scale-set instances and inactive devices returned by inventory are not
-excluded. Findings outside the returned device inventory cannot be discovered
+names. Scale-set instances are excluded only when `EXCLUDE_SCALE_SETS=true`;
+inactive devices returned by inventory are not automatically excluded.
+Findings outside the returned device inventory cannot be discovered
 through this method; existing lifecycle handling for missing devices is unchanged.
 Each device is fully paged, including devices with zero findings, and progress
 reports completed machines and aggregate rows. A failed device query or findings
 returned for a different device fails the run before publication; no partial
 baseline is presented as complete.
+
+After findings, the collector fetches catalog details only for the distinct
+referenced CVE IDs, in filtered batches of up to 50 with normal paging. It then
+collects recommendations. There is no unfiltered full-catalog download and no
+per-finding repeat lookup. Missing or mismatched CVE detail responses abort
+publication. All findings for included devices are retained; this optimization
+does not impose a finding-count cap. An empty finding set skips catalog requests
+and retains an empty catalog archive so the completed run can still be replayed.
 
 Raw findings page numbers continue across devices rather than restarting and
 overwriting earlier device evidence. An empty inventory produces an explicitly

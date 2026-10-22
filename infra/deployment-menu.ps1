@@ -303,7 +303,7 @@ Operations and diagnostics
   12) Download durable diagnostics for the latest manual collection
 "@
         switch (Read-Host "Select an option") {
-            "1" { Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only; Pause-Menu }
+            "1" { Invoke-OperationsCli check-collector-activity; Pause-Menu }
             "2" { Invoke-OperationsCli check-runs --limit 5 --progress; Pause-Menu }
             "3" { Invoke-OperationsCli check-runs --limit 10; Pause-Menu }
             "4" { Invoke-OperationsCli check-function-logs --hours 24 --limit 10; Pause-Menu }

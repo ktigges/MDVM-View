@@ -26,6 +26,12 @@ def invocation_context():
     return Mock(spec=function_app.func.Context, invocation_id="11111111-2222-3333-4444-555555555555")
 
 
+def test_function_execution_timeout_is_four_hours():
+    host = json.loads(Path(function_app.__file__).with_name("host.json").read_text())
+    hours, minutes, seconds = map(int, host["functionTimeout"].split(":"))
+    assert hours * 3600 + minutes * 60 + seconds == 14400
+
+
 def test_manual_context_annotations_match_azure_worker_contract():
     functions = function_app.app.get_functions()
     checked = set()
