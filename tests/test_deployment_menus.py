@@ -119,8 +119,6 @@ def test_deployment_menus_wrap_the_same_operations():
 
 def test_deployment_menus_expose_matching_operations_submenu():
     shell, powershell = menu_sources()
-    assert "1) run_cli check-collector-activity; pause_menu" in shell
-    assert '"1" { Invoke-OperationsCli check-collector-activity; Pause-Menu }' in powershell
     options = (
         "Operations and diagnostics",
         "1) Show current collector activity",

@@ -285,22 +285,10 @@ applying reviewed updates. It does not create environment-specific
 `main.tfvars.json` values or perform Azure CLI sign-in; complete those
 prerequisites first.
 
-**Operations → 1 (Show current collector activity)** reads a single cumulative
-snapshot from the latest locally requested manual collection's immutable
-diagnostics: current phase, elapsed time, API attempts/retries, downloaded rows
-and pages per endpoint, and the latest progress messages (including device and
-CVE progress). Select it again to refresh; it does not poll or invoke collection.
-The snapshot timestamp and age distinguish fresh evidence from an interrupted
-run. This requires updated Function code (option **3**) and storage read access
-for the signed-in operator; snapshots normally flush about every five seconds.
-The command lists chunk metadata but downloads only the newest chunk, not the
-full diagnostic capture. It does not write, replace, or delete Azure data.
-Use `python -m vulnerability_view.operations_cli check-collector-activity --id UUID`
-for a manual run invoked on another workstation. Without a local receipt, it
-falls back explicitly to Log Analytics, which can lag. Counts describe observed
-API responses, not normalized/published totals; this view is specific to the
-selected manual run, not all scheduled or concurrent invocations. Confirm
-publication with Operations option **2**.
+**Operations → 1 (Show current collector activity)** queries Log Analytics for
+collector status and the latest available progress message. It does not read
+diagnostic blobs or require the operator to have blob-data access. Log ingestion
+can lag; select the option again to refresh. It does not invoke collection.
 
 The menus do not expose destroy operations. Option 1 displays the saved Web App
 plan and requires typing `APPLY` before applying it. It then offers an optional

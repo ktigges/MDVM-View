@@ -187,7 +187,7 @@ EOF
     printf 'Select an option: '
     read -r operations_choice
     case "$operations_choice" in
-      1) run_cli check-collector-activity; pause_menu ;;
+      1) run_cli check-function-logs --hours 1 --limit 3 --status-only; pause_menu ;;
       2) run_cli check-runs --limit 5 --progress; pause_menu ;;
       3) run_cli check-runs --limit 10; pause_menu ;;
       4) run_cli check-function-logs --hours 24 --limit 10; pause_menu ;;
