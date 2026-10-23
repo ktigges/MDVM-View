@@ -3,8 +3,9 @@
   "functionTimeout": "04:00:00",
   "logging": {
     "logLevel": {
-      "default": "Information",
+      "default": "Warning",
       "Function": "Information",
+      "Host.Results": "Information",
       "DurableTask": "Warning",
       "Host.Triggers.DurableTask": "Warning",
       "Azure": "Warning"

@@ -50,8 +50,9 @@ def test_function_execution_timeout_is_four_hours():
 def test_host_logging_suppresses_coordination_noise_but_keeps_collection_progress():
     host = json.loads(Path(function_app.__file__).with_name("host.json").read_text())
     levels = host["logging"]["logLevel"]
-    assert levels["default"] == "Information"
+    assert levels["default"] == "Warning"
     assert levels["Function"] == "Information"
+    assert levels["Host.Results"] == "Information"
     for category in ("DurableTask", "Host.Triggers.DurableTask", "Azure"):
         assert levels[category] == "Warning"
     assert not any(
