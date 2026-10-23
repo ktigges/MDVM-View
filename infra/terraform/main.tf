@@ -214,7 +214,7 @@ resource "azurecaf_name" "service_plan" {
 
   name          = var.project_name
   resource_type = "azurerm_app_service_plan"
-  suffixes      = [var.environment]
+  suffixes      = [var.environment, "dedicated"]
   clean_input   = true
 }
 
@@ -423,11 +423,12 @@ resource "azurerm_service_plan" "function" {
   resource_group_name = azurerm_resource_group.environment.name
   location            = var.location
   os_type             = "Linux"
-  sku_name            = "FC1"
+  sku_name            = "B2"
+  worker_count        = 1
   tags                = var.tags
 }
 
-resource "azurerm_function_app_flex_consumption" "collector" {
+resource "azurerm_linux_function_app" "collector" {
   for_each = local.function_instances
 
   name                = var.function_app_name
@@ -435,14 +436,9 @@ resource "azurerm_function_app_flex_consumption" "collector" {
   location            = var.location
   service_plan_id     = azurerm_service_plan.function[each.key].id
 
-  storage_container_type                         = "blobContainer"
-  storage_container_endpoint                     = "${azurerm_storage_account.function_runtime[each.key].primary_blob_endpoint}${azurerm_storage_container.function_deployment[each.key].name}"
-  storage_authentication_type                    = "UserAssignedIdentity"
-  storage_user_assigned_identity_id              = azurerm_user_assigned_identity.collector[each.key].id
-  runtime_name                                   = "python"
-  runtime_version                                = "3.12"
-  maximum_instance_count                         = 1
-  instance_memory_in_mb                          = var.function_instance_memory_in_mb
+  storage_account_name                           = azurerm_storage_account.function_runtime[each.key].name
+  storage_uses_managed_identity                  = true
+  functions_extension_version                    = "~4"
   https_only                                     = true
   public_network_access_enabled                  = true
   webdeploy_publish_basic_authentication_enabled = false
@@ -453,9 +449,15 @@ resource "azurerm_function_app_flex_consumption" "collector" {
   }
 
   site_config {
+    always_on                              = true
+    worker_count                           = 1
     application_insights_connection_string = azurerm_application_insights.function[each.key].connection_string
     minimum_tls_version                    = "1.2"
     scm_minimum_tls_version                = "1.2"
+
+    application_stack {
+      python_version = "3.12"
+    }
   }
 
   app_settings = {
@@ -473,6 +475,9 @@ resource "azurerm_function_app_flex_consumption" "collector" {
     "ENABLE_EXPERIMENTAL_ENDPOINTS"    = tostring(var.enable_experimental_endpoints)
     "EXCLUDE_SCALE_SETS"               = tostring(var.exclude_scale_sets)
     "FULL_COLLECTION_WEEKDAY"          = tostring(var.full_collection_weekday)
+    "FUNCTIONS_WORKER_RUNTIME"         = "python"
+    "SCM_DO_BUILD_DURING_DEPLOYMENT"   = "true"
+    "ENABLE_ORYX_BUILD"                = "true"
     "RECOMMENDATION_ENRICHMENT_MODE"   = var.recommendation_enrichment_mode
     "VULNERABILITY_COLLECTION_MODE"    = var.vulnerability_collection_mode
     "STORAGE_ACCOUNT_NAME"             = azurerm_storage_account.history.name
@@ -511,7 +516,7 @@ resource "azurerm_monitor_diagnostic_setting" "function" {
   for_each = local.function_instances
 
   name                       = "send-to-log-analytics"
-  target_resource_id         = azurerm_function_app_flex_consumption.collector[each.key].id
+  target_resource_id         = azurerm_linux_function_app.collector[each.key].id
   log_analytics_workspace_id = azurerm_log_analytics_workspace.function[each.key].id
 
   enabled_log {

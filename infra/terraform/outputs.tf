@@ -39,11 +39,11 @@ output "network_security_perimeter_access_mode" {
 }
 
 output "function_app_name" {
-  value = try(azurerm_function_app_flex_consumption.collector["collector"].name, null)
+  value = try(azurerm_linux_function_app.collector["collector"].name, null)
 }
 
 output "function_app_default_hostname" {
-  value = try(azurerm_function_app_flex_consumption.collector["collector"].default_hostname, null)
+  value = try(azurerm_linux_function_app.collector["collector"].default_hostname, null)
 }
 
 output "collector_identity_client_id" {

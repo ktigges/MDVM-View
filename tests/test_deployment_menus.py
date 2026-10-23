@@ -334,7 +334,7 @@ def test_powershell_menu_bootstraps_clean_windows_clone():
     assert "Initialize-AzureCliExtensions" in powershell
 
 
-def test_manual_collection_uses_flex_compatible_trigger_and_monitoring():
+def test_manual_collection_uses_existing_trigger_and_monitoring():
     deploy = SHELL_DEPLOY.read_text(encoding="utf-8")
     function_logs = SHELL_FUNCTION_LOGS.read_text(encoding="utf-8")
 
@@ -346,6 +346,39 @@ def test_manual_collection_uses_flex_compatible_trigger_and_monitoring():
         "dataprep_full_snapshot",
     ):
         assert function_name in function_logs
+
+
+def test_collector_uses_fixed_dedicated_hosting_without_changing_storage_identity():
+    terraform = Path("infra/terraform/main.tf").read_text(encoding="utf-8")
+    outputs = Path("infra/terraform/outputs.tf").read_text(encoding="utf-8")
+    operations = Path("src/vulnerability_view/operations_cli.py").read_text(encoding="utf-8")
+    plan = terraform.split('resource "azurerm_service_plan" "function" {', 1)[1].split("\nresource ", 1)[0]
+    collector = terraform.split('resource "azurerm_linux_function_app" "collector" {', 1)[1].split("\nresource ", 1)[0]
+    plan_name = terraform.split('resource "azurecaf_name" "service_plan" {', 1)[1].split("\nresource ", 1)[0]
+
+    assert 'sku_name            = "B2"' in plan
+    assert "worker_count        = 1" in plan
+    assert 'suffixes      = [var.environment, "dedicated"]' in plan_name
+    assert "create_before_destroy" not in plan
+    assert "always_on                              = true" in collector
+    assert "worker_count                           = 1" in collector
+    assert 'python_version = "3.12"' in collector
+    assert 'functions_extension_version                    = "~4"' in collector
+    assert "storage_uses_managed_identity                  = true" in collector
+    assert "azurerm_storage_account.function_runtime[each.key].name" in collector
+    assert "azurerm_user_assigned_identity.collector[each.key].id" in collector
+    assert '"STORAGE_ACCOUNT_NAME"             = azurerm_storage_account.history.name' in collector
+    assert '"SCM_DO_BUILD_DURING_DEPLOYMENT"   = "true"' in collector
+    assert '"ENABLE_ORYX_BUILD"                = "true"' in collector
+    assert '"FUNCTIONS_WORKER_RUNTIME"         = "python"' in collector
+    assert 'resource "azurerm_function_app_flex_consumption"' not in terraform
+    assert "var.function_instance_memory_in_mb" not in terraform
+    assert "azurerm_linux_function_app.collector[each.key].id" in terraform
+    assert 'azurerm_linux_function_app.collector["collector"].name' in outputs
+    assert 'azurerm_linux_function_app.collector["collector"].default_hostname' in outputs
+    assert '"azurerm_linux_function_app.collector",' in operations
+    assert '"azurerm_function_app_flex_consumption.collector",' in operations
+    assert 'resource "azurerm_monitor_autoscale_setting"' not in terraform
 
 
 def test_deployment_operations_do_not_use_operator_storage_data_plane():

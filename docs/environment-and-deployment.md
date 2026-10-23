@@ -44,7 +44,7 @@ The Terraform implementation needs these inputs:
 | `current_container_name` | `dvm-current` |
 | `function_runtime_storage_account_name` | Separate storage for the Functions host and Durable task hub |
 | `function_app_name` | Globally unique Function App name |
-| `function_instance_memory_in_mb` | Flex Consumption memory per collector instance; supported project values are 2048 and 4096 |
+| `function_instance_memory_in_mb` | Deprecated Flex setting, accepted but unused; the Dedicated collector uses one fixed B2 worker with Always On |
 | `deploy_function` | Creates Function, identity, permissions, and monitoring when `true` |
 | `collection_schedule` | Production NCRONTAB schedule |
 | `recommendation_enrichment_mode` | `targeted` for scheduled runs; `full` only for an explicit complete relationship refresh |
@@ -179,7 +179,7 @@ Use a development account that is separate from production. Never point local in
 | `dvm-current` container | Replaceable current manifest pointer | Implemented with `prevent_destroy` |
 | Function runtime storage | Function host state and deployment packages; separate from retained DVM history | Implemented when `deploy_function=true` |
 | User-assigned managed identity | Defender access and Storage Blob Data Contributor for the collector | Implemented when `deploy_function=true` |
-| Flex Consumption Function App | Scheduled collector | Implemented when `deploy_function=true` |
+| Dedicated Linux Function App | Scheduled collector, separate B2 plan with one fixed worker and Always On | Implemented when `deploy_function=true` |
 | Application Insights | Function diagnostics, failures, and dependency timing | Implemented when `deploy_function=true` |
 | Linux Web App and plan | Hosts the dashboard and a same-origin API that reads current data from private ADLS | Implemented as an optional B2 Terraform stage |
 | Web App managed identity | Read-only access to `dvm-current` and referenced curated blobs | Implemented with Storage Blob Data Reader |
@@ -314,9 +314,13 @@ terraform plan -out=<environment>.tfplan -var-file=<environment>.tfvars
 ```
 
 The current Terraform provisions the protected storage foundation and, when
-`deploy_function=true`, the Flex Consumption Function, separate runtime
+`deploy_function=true`, the Dedicated Linux Function on a fixed B2 plan, separate runtime
 storage, managed identity, permissions, and monitoring. The Function remains a
 synchronous pilot rather than a Durable Functions orchestration.
+
+For existing Flex deployments, follow the [hosting migration procedure](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments).
+Code deployment alone does not change the hosting plan. Dedicated hosting
+removes consumption-driven scale-in but does not guarantee uninterrupted runs.
 
 ### Function pilot deployment
 
@@ -365,8 +369,9 @@ editing the Function App setting out of band.
 
 Production deployment requires all of the following:
 
-- The synchronous Flex Consumption pilot is either proven to stay within the
-  execution limit or replaced with bounded Durable Functions activities.
+- The synchronous collector is either proven to stay within its execution
+  and memory limits, with interruption risk accepted, or replaced with bounded
+  Durable Functions activities.
 - Function package deployment, retry behavior, concurrency control, and missed-run alerting are tested.
 - The collector managed identity has Defender application permissions with tenant admin consent.
 - The Function identity has write access to the history account without delete permissions in application code.

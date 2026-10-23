@@ -238,6 +238,50 @@ the legacy `AzureWebJobsStorage` connection string that AzureRM can retain or
 inject during a Flex Consumption resource update. It then verifies that only the
 managed-identity runtime-storage settings remain before reporting success.
 
+### Collector hosting and upgrading existing Flex deployments
+
+The collector now uses a separate Linux Dedicated B2 App Service plan with one
+fixed worker and Always On. No autoscale policy is provisioned. This removes
+consumption-driven scale-in; it does not prevent maintenance, deployment, or
+failure-related restarts. Billing is continuous rather than per execution.
+Collection logic, triggers, schedule, four-hour execution timeout, and
+append-only publication behavior are unchanged.
+
+Upgrading an existing Flex deployment requires an infrastructure apply, not
+just deployment-menu option 3. The collector plan name gains a `dedicated`
+suffix, forcing replacement instead of attempting an unsupported FC1-to-B2
+SKU update. Terraform's default destroy-before-create ordering and the
+existing Function-to-plan dependency remove the old Function before creating
+its Dedicated replacement under the same Function App name. Expect collector
+downtime; deploy only when no collection is active.
+
+For an environment with the dashboard already deployed:
+
+```bash
+python -m vulnerability_view.operations_cli plan webapp
+python -m vulnerability_view.operations_cli show webapp
+python -m vulnerability_view.operations_cli apply webapp
+python -m vulnerability_view.operations_cli deploy function
+python -m vulnerability_view.operations_cli verify function
+```
+
+Use the cumulative `webapp` stage to retain the existing dashboard; it does
+not redeploy dashboard code. If the dashboard has never been provisioned,
+use the `function` stage instead. Review the saved plan: replacement of the
+collector Function, its hosting plan/name, and related diagnostics is expected.
+Do not approve deletion or replacement of the history account, history/current
+containers, workflow data, or resource group. Existing runtime storage,
+collector identity, API grants, history permissions, and monitoring resources
+should be retained. Never destroy the environment or remove Terraform state
+to perform this upgrade.
+
+The old `function_instance_memory_in_mb` value remains accepted in customer
+parameter files for compatibility but is unused on Dedicated hosting. The
+fixed B2 SKU determines collector capacity (2 cores, 3.5 GB); memory changes
+require a separately reviewed plan/SKU change, not that legacy value.
+The unused private `function-releases` container is retained during migration;
+it is no longer the Dedicated app's deployment configuration.
+
 ## Command matrix
 
 | Command | What it does | Terraform? | Azure login? |

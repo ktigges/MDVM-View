@@ -35,13 +35,13 @@ Only example files belong in the source repository.
 | `tenant_id` | Microsoft Entra tenant GUID containing Defender |
 | `collector_management_group_id` | Management group ID containing the subscriptions to inventory; use the ID, not the display name or full resource path |
 | `resource_group_name` | New resource group name |
-| `location` | Region supported by Azure Functions Flex Consumption |
+| `location` | Region supported by Linux Dedicated App Service hosting |
 | `web_app_location` | Optional App Service and Web App region; empty uses `location` |
 | `web_app_candidate_locations` | Optional additional customer-approved regions for quota checks |
 | `history_storage_account_name` | Globally unique name for protected ADLS Gen2 history |
 | `function_runtime_storage_account_name` | Globally unique name for replaceable Functions host storage |
 | `function_app_name` | Globally unique Function App name |
-| `function_instance_memory_in_mb` | `2048` normally; use `4096` when measured collector working set requires it |
+| `function_instance_memory_in_mb` | Deprecated and unused; existing customer values are accepted. Collector capacity is one fixed Dedicated B2 worker |
 | `app_mode` | `combined` for labeled synthetic plus live test data; `live` for production |
 | `collection_schedule` | Six-field NCRONTAB expression in UTC; `0 0 5 * * *` means daily at 05:00 UTC |
 | `history_storage_replication_type` | `LRS`, `ZRS`, `GRS`, or `GZRS` |
@@ -174,10 +174,15 @@ python -m vulnerability_view.operations_cli deploy function
 python -m vulnerability_view.operations_cli verify function
 ```
 
-This creates the Flex Consumption plan, separate runtime storage, collector
+This creates the Dedicated B2 plan with one fixed worker and Always On, separate runtime storage, collector
 managed identity, storage RBAC, Defender/Graph application-role assignments,
 Log Analytics, Application Insights, diagnostics, and the Function App. The
 Function runs at the UTC schedule in `collection_schedule`.
+
+This is a greenfield procedure. Existing Flex deployments require the
+[reviewed hosting migration](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments).
+Dedicated hosting removes consumption-driven scale-in but can still restart
+for maintenance, deployment, or failures.
 
 The deployment helper removes the AzureRM provider's legacy
 `AzureWebJobsStorage` setting before publishing. The Function then uses only

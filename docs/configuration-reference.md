@@ -86,7 +86,7 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `collector_management_group_id` | Empty; management group ID | Grants the collector Reader once at the management-group scope and inventories all nested subscriptions |
 | `collector_subscription_reader_ids` | `[]`; set of subscription GUIDs | Compatibility fallback used only when `collector_management_group_id` is empty |
 | `resource_group_name` | Required | Resource group containing application infrastructure |
-| `location` | Required | Azure region; must support Functions Flex Consumption |
+| `location` | Required | Azure region; must support Linux Dedicated App Service hosting |
 | `project_name` | `dvmviewer` | Naming component for monitoring and Azure resources |
 | `environment` | `test` | Environment suffix and tag value |
 | `history_storage_account_name` | Required, globally unique | Protected ADLS Gen2 account containing immutable history and current pointer containers |
@@ -104,7 +104,7 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `deploy_web_app` | `false` | Cumulative-stage switch used by the deployment helper to create the dashboard stack |
 | `function_runtime_storage_account_name` | Required, globally unique | Replaceable Functions host/deployment storage; not retained DVM history |
 | `function_app_name` | Required, globally unique | Collector Function App name |
-| `function_instance_memory_in_mb` | `2048`; `2048` or `4096` | Memory assigned to each Flex Consumption collector instance |
+| `function_instance_memory_in_mb` | Deprecated; existing `2048` or `4096` values accepted | Unused by the fixed, single-worker Dedicated B2 collector plan; B2 determines memory capacity |
 | `collection_schedule` | `0 0 5 * * *` | Six-field UTC NCRONTAB timer schedule |
 | `app_mode` | `live`; `live` or `combined` | Controls whether a newly published run contains live rows only or live plus retained labeled synthetic rows |
 | `recommendation_enrichment_mode` | `targeted`; `auto`, `targeted`, `full`, or `none` | Controls recommendation-to-machine API enrichment; `auto` resolves to targeted |
@@ -336,7 +336,7 @@ Asset query versions in `dashboard/index.html` control browser cache busting for
 | Setting | Effect |
 |---|---|
 | `version` | Functions host schema version |
-| `functionTimeout` | `04:00:00`: allows up to four hours per execution on the deployed Flex Consumption plan, replacing its 30-minute default. Does not change Defender request timeouts/retries or guarantee survival of platform restarts. Deploy Function code to apply; check for any `AzureFunctionsJobHost__functionTimeout` app-setting override. |
+| `functionTimeout` | `04:00:00`: allows up to four hours per execution. Dedicated hosting enables Always On with one fixed B2 worker. Does not change Defender request timeouts/retries or guarantee survival of platform restarts. Deploy Function code to apply timeout changes; check for any `AzureFunctionsJobHost__functionTimeout` app-setting override. Flex-to-Dedicated migration additionally requires an infrastructure apply; see [migration instructions](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments). |
 | `logging.applicationInsights.samplingSettings.isEnabled` | Enables Application Insights sampling |
 | `logging.applicationInsights.samplingSettings.excludedTypes` | Telemetry types excluded from sampling |
 | `extensionBundle.id` | Functions extension bundle |

@@ -25,7 +25,6 @@
   "deploy_web_app": false,
   "function_runtime_storage_account_name": "stdvmfuncreplace123",
   "function_app_name": "func-dvmviewer-test-replace123",
-  "function_instance_memory_in_mb": 2048,
   "web_app_name": "app-dvmviewer-test-replace123",
   "web_app_service_plan_name": "plan-dvmviewer-web-test-replace123",
   "web_app_identity_name": "id-dvmviewer-web-test-replace123",

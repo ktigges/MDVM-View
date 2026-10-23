@@ -4,7 +4,7 @@ Purpose: Verify cross-platform operations parsing, versioning, packaging, and sa
 
 import json
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -568,6 +568,48 @@ def test_function_status_distinguishes_failed_execution_from_success(monkeypatch
     output = capsys.readouterr().out
     assert "FAILED - no durable run was published" in output
     assert "Completed local:" in output
+
+
+@pytest.mark.parametrize("completed", [None, "", "None"])
+def test_function_status_handles_missing_completion_timestamp(monkeypatch, capsys, completed):
+    now = datetime.now(UTC).isoformat()
+    responses = iter([
+        [{"InvocationId": "running-invocation", "StartedUtc": now, "CompletedUtc": completed}],
+        [],
+        [],
+        [{"TimeGenerated": now, "Message": "[machine_vulnerabilities] machines complete: 10/100"}],
+    ])
+    monkeypatch.setattr(operations_cli, "_workspace_context", lambda: (
+        {"function_app_name": "func-test", "subscription_id": "sub-test"}, "workspace-test",
+    ))
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {"published": False})
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
+
+    assert operations_cli.check_function_logs(1, 3, True) == "ACTIVE"
+    output = capsys.readouterr().out
+    assert "running-invocation" in output
+    assert "machines complete: 10/100" in output
+    assert "IDLE" not in output
+
+
+@pytest.mark.parametrize("timestamp", [None, "", "None"])
+def test_function_status_missing_progress_timestamp_is_indeterminate(monkeypatch, capsys, timestamp):
+    responses = iter([
+        [{"InvocationId": "running-invocation", "StartedUtc": datetime.now(UTC).isoformat(), "CompletedUtc": None}],
+        [],
+        [],
+        [{"TimeGenerated": timestamp, "Message": "[collection] progress"}],
+    ])
+    monkeypatch.setattr(operations_cli, "_workspace_context", lambda: (
+        {"function_app_name": "func-test", "subscription_id": "sub-test"}, "workspace-test",
+    ))
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {"published": False})
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: next(responses))
+
+    assert operations_cli.check_function_logs(1, 3, True) == "INDETERMINATE"
+    output = capsys.readouterr().out
+    assert "progress telemetry without a timestamp" in output
+    assert "ACTIVE -" not in output
 
 
 def test_function_status_does_not_treat_accepted_request_as_completed(monkeypatch, capsys):

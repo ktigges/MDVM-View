@@ -82,7 +82,7 @@ variable "resource_group_name" {
 }
 
 variable "location" {
-  description = "Azure region supported by Flex Consumption."
+  description = "Azure region supported by Linux Dedicated App Service hosting."
   type        = string
 }
 
@@ -306,7 +306,7 @@ variable "function_app_name" {
 }
 
 variable "function_instance_memory_in_mb" {
-  description = "Memory allocated to each Flex Consumption Function instance."
+  description = "Deprecated Flex-only value retained for existing parameter files; unused by the fixed B2 Dedicated collector plan."
   type        = number
   default     = 2048
 

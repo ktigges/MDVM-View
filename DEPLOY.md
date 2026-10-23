@@ -796,12 +796,12 @@ or Function runtime account.
 
 `plan function` and `apply function` retain the foundation and add:
 
-1. One Flex Consumption service plan using SKU `FC1`.
-2. One Linux Flex Consumption Function App:
+1. One Dedicated Linux App Service plan using SKU `B2` and one fixed worker.
+2. One Linux Dedicated Function App:
    - Python 3.12.
-   - 2,048 MB instance memory.
-   - Maximum one instance.
-   - No always-ready instance configured.
+   - B2 capacity: 2 cores and 3.5 GB memory.
+   - One fixed instance; no autoscale policy provisioned.
+   - Always On enabled.
    - HTTPS-only with TLS 1.2 minimum.
    - Public network access enabled.
 3. One separate StorageV2 Function runtime account:
@@ -1103,14 +1103,21 @@ publication. In `combined` test mode it retains previously seeded synthetic rows
 but does not generate them. Do not start a manual run while another invocation
 is active.
 
+### Existing Flex deployments
+
+Moving to Dedicated hosting requires a reviewed infrastructure apply and
+Function code deployment, not code deployment alone. The Function and hosting
+plan are replaced; retained history storage and the collector identity are
+preserved. Follow the [migration instructions](infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments),
+including use of the cumulative `webapp` stage when a dashboard already exists.
+Dedicated hosting removes consumption-driven scale-in, not all platform restarts.
+
 ### Temporary two-hour lab schedule
 
-The collector normally uses 2 GB and runs daily. If telemetry shows the Python
-worker exiting after its working set approaches or exceeds 2 GB, temporarily
-set these Terraform values for a lab-day test:
+The collector runs daily on one Dedicated B2 worker. To test a temporary
+two-hour lab cadence, set these Terraform values:
 
 ```json
-"function_instance_memory_in_mb": 4096,
 "app_mode": "live",
 "collection_schedule": "0 30 */2 * * *"
 ```
@@ -1140,15 +1147,12 @@ After the lab, restore the normal daily schedule:
 "collection_schedule": "0 0 5 * * *"
 ```
 
-If repeated live-only runs remain comfortably below 2 GB, also restore:
-
-```json
-"function_instance_memory_in_mb": 2048
-```
-
 Run `plan function`, review it, and run `apply function` again after
-restoring those values. Changing the schedule or instance memory does not
-delete or overwrite immutable run history.
+restoring the schedule (use the cumulative `webapp` stage when the dashboard
+already exists). Changing the schedule does not delete or overwrite immutable
+run history. Legacy `function_instance_memory_in_mb` settings are accepted but
+do not change Dedicated capacity; sizing requires a separately reviewed SKU
+change after measuring memory use.
 
 List the latest ten durable Azure runs and their manifest status:
 

@@ -3,6 +3,13 @@
 > **Last modified:** 2026-10-12
 > **Purpose:** Compare Web App hosting, security, scale, availability, and Azure cost options.
 
+> **Collector hosting update:** Current Terraform uses a separate Dedicated B2
+> collector plan with one fixed worker and Always On. The Flex Consumption
+> collector costs and scale-to-zero scenarios below describe the earlier design,
+> not the current deployment baseline. Budget continuous B2 compute separately
+> from dashboard compute. Existing Flex deployments require the
+> [hosting migration](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments).
+
 The editable standalone estimator is
 [`tools/calculator.html`](../tools/calculator.html). Open it directly as a
 local file, or run `python -m http.server 8765 --directory tools` and open
@@ -31,9 +38,9 @@ no-change/no-delete period, not an expiration date.
 
 Keep the collector and dashboard as separate workloads:
 
-- **Collector:** retain the existing Azure Functions Flex Consumption `FC1`
-  plan, current 4 GB lab instance size, maximum instance count of one, and zero
-  Always Ready instances. Re-evaluate memory and cadence after measured runs.
+- **Collector:** use the separate Azure Functions Dedicated B2 plan with one
+  fixed worker and Always On. This avoids consumption-driven scale-in but does
+  not prevent all restarts. Re-evaluate capacity after measured runs.
 - **Dashboard:** publish the existing FastAPI application to one Linux Azure
   Web App.
 - **Published dashboard:** use one Basic B2 instance in one region.
