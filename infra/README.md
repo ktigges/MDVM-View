@@ -77,6 +77,14 @@ Function's status endpoint or host-key lookup is unavailable. The status failure
 is printed explicitly; it does not prevent startup/indexing errors from being
 displayed. Log export also works independently of the Function status endpoint.
 
+Collector host logging retains application progress and publication messages at
+Information level. Durable Task coordination (`DurableTask` and
+`Host.Triggers.DurableTask`) and Azure SDK (`Azure`) categories are filtered to
+Warning, suppressing routine lease renewals and Storage HTTP request/response
+traces while retaining warnings and errors. Lease timing, checkpoints, and
+collection behavior are unchanged. Deploy Function code to apply these filters;
+existing Azure app-setting log-level overrides may take precedence.
+
 Install or refresh the editable project once after pulling CLI changes on
 macOS or Linux:
 

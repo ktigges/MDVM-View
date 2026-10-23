@@ -1,7 +1,16 @@
 {
   "version": "2.0",
   "functionTimeout": "04:00:00",
-  "logging": {"applicationInsights": {"samplingSettings": {"isEnabled": true, "excludedTypes": "Request;Trace;Exception"}}},
+  "logging": {
+    "logLevel": {
+      "default": "Information",
+      "Function": "Information",
+      "DurableTask": "Warning",
+      "Host.Triggers.DurableTask": "Warning",
+      "Azure": "Warning"
+    },
+    "applicationInsights": {"samplingSettings": {"isEnabled": true, "excludedTypes": "Request;Trace;Exception"}}
+  },
   "extensionBundle": {"id": "Microsoft.Azure.Functions.ExtensionBundle", "version": "[4.*, 5.0.0)"},
   "extensions": {
     "durableTask": {
