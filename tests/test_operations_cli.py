@@ -772,6 +772,32 @@ def test_detailed_function_diagnostics_show_execution_evidence(monkeypatch, caps
     assert "Telemetry records shown: 1" in output
 
 
+def test_startup_diagnostics_survive_unavailable_function_status(monkeypatch, capsys):
+    status_calls = []
+
+    def unavailable():
+        status_calls.append(True)
+        raise RuntimeError("Function publication-status endpoint returned an invalid response")
+
+    monkeypatch.setattr(operations_cli, "_function_publication_status", unavailable)
+    monkeypatch.setattr(
+        operations_cli, "_workspace_context",
+        lambda: ({"function_app_name": "func-test", "subscription_id": "sub-test"}, "workspace-test"),
+    )
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: [])
+    monkeypatch.setattr(operations_cli, "_application_request_rows", lambda *args, **kwargs: [])
+    monkeypatch.setattr(operations_cli, "_application_request_count", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(operations_cli, "_function_telemetry_rows", lambda *args, **kwargs: [{
+        "TimeGenerated": "2026-10-23T23:00:00Z", "SourceTable": "AppTraces",
+        "AppRoleName": "func-test", "Message": "Worker failed to index functions: test startup failure",
+    }])
+    operations_cli.check_function_logs(24, 25, False)
+    output = capsys.readouterr().out
+    assert "Continuing with Log Analytics" in output
+    assert "Worker failed to index functions" in output
+    assert len(status_calls) == 1
+
+
 def test_detailed_logs_render_host_errors_without_invocation_or_operation_id(monkeypatch, capsys):
     values = {"function_app_name": "func-test", "subscription_id": "sub-test"}
     responses = iter([[], [], [], []])
@@ -2189,6 +2215,58 @@ def test_host_readiness_waits_for_all_durable_functions(monkeypatch):
 
 
 def test_host_readiness_fails_explicitly_when_indexing_never_completes(monkeypatch):
+    syncs = []
+    checks = []
+    monkeypatch.setattr(operations_cli, "_sync_function_triggers", lambda *args: syncs.append(args))
+    monkeypatch.setattr(
+        operations_cli, "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="test-key"),
+    )
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        operations_cli.requests, "get",
+        lambda *args, **kwargs: checks.append(True) or SimpleNamespace(status_code=200, json=lambda: []),
+    )
+    with pytest.raises(RuntimeError, match="did not index"):
+        operations_cli._wait_function_host("rg", "function")
+    assert syncs == [("rg", "function")]
+    assert len(checks) == 30
+
+
+def test_host_readiness_recovers_after_one_trigger_sync(monkeypatch):
+    checks = []
+    syncs = []
+    monkeypatch.setattr(operations_cli, "_sync_function_triggers", lambda *args: syncs.append((args, len(checks))))
+    monkeypatch.setattr(
+        operations_cli, "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="test-key"),
+    )
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda seconds: None)
+
+    def get(*args, **kwargs):
+        checks.append(True)
+        return SimpleNamespace(status_code=200, json=lambda: [
+            {"name": name} for name in operations_cli.REQUIRED_COLLECTOR_FUNCTIONS
+        ] if syncs else [])
+
+    monkeypatch.setattr(operations_cli.requests, "get", get)
+    operations_cli._wait_function_host("rg", "function")
+    assert syncs == [(("rg", "function"), 24)]
+    assert len(checks) == 25
+
+
+def test_trigger_sync_uses_configured_subscription_and_bounds_azure_call(monkeypatch):
+    calls = []
+    monkeypatch.setattr(operations_cli, "_values", lambda: {"subscription_id": "configured-subscription"})
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: calls.append((args, kwargs)))
+    operations_cli._sync_function_triggers("rg", "function")
+    args, kwargs = calls[0]
+    assert args[:4] == ("rest", "--method", "post", "--url")
+    assert "/subscriptions/configured-subscription/resourceGroups/rg/" in args[4]
+    assert kwargs["timeout"] == 90
+
+
+def test_host_readiness_does_not_hide_failed_trigger_sync(monkeypatch):
     monkeypatch.setattr(
         operations_cli, "_az",
         lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="test-key"),
@@ -2198,7 +2276,12 @@ def test_host_readiness_fails_explicitly_when_indexing_never_completes(monkeypat
         operations_cli.requests, "get",
         lambda *args, **kwargs: SimpleNamespace(status_code=200, json=lambda: []),
     )
-    with pytest.raises(RuntimeError, match="did not index"):
+
+    def fail(*args):
+        raise subprocess.CalledProcessError(1, ["az", "rest"])
+
+    monkeypatch.setattr(operations_cli, "_sync_function_triggers", fail)
+    with pytest.raises(subprocess.CalledProcessError):
         operations_cli._wait_function_host("rg", "function")
 
 

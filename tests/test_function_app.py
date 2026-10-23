@@ -6,6 +6,9 @@ from pathlib import Path
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
+from typing import get_type_hints
+import subprocess
+import sys
 
 import pytest
 import requests
@@ -53,6 +56,22 @@ def test_manual_context_annotations_match_azure_worker_contract():
             assert signature.parameters["context"].annotation is function_app.func.Context
             checked.add(function.get_function_name())
     assert checked == {"dataprep_manual_snapshot", "dataprep_full_snapshot"}
+
+
+def test_all_function_app_annotations_resolve_on_eager_annotation_runtimes():
+    from azure.durable_functions.models.DurableOrchestrationStatus import DurableOrchestrationStatus
+
+    assert get_type_hints(function_app._workflow_status)["workflow"] is DurableOrchestrationStatus
+    for value in vars(function_app).values():
+        if inspect.isfunction(value) and value.__module__ == function_app.__name__:
+            get_type_hints(value)
+    subprocess.run([
+        sys.executable, "-c",
+        "import function_app; from typing import get_type_hints; "
+        "functions = function_app.app.get_functions(); "
+        "assert len(functions) == 12; "
+        "[get_type_hints(f.get_user_function()) for f in functions]",
+    ], check=True, capture_output=True, text=True)
 
 
 def test_function_runtime_version_comes_from_packaged_source_not_old_app_settings(monkeypatch):

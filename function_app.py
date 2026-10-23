@@ -12,6 +12,7 @@ from pathlib import Path
 
 import azure.functions as func
 import azure.durable_functions as df
+from azure.durable_functions.models.DurableOrchestrationStatus import DurableOrchestrationStatus
 import requests
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 
@@ -122,7 +123,7 @@ async def dataprep_status(req: func.HttpRequest, client: df.DurableOrchestration
     return func.HttpResponse(json.dumps(status), mimetype="application/json")
 
 
-def _workflow_status(workflow: df.DurableOrchestrationStatus) -> dict:
+def _workflow_status(workflow: DurableOrchestrationStatus) -> dict:
     return {
         "instanceId": workflow.instance_id,
         "state": workflow.runtime_status.value,

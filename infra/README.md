@@ -63,9 +63,19 @@ New Durable runs do not produce those legacy JSONL chunks. DEBUG probes remain
 one-page, synchronous, and nonpublishing.
 
 Function deployment waits for authenticated runtime indexing before synchronizing
-management-plane triggers. Verification checks all starter, orchestration,
+management-plane triggers. If the initial 24 readiness attempts expire, it tries
+trigger synchronization once using the subscription from the environment values
+file, then checks readiness up to six more times. A sync error or persistently
+missing functions still fails deployment; recovery does not restart the app,
+redeploy the package, or change collection checkpoints.
+Verification checks all starter, orchestration,
 activity, status, and DEBUG functions and fails on missing triggers. A successful
 package upload or version app setting alone does not prove that Python loaded.
+
+Detailed Function log diagnostics continue querying Log Analytics when the
+Function's status endpoint or host-key lookup is unavailable. The status failure
+is printed explicitly; it does not prevent startup/indexing errors from being
+displayed. Log export also works independently of the Function status endpoint.
 
 Install or refresh the editable project once after pulling CLI changes on
 macOS or Linux:
