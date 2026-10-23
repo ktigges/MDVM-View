@@ -471,6 +471,21 @@ def test_status_reports_checkpointed_work_before_first_publication(monkeypatch, 
     assert body["workflow"]["progress"]["stage"] == "reconcile"
 
 
+def test_status_handles_sdk_empty_instance_before_first_collection(monkeypatch, durable_client):
+    from azure.durable_functions.models.DurableOrchestrationStatus import DurableOrchestrationStatus
+
+    durable_client.get_status.return_value = DurableOrchestrationStatus.from_json("No instance found")
+    monkeypatch.setattr(
+        function_app, "_current_run_status",
+        lambda: (_ for _ in ()).throw(ResourceNotFoundError("no publication")),
+    )
+    response = asyncio.run(async_handler(function_app.dataprep_status)(None, durable_client))
+    body = json.loads(response.get_body())
+    assert response.status_code == 404
+    assert body["published"] is False
+    assert "workflow" not in body
+
+
 def test_timer_starts_bounded_workflow_instead_of_collecting_inline(monkeypatch, durable_client):
     start = AsyncMock()
     monkeypatch.setattr(function_app, "start_collection", start)

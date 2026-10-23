@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from azure.core.exceptions import ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
+from azure.durable_functions.models.DurableOrchestrationStatus import DurableOrchestrationStatus
 
 from vulnerability_view.collection_workflow import (
     INSTANCE_ID, RunStore, orchestrate, prepare_run, publish_run, run_prefix, start_collection, verify_file,
@@ -81,6 +82,32 @@ def test_first_start_records_only_small_run_options():
     assert args[2]["pageSize"] == 2500
     assert datetime.fromisoformat(args[2]["snapshotUtc"]).tzinfo == UTC
     assert "findings" not in args[2]
+
+
+def test_first_run_accepts_sdk_empty_status_for_missing_instance():
+    missing = DurableOrchestrationStatus.from_json("No instance with ID vulnerability-collection found")
+    assert not missing
+    client = SimpleNamespace(get_status=AsyncMock(return_value=missing), start_new=AsyncMock(return_value=INSTANCE_ID))
+    assert asyncio.run(start_collection(client, {"pageSize": 2500})) == INSTANCE_ID
+    client.start_new.assert_awaited_once()
+
+
+@pytest.mark.parametrize("state", ["Running", "Pending", "Suspended", "ContinuedAsNew", "Failed", "Completed"])
+def test_starter_handles_actual_sdk_existing_instance_status(state):
+    status = DurableOrchestrationStatus(
+        instanceId=INSTANCE_ID, runtimeStatus=state,
+        createdTime="2026-10-23T16:00:00Z", lastUpdatedTime="2026-10-23T16:01:00Z",
+    )
+    client = SimpleNamespace(get_status=AsyncMock(return_value=status), start_new=AsyncMock(return_value=INSTANCE_ID), rewind=AsyncMock())
+    assert asyncio.run(start_collection(client, {})) == INSTANCE_ID
+    if state == "Completed":
+        client.start_new.assert_awaited_once()
+    elif state == "Failed":
+        client.rewind.assert_awaited_once()
+        client.start_new.assert_not_called()
+    else:
+        client.start_new.assert_not_called()
+        client.rewind.assert_not_called()
 
 
 def test_runstore_rejects_nonappendonly_paths_before_upload():

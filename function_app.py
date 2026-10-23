@@ -104,7 +104,7 @@ async def dataprep_status(req: func.HttpRequest, client: df.DurableOrchestration
         status = _current_run_status()
     except ResourceNotFoundError:
         status = {"published": False, "reason": "No current manifest has been published"}
-        if workflow is not None:
+        if workflow:
             status["workflow"] = _workflow_status(workflow)
         return func.HttpResponse(
             json.dumps(status),
@@ -118,7 +118,7 @@ async def dataprep_status(req: func.HttpRequest, client: df.DurableOrchestration
             status_code=500,
             mimetype="application/json",
         )
-    if workflow is not None:
+    if workflow:
         status["workflow"] = _workflow_status(workflow)
     return func.HttpResponse(json.dumps(status), mimetype="application/json")
 
