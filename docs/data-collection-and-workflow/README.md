@@ -387,7 +387,7 @@ For each successful page:
 2. The JSON `value` rows are added to the endpoint result.
 3. The next-link URL, or the next inventory offset, is requested if more data remains.
 
-Requests use separate connection and response timeouts. Read/connect timeouts,
+Local CLI requests use separate connection and response timeouts. Read/connect timeouts,
 HTTP 429, and temporary server failures (`500`, `502`, `503`, and `504`) share a
 budget of five attempts per page. Failed attempts do not advance the page or
 duplicate its archive. Malformed pages, repeated continuation URLs, repeated full
@@ -402,9 +402,12 @@ For HTTP 429, retry delay honors the full service `Retry-After` header (seconds
 or HTTP date) or the error message's `You can send requests again in N seconds`
 reset interval, whichever is longer. Without a valid reset, it uses
 60/120/240/480-second backoff with small jitter. Other transient failures retain
-the existing shorter backoff. The shared five-attempt budget and four-hour
-Function timeout still apply; a long cooldown can reach that timeout. This does
-not implement durable resume or guarantee freedom from shared-quota throttling.
+the existing shorter backoff. Local CLI collection retains its five-attempt
+budget. Hosted complete collections use immutable response checkpoints and
+Durable timers instead: each activity bounds new HTTP requests and live work,
+and a cooldown does not consume a single invocation's timeout. Twelve successive
+deferred batches without saved progress fail explicitly and can be resumed
+after the cause is corrected. Neither path bypasses shared API quotas.
 
 HTTP 401 and 403 errors fail immediately with an authentication or permission message.
 
@@ -860,7 +863,7 @@ vulnerability-view simulate-scheduled-run --enrichment targeted
 
 The first command is fully offline. The second replays local source pages and tests Azure Blob upload. The third performs a new targeted Defender collection and durable upload.
 
-For a larger environment, the Azure-hosted implementation should split the same logic into Durable Function activities:
+Hosted complete collections now split the work into Durable Function activities:
 
 1. Collect required core endpoints.
 2. Derive vulnerability recommendation-machine relationships.
@@ -869,7 +872,30 @@ For a larger environment, the Azure-hosted implementation should split the same 
 5. Build summaries, lifecycle events, and the run bundle.
 6. Verify hashes and replace the current manifest last.
 
-Use Flex Consumption on-demand with zero always-ready instances and the regular Azure Storage Durable provider. This preserves scale-to-zero billing and avoids the separately priced managed Durable Task Scheduler. The browser never starts this workflow; it reads only completed published data.
+The deployed collector remains on the separate Dedicated B2 plan with Always On.
+The regular Azure Storage Durable provider uses the existing runtime account and
+managed identity; no separately priced managed Durable Task Scheduler is added.
+Successful API responses and run plans are append-only in retained history.
+Settings, SLA policy, snapshot time, and previous manifest are frozen for each run.
+Activity replay uses those responses rather than repeating completed Defender
+requests. Rate-limit waits use durable timers; request batches and orchestration
+history are bounded.
+
+Normalization and reconciliation use disk-backed rows instead of retaining the
+whole finding/history population as Python dictionaries. Published tables keep
+their existing schemas and business rules. Verified immutable intermediate
+checkpoints separate normalization, reconciliation, events, summaries, and
+bundle preparation; completed stages survive a new worker. Processing resumes
+at stage boundaries, not per row. Individual stages still scan all their input
+and must fit the isolated worker's 20-minute timeout and available local disk.
+Each bundle file is verified in its
+own activity before an ETag-conditional current-pointer update. A failed run
+leaves the last completed publication intact. Normal/full/scheduled triggers
+retain active work and resume failed work; they do not discard retained history.
+See [deployment and recovery](../../infra/README.md#resumable-collection-deployment-and-recovery).
+
+The browser never starts this workflow; it reads only completed published data.
+This rewrite does not introduce viewer pagination or change dashboard tables.
 
 ## Failure behavior
 

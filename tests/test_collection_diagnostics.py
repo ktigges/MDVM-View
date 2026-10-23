@@ -1,10 +1,12 @@
 import json
+import asyncio
+import inspect
 import logging
 import threading
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from zipfile import ZipFile
 
 import pytest
@@ -176,33 +178,25 @@ def test_diagnostic_setup_failure_does_not_prevent_collection(monkeypatch, caplo
     assert diagnostics._current.get() is None
 
 
-def test_manual_function_records_failure_without_changing_exception_or_parameters(diagnostic_storage, monkeypatch):
+def test_manual_function_preserves_durable_start_failure_without_legacy_capture(diagnostic_storage, monkeypatch):
     expected = RuntimeError("private error with Bearer secret-token")
-    calls = []
-
-    def collect(*args, **kwargs):
-        calls.append((args, kwargs))
-        raise expected
-
-    monkeypatch.setattr(function_app, "_run_dataprep", collect)
+    starter = AsyncMock(side_effect=expected)
+    client = Mock()
+    monkeypatch.setattr(function_app, "start_collection", starter)
+    monkeypatch.setattr(function_app, "_run_dataprep", lambda *args, **kwargs: pytest.fail("starter must not collect inline"))
     identifier = str(uuid4())
     invocation = str(uuid4())
     with pytest.raises(RuntimeError) as error:
-        function_app.dataprep_full_snapshot(
+        asyncio.run(inspect.unwrap(function_app.dataprep_full_snapshot._function.get_user_function())(
             json.dumps({"diagnosticId": identifier, "pageSize": 100}),
             Mock(spec=function_app.func.Context, invocation_id=invocation),
-        )
+            client,
+        ))
     assert error.value is expected
-    assert calls == [(("full", "full"), {"page_size": 100})]
-    rows = events(diagnostic_storage)
-    assert rows[0]["diagnosticId"] == identifier
-    assert rows[0]["invocationId"] == invocation
-    assert rows[0]["excludeScaleSets"] is True
-    failure = next(row for row in rows if row["event"] == "collection_failed")
-    assert failure["errorType"] == "RuntimeError"
-    assert failure["stack"]
-    assert "secret-token" not in json.dumps(rows)
-    assert not any(row["event"] == "collection_completed" for row in rows)
+    starter.assert_awaited_once_with(client, {
+        "diagnosticId": identifier, "pageSize": 100, "collection": "full", "enrichment": "full",
+    })
+    assert events(diagnostic_storage) == []
     assert diagnostics._current.get() is None
     assert not any(isinstance(handler, diagnostics._DiagnosticLogHandler) for handler in logging.getLogger().handlers)
 

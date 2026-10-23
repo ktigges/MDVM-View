@@ -1,8 +1,11 @@
 import json
 import importlib
 import inspect
+import asyncio
 from pathlib import Path
-from unittest.mock import Mock
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import requests
@@ -24,6 +27,15 @@ def local_manual_diagnostics(monkeypatch, tmp_path):
 @pytest.fixture
 def invocation_context():
     return Mock(spec=function_app.func.Context, invocation_id="11111111-2222-3333-4444-555555555555")
+
+
+@pytest.fixture
+def durable_client():
+    return Mock(get_status=AsyncMock(return_value=None))
+
+
+def async_handler(builder):
+    return inspect.unwrap(builder._function.get_user_function())
 
 
 def test_function_execution_timeout_is_four_hours():
@@ -93,51 +105,52 @@ def test_run_dataprep_restores_directory_after_failure(monkeypatch):
     assert Path.cwd() == original_directory
 
 
-def test_manual_full_trigger_forces_full_collection_and_enrichment(monkeypatch, invocation_context):
-    calls = []
-    monkeypatch.setattr(function_app, "_run_dataprep", lambda collection, enrichment, **kwargs: calls.append((collection, enrichment, kwargs)) or 0)
+def test_manual_full_trigger_forces_full_collection_and_enrichment(monkeypatch, invocation_context, durable_client):
+    start = AsyncMock()
+    monkeypatch.setattr(function_app, "start_collection", start)
 
-    function_app.dataprep_full_snapshot("full", invocation_context)
+    asyncio.run(async_handler(function_app.dataprep_full_snapshot)("full", invocation_context, durable_client))
 
-    assert calls == [("full", "full", {"page_size": 2500})]
-
-
-def test_manual_trigger_uses_scheduled_collection_policy(monkeypatch, invocation_context):
-    calls = []
-    monkeypatch.setattr(function_app, "_run_dataprep", lambda **kwargs: calls.append(kwargs) or 0)
-
-    function_app.dataprep_manual_snapshot("", invocation_context)
-
-    assert calls == [{"page_size": 2500}]
+    start.assert_awaited_once_with(durable_client, {"collection": "full", "enrichment": "full", "pageSize": 2500})
 
 
-def test_manual_collection_accepts_2500_but_debug_stays_capped(monkeypatch, invocation_context):
-    calls = []
-    monkeypatch.setattr(function_app, "_run_dataprep", lambda *args, **kwargs: calls.append((args, kwargs)) or 0)
-    function_app.dataprep_manual_snapshot('{"pageSize":2500}', invocation_context)
-    function_app.dataprep_full_snapshot('{"pageSize":2500}', invocation_context)
-    assert calls == [((), {"page_size": 2500}), (("full", "full"), {"page_size": 2500})]
+def test_manual_trigger_uses_scheduled_collection_policy(monkeypatch, invocation_context, durable_client):
+    start = AsyncMock()
+    monkeypatch.setattr(function_app, "start_collection", start)
+
+    asyncio.run(async_handler(function_app.dataprep_manual_snapshot)("", invocation_context, durable_client))
+
+    start.assert_awaited_once_with(durable_client, {"collection": "auto", "enrichment": "auto", "pageSize": 2500})
+
+
+def test_manual_collection_accepts_2500_but_debug_stays_capped(monkeypatch, invocation_context, durable_client):
+    start = AsyncMock()
+    monkeypatch.setattr(function_app, "start_collection", start)
+    asyncio.run(async_handler(function_app.dataprep_manual_snapshot)('{"pageSize":2500}', invocation_context, durable_client))
+    asyncio.run(async_handler(function_app.dataprep_full_snapshot)('{"pageSize":2500}', invocation_context, durable_client))
+    assert [call.args[1]["pageSize"] for call in start.await_args_list] == [2500, 2500]
     with pytest.raises(ValueError, match="1 to 1000"):
         function_app.dataprep_debug_page('{"pageSize":2500}')
     with pytest.raises(ValueError, match="1 to 2500"):
-        function_app.dataprep_manual_snapshot('{"pageSize":2501}', invocation_context)
+        asyncio.run(async_handler(function_app.dataprep_manual_snapshot)('{"pageSize":2501}', invocation_context, durable_client))
 
 
 @pytest.mark.parametrize("page_size", [1, 100, 1000])
-def test_manual_triggers_forward_per_run_page_size(monkeypatch, page_size, invocation_context):
+def test_manual_triggers_forward_per_run_page_size(monkeypatch, page_size, invocation_context, durable_client):
     calls = []
     monkeypatch.setattr(function_app, "_run_dataprep", lambda *args, **kwargs: calls.append((args, kwargs)) or 0)
+    start = AsyncMock()
+    monkeypatch.setattr(function_app, "start_collection", start)
     payload = json.dumps({"pageSize": page_size})
 
-    function_app.dataprep_manual_snapshot(payload, invocation_context)
-    function_app.dataprep_full_snapshot(payload, invocation_context)
+    asyncio.run(async_handler(function_app.dataprep_manual_snapshot)(payload, invocation_context, durable_client))
+    asyncio.run(async_handler(function_app.dataprep_full_snapshot)(payload, invocation_context, durable_client))
     function_app.dataprep_debug_page(payload)
 
     assert calls == [
-        ((), {"page_size": page_size}),
-        (("full", "full"), {"page_size": page_size}),
         ((), {"page_size": page_size, "debug": True, "debug_endpoint": "machine_vulnerabilities"}),
     ]
+    assert [call.args[1]["pageSize"] for call in start.await_args_list] == [page_size, page_size]
 
 
 @pytest.mark.parametrize("payload", ['{"pageSize":0}', '{"pageSize":1001}', '{"pageSize":true}', '{"pageSize":1.5}', "[]", "not-json"])
@@ -373,14 +386,14 @@ def test_current_run_status_summarizes_manifest(monkeypatch):
     }
 
 
-def test_status_endpoint_returns_not_found_before_first_publication(monkeypatch):
+def test_status_endpoint_returns_not_found_before_first_publication(monkeypatch, durable_client):
     monkeypatch.setattr(
         function_app,
         "_current_run_status",
         lambda: (_ for _ in ()).throw(ResourceNotFoundError("missing")),
     )
 
-    response = function_app.dataprep_status(None)
+    response = asyncio.run(async_handler(function_app.dataprep_status)(None, durable_client))
 
     assert response.status_code == 404
     assert json.loads(response.get_body()) == {
@@ -389,14 +402,14 @@ def test_status_endpoint_returns_not_found_before_first_publication(monkeypatch)
     }
 
 
-def test_status_endpoint_reports_lookup_failure_without_details(monkeypatch, caplog):
+def test_status_endpoint_reports_lookup_failure_without_details(monkeypatch, caplog, durable_client):
     monkeypatch.setattr(
         function_app,
         "_current_run_status",
         lambda: (_ for _ in ()).throw(RuntimeError("sensitive failure")),
     )
 
-    response = function_app.dataprep_status(None)
+    response = asyncio.run(async_handler(function_app.dataprep_status)(None, durable_client))
 
     assert response.status_code == 500
     assert json.loads(response.get_body()) == {
@@ -404,3 +417,33 @@ def test_status_endpoint_reports_lookup_failure_without_details(monkeypatch, cap
         "reason": "Status lookup failed",
     }
     assert "Failed to read current publication status" in caplog.text
+
+
+def test_status_reports_checkpointed_work_before_first_publication(monkeypatch, durable_client):
+    now = datetime(2026, 10, 23, 16, tzinfo=UTC)
+    durable_client.get_status.return_value = SimpleNamespace(
+        instance_id="vulnerability-collection", runtime_status=SimpleNamespace(value="Running"),
+        created_time=now, last_updated_time=now,
+        custom_status={"phase": "process", "stage": "reconcile", "runId": "live-20261023T160000Z"},
+    )
+
+    def unpublished():
+        raise ResourceNotFoundError("no current manifest")
+
+    monkeypatch.setattr(function_app, "_current_run_status", unpublished)
+    response = asyncio.run(async_handler(function_app.dataprep_status)(None, durable_client))
+    body = json.loads(response.get_body())
+    assert response.status_code == 404
+    assert body["published"] is False
+    assert body["workflow"]["state"] == "Running"
+    assert body["workflow"]["progress"]["stage"] == "reconcile"
+
+
+def test_timer_starts_bounded_workflow_instead_of_collecting_inline(monkeypatch, durable_client):
+    start = AsyncMock()
+    monkeypatch.setattr(function_app, "start_collection", start)
+    monkeypatch.setattr(function_app, "_run_dataprep", lambda *args, **kwargs: pytest.fail("timer must not collect inline"))
+    asyncio.run(async_handler(function_app.dataprep_snapshot)(None, durable_client))
+    start.assert_awaited_once_with(
+        durable_client, {"collection": "auto", "enrichment": "auto", "pageSize": 2500},
+    )

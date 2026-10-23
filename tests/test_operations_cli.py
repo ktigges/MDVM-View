@@ -6,6 +6,7 @@ import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 
 import pytest
@@ -1878,7 +1879,7 @@ def test_invoke_distinguishes_trigger_acceptance_from_collection_success(monkeyp
     receipt = json.loads((tmp_path / "output/diagnostics/manual-receipts" / f"{identifier}.json").read_text())
     assert receipt["acceptance"] == "HTTP 202"
     assert "host-key" not in json.dumps(receipt)
-    assert "download-collection-diagnostics" in output
+    assert "Durable collection progress" in output
     assert "trigger accepted" in output
     assert "does not confirm collection success" in output
     assert "check-runs --limit 10 --progress" in output
@@ -2145,6 +2146,7 @@ def test_function_deploy_synchronizes_base_uri_from_terraform_values(monkeypatch
     monkeypatch.setattr(operations_cli, "_require", lambda name: name)
     monkeypatch.setattr(operations_cli, "_run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="commit\n"))
     monkeypatch.setattr(operations_cli, "_zip_tree", lambda package, paths: packaged.extend(paths))
+    monkeypatch.setattr(operations_cli, "_wait_function_host", lambda *args: calls.append(("runtime-ready",)))
     monkeypatch.setattr(operations_cli.time, "sleep", lambda *args: None)
     monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0))
 
@@ -2154,6 +2156,9 @@ def test_function_deploy_synchronizes_base_uri_from_terraform_values(monkeypatch
     assert f"DEFENDER_API_BASE_URL={expected}" in settings
     assert "COLLECTOR_VERSION=2026.10.19.6" in settings
     assert tmp_path / "function-version.json" in packaged
+    ready_index = calls.index(("runtime-ready",))
+    assert calls.index(settings) < ready_index
+    assert ready_index < next(index for index, call in enumerate(calls) if call[:4] == ("rest", "--method", "post", "--url"))
 
 
 def test_function_deploy_rejects_base_uri_containing_a_dataset_path(monkeypatch):
@@ -2162,6 +2167,89 @@ def test_function_deploy_rejects_base_uri_containing_a_dataset_path(monkeypatch)
 
     with pytest.raises(ValueError, match="without a path or query"):
         operations_cli.deploy_function()
+
+
+def test_host_readiness_waits_for_all_durable_functions(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        operations_cli, "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="test-key"),
+    )
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda seconds: events.append(("wait", seconds)))
+    responses = iter([
+        SimpleNamespace(status_code=503),
+        SimpleNamespace(status_code=200, json=lambda: [{"name": "dataprep_snapshot"}]),
+        SimpleNamespace(status_code=200, json=lambda: [
+            {"name": name} for name in operations_cli.REQUIRED_COLLECTOR_FUNCTIONS
+        ]),
+    ])
+    monkeypatch.setattr(operations_cli.requests, "get", lambda *args, **kwargs: next(responses))
+    operations_cli._wait_function_host("rg", "function")
+    assert events == [("wait", 10), ("wait", 10)]
+
+
+def test_host_readiness_fails_explicitly_when_indexing_never_completes(monkeypatch):
+    monkeypatch.setattr(
+        operations_cli, "_az",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="test-key"),
+    )
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        operations_cli.requests, "get",
+        lambda *args, **kwargs: SimpleNamespace(status_code=200, json=lambda: []),
+    )
+    with pytest.raises(RuntimeError, match="did not index"):
+        operations_cli._wait_function_host("rg", "function")
+
+
+def test_host_readiness_recovers_when_keys_are_unavailable_during_restart(monkeypatch):
+    attempts = [0]
+
+    def keys(*args, **kwargs):
+        attempts[0] += 1
+        if attempts[0] == 1:
+            raise subprocess.CalledProcessError(1, ["az", "functionapp", "keys", "list"])
+        return subprocess.CompletedProcess(args, 0, stdout="test-key")
+
+    monkeypatch.setattr(operations_cli, "_az", keys)
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        operations_cli.requests, "get",
+        lambda *args, **kwargs: SimpleNamespace(status_code=200, json=lambda: [
+            {"name": name} for name in operations_cli.REQUIRED_COLLECTOR_FUNCTIONS
+        ]),
+    )
+    operations_cli._wait_function_host("rg", "function")
+    assert attempts[0] == 2
+
+
+@pytest.mark.parametrize("state,expected", [
+    ("Running", "ACTIVE"), ("Pending", "ACTIVE"), ("Failed", "FAILED"),
+    ("Suspended", "SUSPENDED"), ("Completed", "COMPLETED"),
+])
+def test_durable_status_does_not_depend_on_log_analytics(monkeypatch, state, expected):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {
+        "published": False, "workflow": {
+            "instanceId": "vulnerability-collection", "state": state,
+            "updatedUtc": "2026-10-23T20:00:00Z", "progress": {"phase": "collect"},
+        },
+    })
+    monkeypatch.setattr(
+        operations_cli, "_workspace_context",
+        lambda: pytest.fail("Durable status must not require Log Analytics"),
+    )
+    assert operations_cli.check_function_logs(1, 10, True) == expected
+
+
+def test_new_durable_receipt_does_not_claim_legacy_chunks_exist(monkeypatch, tmp_path):
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
+    folder = tmp_path / "output/diagnostics/manual-receipts"
+    folder.mkdir(parents=True)
+    (folder / "request.json").write_text(json.dumps({
+        "diagnosticId": "11111111-2222-3333-4444-555555555555", "executionMode": "durable",
+    }))
+    with pytest.raises(RuntimeError, match="check-runs --progress"):
+        operations_cli.download_collection_diagnostics()
 
 
 def test_verify_function_does_not_block_on_published_data_status(monkeypatch, capsys):
@@ -2180,7 +2268,7 @@ def test_verify_function_does_not_block_on_published_data_status(monkeypatch, ca
             args, 0,
             stdout=json.dumps([
                 {"name": f"func-test/{name}"}
-                for name in (*operations_cli.COLLECTOR_FUNCTION_NAMES, "dataprep_debug_http", "dataprep_debug_page", "dataprep_status")
+                for name in operations_cli.REQUIRED_COLLECTOR_FUNCTIONS
             ]) if args[:3] == ("functionapp", "function", "list") else "2026.10.08.1\n",
         ),
     )

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DEPLOYMENT_MENU_VERSION="2026.10.19.9"
+DEPLOYMENT_MENU_VERSION="2026.10.23.1"
 
 resolve_python() {
   if [[ -n "${PYTHON:-}" ]]; then
@@ -183,7 +183,7 @@ Operations and diagnostics
   9) Show Function execution, host, and deployment logs (choose days)
   10) Pull sanitized Function logs (choose days)
   11) Return to deployment menu
-  12) Download durable diagnostics for the latest manual collection
+  12) Download legacy manual diagnostics (new runs: use progress/log export)
 EOF
     printf 'Select an option: '
     read -r operations_choice

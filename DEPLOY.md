@@ -733,7 +733,9 @@ Terraform creates infrastructure but does not publish application source.
 
 `python -m vulnerability_view.operations_cli deploy function` builds `function-source.zip`, uploads
 it to the existing Function App with Azure CLI remote build, stamps the
-configured collector version, and synchronizes the Function triggers.
+configured collector version, waits for authenticated Python runtime indexing,
+and then synchronizes Function triggers. Missing orchestration or activity
+functions fail readiness/verification instead of reporting a successful deploy.
 
 `python -m vulnerability_view.operations_cli deploy webapp` builds `webapp-source.zip`, stamps the
 operator-managed `dashboard_version` and deployment time, uploads the package,
@@ -917,9 +919,10 @@ The current Terraform does not create:
 - Storage lifecycle deletion policies.
 - A managed Durable Task Scheduler.
 
-The current collector is a synchronous timer-triggered pilot. Durable Functions
-or another bounded orchestration should be considered if production runs
-approach the configured execution timeout.
+Complete collections use Durable Functions with the regular Azure Storage
+provider in the existing, separate runtime account. No managed Durable Task
+Scheduler service is required. The current Dedicated B2/Always On hosting remains
+in place. See [resumable deployment and recovery](infra/README.md#resumable-collection-deployment-and-recovery).
 
 ## Sign in and confirm the target
 
@@ -1082,10 +1085,11 @@ python -m vulnerability_view.operations_cli verify function
 The code deployment packages `function_app.py`, `host.json`,
 `requirements.txt`, `pyproject.toml`, `src/`, and the versioned SLA policy. It
 removes the legacy connection-string form of `AzureWebJobsStorage`, restarts the
-app, publishes the package with a remote build, and synchronizes Function
-triggers. Each invocation uses a temporary writable directory under `/tmp` to
-stage and verify the run before upload; that directory is removed afterward and
-is not durable history.
+app, publishes the package with a remote build, waits for runtime indexing, and
+synchronizes Function triggers. Isolated activity workers use temporary writable
+directories and an expendable local response cache under `/tmp`; neither is
+authoritative history. Immutable remote API checkpoints, frozen run plans,
+completed stage outputs, and Durable runtime state survive worker restarts.
 
 ## Run the deployed collector
 
@@ -1097,11 +1101,14 @@ python -m vulnerability_view.operations_cli invoke function --confirm
 python -m vulnerability_view.operations_cli verify function
 ```
 
-Each scheduled or manual invocation calls `collect-live`, creates a new
-immutable run, and advances the current manifest only after successful
-publication. In `combined` test mode it retains previously seeded synthetic rows
-but does not generate them. Do not start a manual run while another invocation
-is active.
+Scheduled and manual invocations start or retain the singleton
+`vulnerability-collection`. If it failed, another invocation resumes it; if it
+is active, another invocation does not replace its scope or data. A new
+immutable run starts only after the previous workflow is terminal. Its current
+manifest advances only after all files are verified and the frozen baseline
+ETag still matches. Do not purge Durable runtime state or delete historical
+checkpoints to retry. Use `check-runs --progress` to distinguish starter
+acceptance from workflow completion and publication.
 
 ### Existing Flex deployments
 

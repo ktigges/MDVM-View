@@ -284,6 +284,9 @@ tf_deploy() {
         --settings "COLLECTOR_VERSION=$function_version" "DEFENDER_API_BASE_URL=${defender_base_url%/}" \
         --output none
 
+      require_command python3
+      PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m vulnerability_view.operations_cli wait-function-host
+
       az rest \
         --method post \
         --url "https://management.azure.com/subscriptions/$(jq -r .subscription_id "$TF_VARS")/resourceGroups/$resource_group/providers/Microsoft.Web/sites/$function_app/syncfunctiontriggers?api-version=2024-04-01" \
@@ -466,31 +469,8 @@ tf_verify() {
         --output table
       ;;
     function)
-      function_app="$(tf_output function_app_name)"
-      local collector_version
-      collector_version="$(az functionapp config appsettings list \
-        --resource-group "$resource_group" \
-        --name "$function_app" \
-        --query "[?name=='COLLECTOR_VERSION'].value | [0]" \
-        --output tsv)"
-      echo "Function collector version: ${collector_version:-not stamped}"
-      az functionapp keys list \
-        --resource-group "$resource_group" \
-        --name "$function_app" \
-        --query 'keys(@)' \
-        --output table
-      az functionapp function list \
-        --resource-group "$resource_group" \
-        --name "$function_app" \
-        --query '[].{Name:name,Schedule:config.bindings[0].schedule}' \
-        --output table
-      (
-        cd "$ROOT_DIR"
-        STORAGE_ACCOUNT_NAME="$history_account" \
-          STORAGE_CONTAINER_NAME="$(tf_output history_container_name)" \
-          STORAGE_CURRENT_CONTAINER_NAME="$(tf_output current_container_name)" \
-          .venv/bin/vulnerability-view status --azure
-      )
+      require_command python3
+      PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m vulnerability_view.operations_cli verify function
       ;;
     webapp)
       local web_app web_url

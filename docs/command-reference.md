@@ -494,6 +494,16 @@ not raw finding contents or tokens. Debug retains the 10-second connection and
 
 ### Durable evidence for manual collections
 
+**Resumable collector update:** complete collections now use a Durable workflow,
+not the synchronous diagnostic-capture wrapper described below. Use
+`check-runs --progress` for durable phase/state, even before the first publication,
+and `export-function-logs` for support logs. Manual receipts identify accepted
+requests only; an active run is retained and a failed run is resumed. These
+requests do not create new legacy diagnostic chunks.
+
+The following download instructions apply to evidence already captured by the
+previous synchronous collector. Retained evidence remains available by UUID.
+
 Manual complete collections and forced full reconciliations automatically capture
 diagnostics. One-page DEBUG and scheduled timer collections are unchanged.
 Deploy the updated Function using deployment menu option **3** before relying on

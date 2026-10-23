@@ -50,18 +50,22 @@ python -m vulnerability_view.operations_cli invoke function --confirm --full
 python -m vulnerability_view.operations_cli download-collection-diagnostics
 ```
 
-Manual complete collections print a diagnostic ID and automatically retain
-incremental diagnostic chunks in the existing history container. Operations
-submenu **12** downloads a ZIP for the newest local manual invocation receipt.
-Use `download-collection-diagnostics --id <diagnostic-uuid>` to select a run.
-Download requires the signed-in operator's blob read/network access, not Log
-Analytics. DEBUG probes and collection/publication logic are unchanged.
-See [durable manual evidence](../docs/command-reference.md#durable-evidence-for-manual-collections)
-for coverage, redaction, and incomplete-evidence handling.
+Complete collections now start or resume a Durable workflow. Use
+`check-runs --progress` for persisted workflow state, including before the
+first publication, and `export-function-logs` for support logs. A successful
+starter invocation only means the workflow was requested, not that collection
+or publication completed. The local receipt is a request receipt, not a
+publication receipt.
 
-Function verification checks the registered trigger names, including
-`dataprep_debug_http`, and fails on missing triggers. A successful package upload
-or version app setting alone does not prove that the Python worker loaded.
+Operations submenu **12** and `download-collection-diagnostics --id <uuid>`
+remain available for evidence captured by the previous synchronous collector.
+New Durable runs do not produce those legacy JSONL chunks. DEBUG probes remain
+one-page, synchronous, and nonpublishing.
+
+Function deployment waits for authenticated runtime indexing before synchronizing
+management-plane triggers. Verification checks all starter, orchestration,
+activity, status, and DEBUG functions and fails on missing triggers. A successful
+package upload or version app setting alone does not prove that Python loaded.
 
 Install or refresh the editable project once after pulling CLI changes on
 macOS or Linux:
@@ -244,8 +248,84 @@ The collector now uses a separate Linux Dedicated B2 App Service plan with one
 fixed worker and Always On. No autoscale policy is provisioned. This removes
 consumption-driven scale-in; it does not prevent maintenance, deployment, or
 failure-related restarts. Billing is continuous rather than per execution.
-Collection logic, triggers, schedule, four-hour execution timeout, and
-append-only publication behavior are unchanged.
+The schedule and append-only publication contract are unchanged. Collection now
+uses checkpointed Durable activities rather than one invocation carrying the
+whole run. The four-hour host timeout is not the overall workflow deadline.
+
+### Resumable collection deployment and recovery
+
+Pull the update, refresh project dependencies, deploy Function code, then verify
+all triggers. Existing Dedicated environments with the Terraform-provisioned
+runtime Blob, Queue, and Table data roles do not need a different hosting tier.
+Apply the cumulative infrastructure stage first if upgrading an older hosting
+configuration. Do not replace or delete either Storage account or its contents.
+Deploy when the old collector is idle. Pages lost from an older synchronous
+worker's temporary disk cannot be recovered by this update; restart-safe
+checkpoints begin with the first run of the new collector.
+
+The `DvmCollectionV1` task hub uses the existing **separate runtime Storage**
+account through managed-identity `AzureWebJobsStorage` settings. Durable queues,
+leases, and instance tables are mutable runtime state, not retained DVM history.
+The regular Azure Storage provider is used; no managed Durable Task Scheduler
+service is provisioned. Keep the task hub name and runtime account stable across
+restarts and redeployments. Never purge an active or failed instance to retry it.
+
+Successful HTTP responses are checkpointed immediately to immutable, per-run
+`raw/` objects. Activities bound new requests and live work; throttling schedules
+a Durable timer rather than blocking a worker through long quota cooldowns.
+Run settings, SLA policy, timestamp, and previous publication are frozen in a
+per-run plan. A host restart can replay saved responses without downloading them
+from Defender again. The local disk cache is only an optimization.
+
+There is one collection instance, `vulnerability-collection`. A normal, full,
+or scheduled trigger retains an active run and resumes a failed run rather
+than starting over. A full request does not change the scope of an already
+active/failing run; let that run finish before requesting a new forced full run.
+Inspect `check-runs --progress`, correct permission/configuration failures, and
+invoke again to resume. Failed required endpoints and integrity conflicts
+remain explicit failures; do not clear checkpoints to hide them.
+
+Raw collection, disk-backed processing, file verification, and pointer
+publication are separate stages. File verification has independent durable
+activities. Only a complete, verified immutable bundle can advance
+`current/manifest.json`, and its previous ETag must still match. No incomplete
+run replaces the last good dashboard snapshot. Existing table schemas, SLA and
+lifecycle rules, and dashboard data formats are preserved.
+
+Processing also checkpoints normalization, reconciliation, events, summaries,
+and bundle preparation to immutable, verified intermediate artifacts. A fresh
+worker restores the previous stage instead of repeating completed processing.
+Resume is at **stage boundaries**, not at every finding: an interrupted stage
+restarts that stage. Individual processing stages still scan their whole input
+and the isolated worker has a 20-minute safety timeout. This is not an
+unlimited-size or unlimited-disk guarantee; measure larger datasets and
+histories before deploying beyond the tested scale.
+
+Durability prevents lost API work; it does not remove Defender quotas, guarantee
+a completion time, or make Dedicated hosting scale to zero. Larger CVE filter
+batches reduce round trips, but API latency, dataset size, local disk, processing,
+and Storage still affect cost and duration. Validate the first customer run
+before drawing production throughput or cost conclusions.
+
+The local synthetic scale check completed **2,000,000 findings and 2,000,000
+finding events** in 408 seconds, with approximately 75 MB peak native RSS.
+The longest measured stage was reconciliation at 136 seconds. All 21 bundle
+files passed integrity verification, including exact finding/event row counts,
+schema version 2, and normalization version 3. This is a local processing
+measurement, not an Azure B2 or Defender-download benchmark; API latency,
+remote checkpoint transfers, and publication uploads are excluded.
+
+To reproduce on macOS/Linux from the repository root:
+
+```bash
+PYTHONPATH=src python tests/benchmark_bounded_finalization.py \
+  --findings 2000000 --budget 900 \
+  --root output/benchmarks/bounded-finalization-2m
+```
+
+The benchmark uses generated local data only. Its raw inputs and checkpoint
+artifacts can consume substantial local disk; deleting those specifically named
+local benchmark files never authorizes deleting Azure history.
 
 Upgrading an existing Flex deployment requires an infrastructure apply, not
 just deployment-menu option 3. The collector plan name gains a `dedicated`

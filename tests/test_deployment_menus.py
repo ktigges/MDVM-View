@@ -132,7 +132,7 @@ def test_deployment_menus_expose_matching_operations_submenu():
         "9) Show Function execution, host, and deployment logs (choose days)",
         "10) Pull sanitized Function logs (choose days)",
         "11) Return to deployment menu",
-        "12) Download durable diagnostics for the latest manual collection",
+        "12) Download legacy manual diagnostics (new runs: use progress/log export)",
     )
 
     for option in options:
@@ -295,9 +295,9 @@ def test_powershell_menu_preserves_python_executable_as_one_value():
 def test_deployment_menus_show_version_and_revision_in_title():
     shell, powershell = menu_sources()
 
-    assert 'DEPLOYMENT_MENU_VERSION="2026.10.19.9"' in shell
+    assert 'DEPLOYMENT_MENU_VERSION="2026.10.23.1"' in shell
     assert 'Vulnerability View deployment menu %s (revision %s)' in shell
-    assert '$DeploymentMenuVersion = "2026.10.19.9"' in powershell
+    assert '$DeploymentMenuVersion = "2026.10.23.1"' in powershell
     assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
 

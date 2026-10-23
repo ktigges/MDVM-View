@@ -11,18 +11,21 @@ import tempfile
 from pathlib import Path
 
 import azure.functions as func
+import azure.durable_functions as df
 import requests
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 
 from vulnerability_view.config import Settings, load_function_version
-from vulnerability_view.collection_diagnostics import manual_collection_diagnostics
 from vulnerability_view.credentials import create_credential
 from vulnerability_view.dataprep_cli import main
 from vulnerability_view.defender_client import COLLECTION_PAGE_SIZE, MACHINE_FINDINGS_PAGE_SIZE, DefenderApiError, collection_page_size, probe_defender_page
 from vulnerability_view.storage_writer import download_current_manifest
+from vulnerability_view.collection_workflow import (
+    INSTANCE_ID, RunStore, execute_worker, orchestrate, prepare_run, publish_run, start_collection, verify_file,
+)
 
 
-app = func.FunctionApp()
+app = df.DFApp()
 COLLECTOR_VERSION = load_function_version(Path(__file__).resolve().with_name("function-version.json"))
 
 
@@ -90,13 +93,18 @@ def _current_run_status() -> dict:
 
 
 @app.route(route="status", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
-def dataprep_status(req: func.HttpRequest) -> func.HttpResponse:
+@app.durable_client_input(client_name="client")
+async def dataprep_status(req: func.HttpRequest, client: df.DurableOrchestrationClient) -> func.HttpResponse:
     """Return current publication status using the collector managed identity."""
     del req
+    workflow = None
     try:
+        workflow = await client.get_status(INSTANCE_ID)
         status = _current_run_status()
     except ResourceNotFoundError:
         status = {"published": False, "reason": "No current manifest has been published"}
+        if workflow is not None:
+            status["workflow"] = _workflow_status(workflow)
         return func.HttpResponse(
             json.dumps(status),
             status_code=404,
@@ -109,18 +117,27 @@ def dataprep_status(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             mimetype="application/json",
         )
+    if workflow is not None:
+        status["workflow"] = _workflow_status(workflow)
     return func.HttpResponse(json.dumps(status), mimetype="application/json")
 
 
+def _workflow_status(workflow: df.DurableOrchestrationStatus) -> dict:
+    return {
+        "instanceId": workflow.instance_id,
+        "state": workflow.runtime_status.value,
+        "createdUtc": workflow.created_time.isoformat(),
+        "updatedUtc": workflow.last_updated_time.isoformat(),
+        "progress": workflow.custom_status,
+    }
+
+
 @app.timer_trigger(schedule="%COLLECTION_SCHEDULE%", arg_name="timer", run_on_startup=False, use_monitor=True)
-def dataprep_snapshot(timer: func.TimerRequest) -> None:
+@app.durable_client_input(client_name="client")
+async def dataprep_snapshot(timer: func.TimerRequest, client: df.DurableOrchestrationClient) -> None:
     """Handle the scheduled timer invocation for a data snapshot."""
     del timer
-    logging.info("Starting vulnerability dataprep collector version %s", COLLECTOR_VERSION)
-    exit_code = _run_dataprep()
-    if exit_code:
-        raise RuntimeError(f"Scheduled vulnerability dataprep failed with exit code {exit_code}")
-    logging.info("Scheduled vulnerability dataprep collector version %s completed", COLLECTOR_VERSION)
+    await start_collection(client, {"collection": "auto", "enrichment": "auto", "pageSize": MACHINE_FINDINGS_PAGE_SIZE})
 
 
 @app.route(route="debug-page", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
@@ -196,30 +213,65 @@ def dataprep_debug_page(input: str) -> None:
 
 
 @app.generic_trigger(arg_name="input", type="manualTrigger", data_type=func.DataType.STRING)
-def dataprep_manual_snapshot(input: str, context: func.Context) -> None:
+@app.durable_client_input(client_name="client")
+async def dataprep_manual_snapshot(input: str, context: func.Context, client: df.DurableOrchestrationClient) -> None:
     """Run an operator-requested collection using scheduled collection policy."""
+    del context
     page_size = _manual_page_size(input)
-    with manual_collection_diagnostics(
-        _manual_options(input).get("diagnosticId"), COLLECTOR_VERSION, "scheduled-policy", page_size,
-        context.invocation_id,
-    ):
-        logging.info("Starting manual vulnerability dataprep collector version %s; page size %s", COLLECTOR_VERSION, page_size)
-        exit_code = _run_dataprep(page_size=page_size)
-        if exit_code:
-            raise RuntimeError(f"Manual vulnerability dataprep failed with exit code {exit_code}")
-        logging.info("Manual vulnerability dataprep collector version %s completed", COLLECTOR_VERSION)
+    await start_collection(client, {
+        **_manual_options(input), "collection": "auto", "enrichment": "auto", "pageSize": page_size,
+    })
 
 
 @app.generic_trigger(arg_name="input", type="manualTrigger", data_type=func.DataType.STRING)
-def dataprep_full_snapshot(input: str, context: func.Context) -> None:
+@app.durable_client_input(client_name="client")
+async def dataprep_full_snapshot(input: str, context: func.Context, client: df.DurableOrchestrationClient) -> None:
     """Run an operator-requested full vulnerability and relationship reconciliation."""
+    del context
     page_size = _manual_page_size(input)
-    with manual_collection_diagnostics(
-        _manual_options(input).get("diagnosticId"), COLLECTOR_VERSION, "full", page_size,
-        context.invocation_id,
-    ):
-        logging.info("Starting manual full vulnerability collector version %s; page size %s", COLLECTOR_VERSION, page_size)
-        exit_code = _run_dataprep("full", "full", page_size=page_size)
-        if exit_code:
-            raise RuntimeError(f"Manual full vulnerability dataprep failed with exit code {exit_code}")
-        logging.info("Manual full vulnerability collector version %s completed", COLLECTOR_VERSION)
+    await start_collection(client, {
+        **_manual_options(input), "collection": "full", "enrichment": "full", "pageSize": page_size,
+    })
+
+
+@app.orchestration_trigger(context_name="context")
+def dataprep_orchestrator(context):
+    return (yield from orchestrate(context))
+
+
+@app.activity_trigger(input_name="request")
+def dataprep_prepare(request: dict) -> dict:
+    store = RunStore(Settings.load())
+    try:
+        policy = json.loads((Path(__file__).resolve().parent / "config/sla-policies.json").read_text())
+        return prepare_run(request, store, policy)
+    finally:
+        store.close()
+
+
+@app.activity_trigger(input_name="reference")
+def dataprep_collect_batch(reference: dict) -> dict:
+    return execute_worker({**reference, "stage": "collect"})
+
+
+@app.activity_trigger(input_name="reference")
+def dataprep_process(reference: dict) -> dict:
+    return execute_worker({**reference, "stage": "process"})
+
+
+@app.activity_trigger(input_name="reference")
+def dataprep_publish(reference: dict) -> dict:
+    store = RunStore(Settings.load())
+    try:
+        return publish_run(reference, store)
+    finally:
+        store.close()
+
+
+@app.activity_trigger(input_name="reference")
+def dataprep_verify_file(reference: dict) -> dict:
+    store = RunStore(Settings.load())
+    try:
+        return verify_file(reference, store)
+    finally:
+        store.close()
