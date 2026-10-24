@@ -15,6 +15,19 @@ sequence, typed confirmation, and safety boundary changed in one launcher must
 be changed in the other. `tests/test_deployment_menus.py` enforces parity and
 ensures neither menu exposes destructive operations.
 
+The separate GitHub workflow menus use the shared release CLI for both platforms.
+Publish/promote validation displays each test name and result, the ten slowest
+test durations, and elapsed validation time. Git fetch, remote lookup, staging,
+commit, and push steps print flushed start/finish messages with elapsed times.
+The combined publish-and-promote option runs tests once and announces the two
+pushes separately. `GITHUB_WORKFLOW_TEST_COMMAND`, if set, is still executed
+unchanged; its own output controls test-level progress. Validation failures stop
+the workflow before subsequent publish/promotion steps.
+Validation also fingerprints tracked/untracked file contents and HEAD before
+and after tests. Edits or concurrent commits stop the operation before committing
+or pushing, with current dirty files listed. Finish editing before starting a
+release; the workflow never discards changes or promotes an unvalidated edit.
+
 On Windows, `deployment-menu.ps1` also bootstraps menu-managed dependencies: it
 creates the project virtual environment, installs project packages when
 needed, and installs required Azure CLI extensions such as `log-analytics`.
