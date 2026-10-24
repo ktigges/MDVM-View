@@ -50,15 +50,21 @@ def test_function_execution_timeout_is_four_hours():
 def test_host_logging_suppresses_coordination_noise_but_keeps_collection_progress():
     host = json.loads(Path(function_app.__file__).with_name("host.json").read_text())
     levels = host["logging"]["logLevel"]
-    assert levels["default"] == "Warning"
-    assert levels["Function"] == "Information"
-    assert levels["Host.Results"] == "Information"
-    for category in ("DurableTask", "Host.Triggers.DurableTask", "Azure"):
-        assert levels[category] == "Warning"
-    assert not any(
-        category.startswith(("Function.", "DurableTask.", "Azure.", "Host.Triggers.DurableTask."))
-        for category in levels
-    )
+    assert levels["default"] == "Error"
+    for category in ("Function", "Host.Results", "DurableTask", "Host.Triggers.DurableTask", "Azure", "Microsoft", "System", "Worker"):
+        assert levels[category] == "Error"
+    expected = {f"Function.{name}.User" for name in vars(function_app) if name.startswith("dataprep_")}
+    assert {category for category, level in levels.items() if level == "Information"} == expected
+
+
+def test_function_python_sdk_logs_are_error_only():
+    import logging
+
+    for category in ("azure", "azure.core.pipeline.policies.http_logging_policy", "urllib3", "requests", "msal"):
+        logger = logging.getLogger(category)
+        assert not logger.isEnabledFor(logging.INFO)
+        assert not logger.isEnabledFor(logging.WARNING)
+        assert logger.isEnabledFor(logging.ERROR)
 
 
 def test_manual_context_annotations_match_azure_worker_contract():

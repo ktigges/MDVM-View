@@ -1,6 +1,7 @@
 import gzip
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -87,6 +88,54 @@ def test_worker_collect_uses_frozen_snapshot_and_yields_small_progress(monkeypat
     assert received["raw_only"] is True
     assert received["cve_batch_size"] == 100
     assert received["page_size"] == 2500
+
+
+def test_collection_logs_only_throttled_endpoint_counts_and_errors(monkeypatch, tmp_path, caplog):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(collection_worker, "create_credential", lambda *args: object())
+    clock = [0.0]
+    monkeypatch.setattr(collection_worker.time, "monotonic", lambda: clock[0])
+
+    def collect(*args, **kwargs):
+        progress = kwargs["progress_callback"]
+        transport = current_checkpoints()
+        transport.last_was_cached = False
+        progress("[machines] starting download")
+        for index in range(100):
+            progress(f"[machines] requesting page {index}")
+            progress(f"[machines] page {index} received: 1 rows")
+            progress(f"[machines] {index} rows downloaded; more data available")
+        clock[0] = 59
+        progress("[machines] 100 rows downloaded; more data available")
+        clock[0] = 60
+        progress("[machines] 200 rows downloaded; more data available")
+        progress("[machines] complete: 200 rows")
+        progress("[machine_vulnerabilities] starting device-scoped collection for 200 machines")
+        progress("[machine_vulnerabilities] machine 1/200: device; 0 total rows")
+        progress("[machine_vulnerabilities] 100 findings downloaded")
+        clock[0] = 120
+        progress("[machine_vulnerabilities] machines complete: 50/200; 100 findings")
+        transport.last_was_cached = True
+        progress("[old_endpoint] complete: cached rows")
+        transport.last_was_cached = False
+        progress("[machine_vulnerabilities] failed: permission denied")
+        raise CheckpointYield(30, "HTTP 503")
+
+    monkeypatch.setattr(collection_worker, "collect_live", collect)
+    with caplog.at_level(logging.INFO):
+        result = collection_worker.collect_batch(plan(), WorkerStore(), tmp_path / "cache")
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == [
+        "[machines] starting download",
+        "[machines] 200 rows downloaded; more data available",
+        "[machines] complete: 200 rows",
+        "[machine_vulnerabilities] starting device-scoped collection for 200 machines",
+        "[machine_vulnerabilities] machines complete: 50/200; 100 findings",
+        "[machine_vulnerabilities] failed: permission denied",
+        "[collection] paused: HTTP 503; retry in 30s; [machine_vulnerabilities] failed: permission denied",
+    ]
+    assert caplog.records[-2].levelno == logging.ERROR
+    assert result["lastProgress"] == "[machine_vulnerabilities] failed: permission denied"
 
 
 def test_completed_collection_does_not_call_defender_again(monkeypatch, tmp_path):

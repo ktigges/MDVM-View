@@ -1,6 +1,9 @@
 import asyncio
 import json
 import hashlib
+import logging
+import subprocess
+import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -13,6 +16,69 @@ from vulnerability_view.collection_workflow import (
     INSTANCE_ID, RunStore, orchestrate, prepare_run, publish_run, run_prefix, start_collection, verify_file,
 )
 from vulnerability_view.config import Settings
+from vulnerability_view import collection_workflow
+
+
+def test_worker_output_is_forwarded_as_function_logs_not_console_prints(monkeypatch, caplog, capfd):
+    popen = subprocess.Popen
+
+    def worker(command, **kwargs):
+        script = (
+            "import json, pathlib, sys; "
+            "print('INFO Request [123] GET https://example.invalid/api', flush=True); "
+            "print('x-ms-version:2024-11-04', flush=True); "
+            "print('Content-Type: text/html', flush=True); "
+            "print('<html><body>Bad Gateway</body></html>', flush=True); "
+            "print('INFO [machine_vulnerabilities] machines complete: 50/200; 100 findings', flush=True); "
+            "print('ERROR [collection] endpoint failed', flush=True); "
+            "pathlib.Path(sys.argv[1]).write_text(json.dumps({'done': True}))"
+        )
+        return popen([sys.executable, "-c", script, command[-1]], **kwargs)
+
+    monkeypatch.setattr(collection_workflow.subprocess, "Popen", worker)
+    with caplog.at_level(logging.INFO):
+        assert collection_workflow.execute_worker({"stage": "collect"}) == {"done": True}
+    assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
+        (logging.INFO, "[machine_vulnerabilities] machines complete: 50/200; 100 findings"),
+        (logging.ERROR, "[collection] endpoint failed"),
+    ]
+    assert capfd.readouterr().out == ""
+
+
+def test_console_status_omits_urls_headers_and_response_bodies():
+    text = (
+        "[machine_vulnerabilities] failed: HTTP 502 from https://example.invalid/api?secret=value "
+        "<html><body>gateway error</body></html>\nx-ms-request-id: request-123"
+    )
+    status = collection_workflow.console_status(text)
+    assert "[machine_vulnerabilities] failed: HTTP 502" in status
+    for omitted in ("https://", "secret", "<html", "gateway error", "x-ms-request-id", "request-123"):
+        assert omitted not in status
+
+
+def test_worker_failure_preserves_error_output_and_exit_code(monkeypatch, caplog):
+    popen = subprocess.Popen
+
+    def worker(command, **kwargs):
+        return popen([sys.executable, "-c", "import sys; print('ValueError: invalid checkpoint', file=sys.stderr); sys.exit(7)"], **kwargs)
+
+    monkeypatch.setattr(collection_workflow.subprocess, "Popen", worker)
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        collection_workflow.execute_worker({"stage": "collect"})
+    assert raised.value.returncode == 7
+    assert "ValueError: invalid checkpoint" in caplog.text
+
+
+def test_worker_log_forwarding_preserves_timeout(monkeypatch):
+    popen = subprocess.Popen
+    monkeypatch.setattr(collection_workflow, "WORKER_TIMEOUT_SECONDS", 0.1)
+
+    def worker(command, **kwargs):
+        return popen([sys.executable, "-c", "import time; time.sleep(10)"], **kwargs)
+
+    monkeypatch.setattr(collection_workflow.subprocess, "Popen", worker)
+    with pytest.raises(subprocess.TimeoutExpired):
+        collection_workflow.execute_worker({"stage": "collect"})
 
 
 class PlanStore:

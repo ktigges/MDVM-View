@@ -3,12 +3,27 @@
   "functionTimeout": "04:00:00",
   "logging": {
     "logLevel": {
-      "default": "Warning",
-      "Function": "Information",
-      "Host.Results": "Information",
-      "DurableTask": "Warning",
-      "Host.Triggers.DurableTask": "Warning",
-      "Azure": "Warning"
+      "default": "Error",
+      "Function": "Error",
+      "Host.Results": "Error",
+      "DurableTask": "Error",
+      "Host.Triggers.DurableTask": "Error",
+      "Azure": "Error",
+      "Microsoft": "Error",
+      "System": "Error",
+      "Worker": "Error",
+      "Function.dataprep_status.User": "Information",
+      "Function.dataprep_snapshot.User": "Information",
+      "Function.dataprep_debug_http.User": "Information",
+      "Function.dataprep_debug_page.User": "Information",
+      "Function.dataprep_manual_snapshot.User": "Information",
+      "Function.dataprep_full_snapshot.User": "Information",
+      "Function.dataprep_orchestrator.User": "Information",
+      "Function.dataprep_prepare.User": "Information",
+      "Function.dataprep_collect_batch.User": "Information",
+      "Function.dataprep_process.User": "Information",
+      "Function.dataprep_publish.User": "Information",
+      "Function.dataprep_verify_file.User": "Information"
     },
     "applicationInsights": {"samplingSettings": {"isEnabled": true, "excludedTypes": "Request;Trace;Exception"}}
   },

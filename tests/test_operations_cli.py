@@ -2172,6 +2172,12 @@ def test_function_deploy_synchronizes_base_uri_from_terraform_values(monkeypatch
     monkeypatch.setattr(operations_cli, "_require", lambda name: name)
     monkeypatch.setattr(operations_cli, "_run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="commit\n"))
     monkeypatch.setattr(operations_cli, "_zip_tree", lambda package, paths: packaged.extend(paths))
+    monkeypatch.setattr(operations_cli, "_function_storage_settings", lambda *args: {
+        "AzureFunctionsJobHost__logging__logLevel__default": "Trace",
+        "AzureFunctionsJobHost__logging__logLevel__Azure.Core": "Information",
+        "AzureWebJobsStorage__accountName": "runtime-storage",
+        "APPLICATIONINSIGHTS_CONNECTION_STRING": "do-not-print",
+    })
     monkeypatch.setattr(operations_cli, "_wait_function_host", lambda *args: calls.append(("runtime-ready",)))
     monkeypatch.setattr(operations_cli.time, "sleep", lambda *args: None)
     monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0))
@@ -2181,6 +2187,11 @@ def test_function_deploy_synchronizes_base_uri_from_terraform_values(monkeypatch
     settings = next(call for call in calls if call[:4] == ("functionapp", "config", "appsettings", "set"))
     assert f"DEFENDER_API_BASE_URL={expected}" in settings
     assert "COLLECTOR_VERSION=2026.10.19.6" in settings
+    removed = next(call for call in calls if call[:4] == ("functionapp", "config", "appsettings", "delete"))
+    assert "AzureFunctionsJobHost__logging__logLevel__default" in removed
+    assert "AzureFunctionsJobHost__logging__logLevel__Azure.Core" in removed
+    assert "AzureWebJobsStorage__accountName" not in removed
+    assert "APPLICATIONINSIGHTS_CONNECTION_STRING" not in removed
     assert tmp_path / "function-version.json" in packaged
     ready_index = calls.index(("runtime-ready",))
     assert calls.index(settings) < ready_index

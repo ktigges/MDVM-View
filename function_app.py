@@ -27,6 +27,8 @@ from vulnerability_view.collection_workflow import (
 
 
 app = df.DFApp()
+for _logger_name in ("azure", "urllib3", "requests", "msal"):
+    logging.getLogger(_logger_name).setLevel(logging.ERROR)
 COLLECTOR_VERSION = load_function_version(Path(__file__).resolve().with_name("function-version.json"))
 
 

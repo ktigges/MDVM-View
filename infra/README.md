@@ -90,15 +90,23 @@ Function's status endpoint or host-key lookup is unavailable. The status failure
 is printed explicitly; it does not prevent startup/indexing errors from being
 displayed. Log export also works independently of the Function status endpoint.
 
-Collector host logging retains application progress and publication messages at
-Information level, with successful invocation telemetry retained through
-`Host.Results`. Other host categories default to Warning so routine host and
-Storage chatter does not obscure collection progress. Durable Task coordination (`DurableTask` and
-`Host.Triggers.DurableTask`) and Azure SDK (`Azure`) categories are filtered to
-Warning, suppressing routine lease renewals and Storage HTTP request/response
-traces while retaining warnings and errors. Lease timing, checkpoints, and
-collection behavior are unchanged. Deploy Function code to apply these filters;
-existing Azure app-setting log-level overrides may take precedence.
+Collector logging displays current endpoint/count progress, processing stages,
+publication results, and application errors/retry warnings. Endpoint progress is
+limited to once per minute, plus endpoint transitions and completion; per-request,
+per-page, pacing, and individual-device chatter is omitted. Worker logs are
+forwarded through the invoking Function logger rather than unstructured stdout.
+Only application status lines and concise errors are forwarded; raw HTTP request/
+response dumps, headers, HTML/XML bodies, and traceback continuation lines are not.
+Status/error summaries omit URLs and response bodies; collection failures still
+fail their activity and retain an error summary.
+Only `Function.<name>.User` categories allow Information messages. Host,
+successful invocation, Durable coordination, and SDK logs are Error-only.
+Successful invocation request telemetry is therefore no longer collected through
+`Host.Results`; failed invocations remain visible. Lease timing, checkpoints, and
+collection behavior are unchanged. Deploy Function code to apply these filters.
+Function deployment removes existing `AzureFunctionsJobHost__logging__logLevel__*`
+app-setting overrides so stale Trace/Information overrides cannot defeat the
+packaged filters. Other monitoring and runtime-storage settings are preserved.
 
 Install or refresh the editable project once after pulling CLI changes on
 macOS or Linux:
