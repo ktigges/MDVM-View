@@ -5,11 +5,26 @@ Purpose: Verify dashboard exports, presentation contracts, versioning, and local
 import csv
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from vulnerability_view.dataprep_cli import build_synthetic
 from vulnerability_view.config import Settings
 from vulnerability_view.export_writer import write_outputs
+
+
+def test_dashboard_findings_paging_and_drilldown_interactions():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for dashboard interaction regressions")
+    result = subprocess.run(
+        [node, "--test", str(Path(__file__).with_name("dashboard_findings.test.cjs"))],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_csv_json_schema_consistency(tmp_path: Path):
@@ -72,15 +87,37 @@ def test_dashboard_files_contract():
     assert ".development-warning" in stylesheet
 
 
-def test_dashboard_loads_datasets_progressively():
+def test_dashboard_loads_snapshot_summary_then_bounded_views():
     javascript = Path("dashboard/app.js").read_text()
     stylesheet = Path("dashboard/styles.css").read_text()
 
     assert "loadDashboardDatasets" in javascript
-    assert "rebuildDerivedState" in javascript
-    assert "datasets ready" in javascript
+    assert 'apiFetch("/api/dashboard/snapshot"' in javascript
+    assert 'apiFetch("/api/dashboard/query"' in javascript
+    assert 'apiFetch("/api/sla-policy")' not in javascript
+    assert "dashboardQuery.snapshot?.snapshotId" in javascript
+    assert "signal:channel.controller.signal" in javascript
+    assert "New snapshot available" in javascript
+    assert "Math.max(...snapshotTimes)" not in javascript
+    assert 'apiFetch(`/api/data/${name}.json`)' not in javascript
     assert "Promise.all(" not in javascript
     assert ".loading-notice.degraded" in stylesheet
+
+
+def test_dashboard_streams_snapshot_pinned_exports_without_browser_csv_buffering():
+    javascript = Path("dashboard/app.js").read_text()
+    html = Path("dashboard/index.html").read_text()
+    export_body = javascript.split("async function exportDashboardCsv(")[1].split(
+        "// Keep the existing controls"
+    )[0]
+
+    assert 'form.action="/api/dashboard/export"' in export_body
+    assert 'input.name="payload"' in export_body
+    assert "JSON.stringify(request)" in export_body
+    assert ".blob(" not in export_body
+    assert 'id="exportFindingsCsv"' in html
+    assert 'id="reloadDashboardSnapshot"' in html
+    assert "New snapshot available" in html
 
 
 def test_dashboard_filter_workspace_uses_compact_combined_toolbar():
@@ -169,7 +206,7 @@ def test_dashboard_distinguishes_sla_targets_and_task_due_dates():
 
     assert "Selected-period finding results against severity-based SLA targets" in html
     assert 'id="slaPolicySummary"' in html
-    assert 'apiFetch("/api/sla-policy")' in javascript
+    assert "state.slaPolicy=snapshot.slaPolicy" in javascript
     assert "Current dataset policy" in javascript
     assert "Targets start at the collector's first observation" in javascript
     assert "Weekly remediation task due-date history" in html
@@ -200,9 +237,9 @@ def test_dashboard_groups_scale_out_instances_as_configurable_workloads():
     assert "virtualMachineScaleSets" in javascript
     assert "function configuredWorkload(row)" in javascript
     assert "function actionableWorkloadCount(rows)" in javascript
-    assert 'id: "generated-scale-hosts"' in configuration
-    assert 'operator: "prefix"' in configuration
-    assert 'value: "gen-"' in configuration
+    assert '"id": "generated-scale-hosts"' in configuration
+    assert '"operator": "prefix"' in configuration
+    assert '"value": "gen-"' in configuration
     assert '"ActionableWorkloads"' in javascript
     assert '"WorkloadType","InstanceCount"' in javascript
 
@@ -431,7 +468,7 @@ def test_dashboard_supports_entity_pivots_for_recommendations_cves_and_machines(
     assert 'id="pivotHandoffNote"' in html
     assert "loadCveDetail" in javascript
     assert "/api/data/cve-details/${encodeURIComponent(key)}.json" in javascript
-    assert "apiFetch(`/api/data/${name}.json`)" in javascript
+    assert 'apiFetch("/api/dashboard/query"' in javascript
     assert 'load("vulnerabilities")' not in javascript
     assert "CVE detail" in javascript
     assert "Collected from Defender vulnerabilities API" in javascript
@@ -630,7 +667,7 @@ def test_dashboard_reauthenticates_once_when_easy_auth_session_expires():
         assert "if(response.status!==401)return response" in source
         assert "if(!reauthenticationStarted)" in source
         assert 'location.assign(`/.auth/login/aad?post_login_redirect_uri=${encodeURIComponent(returnPath)}`)' in source
-    assert "apiFetch(`/api/data/${name}.json`)" in javascript
+    assert 'apiFetch("/api/dashboard/query"' in javascript
     assert 'apiFetch("/api/auth")' in javascript
     assert "apiFetch(`/api/data/cve-details/${encodeURIComponent(key)}.json`)" in javascript
 
@@ -670,8 +707,8 @@ def test_dashboard_defaults_to_vulnerabilities_devices_and_cloud():
     assert 'value="Vulnerability" checked' in html
     assert 'value="Devices" checked' in html
     assert 'value="Cloud" checked' in html
-    assert 'defaultRecommendationTypes: ["Vulnerability"]' in configuration
-    assert 'defaultDomains: ["Devices", "Cloud"]' in configuration
+    assert '"defaultRecommendationTypes": ["Vulnerability"]' in configuration
+    assert '"defaultDomains": ["Devices", "Cloud"]' in configuration
 
 
 def test_dashboard_can_hide_devices_outside_a_snapshot_relative_reporting_window():
@@ -684,8 +721,8 @@ def test_dashboard_can_hide_devices_outside_a_snapshot_relative_reporting_window
     assert 'id="reportingDays"' in html
     for days in (7, 14, 30, 60, 90):
         assert f'value="{days}">Last reported within {days} days' in html
-    assert "defaultHideNonReporting: false" in configuration
-    assert "defaultReportingDays: 30" in configuration
+    assert '"defaultHideNonReporting": false' in configuration
+    assert '"defaultReportingDays": 30' in configuration
     assert "datasetSnapshotMs" in javascript
     assert "row.LastSeenUtc" in javascript
     assert "snapshot-state.reportingDays*86400000" in javascript
@@ -762,7 +799,7 @@ def test_dashboard_endpoint_inventory_defines_scope_and_temporal_filtering():
     assert "!findingScopeRestrictsInventory||scopedDevices.has(device.DeviceId)" in javascript
     assert 'state.domains.has(findingDomain(row))' in javascript
     assert 'id="includeDiscoveredAssets" type="checkbox"' in html
-    assert "defaultIncludeDiscoveredOnly: false" in Path("dashboard/config.js").read_text()
+    assert '"defaultIncludeDiscoveredOnly": false' in Path("dashboard/config.js").read_text()
     assert 'state.includeDiscoveredOnly||device.OnboardingStatus==="Onboarded"' in javascript
     assert 'coverage=assessed?"Endpoint assessed":item.OpenFindings||item.PendingFindings?"Limited evidence":"Not assessed"' in javascript
     assert '"Health status: Active"' in javascript
@@ -1026,7 +1063,7 @@ def test_dashboard_uses_top_filters_and_responsive_workspace_navigation():
     assert "@media(max-width:780px)" in stylesheet
     assert ".filterbar{display:grid!important" in stylesheet
     assert ".filter-toggle[aria-expanded=\"true\"]::before" in stylesheet
-    assert "expandedByDefault: false" in configuration
+    assert '"expandedByDefault": false' in configuration
     assert "showExperimentalEndpoints: false" in configuration
 
 

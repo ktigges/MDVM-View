@@ -1616,6 +1616,8 @@ def test_webapp_onedeploy_allows_empty_history_before_first_deployment(monkeypat
 @pytest.mark.parametrize("replacement_status", [None, 3, 4])
 def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, tmp_path: Path, replacement_status):
     calls: list[tuple[object, ...]] = []
+    stamped = []
+    monkeypatch.delenv("DASHBOARD_VERSION", raising=False)
     responses = iter([
         None if replacement_status is None else {"value": [{"properties": {
             "id": "previous-deployment", "status": 4, "complete": True,
@@ -1638,14 +1640,14 @@ def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, 
 
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     monkeypatch.setattr(operations_cli, "_values", lambda: {"dashboard_version": "2026.10.09.3"})
-    monkeypatch.setattr(operations_cli, "_dashboard_source_version", lambda: "2026.10.09.3")
+    monkeypatch.setattr(operations_cli, "_dashboard_source_version", lambda: "2026.10.24.1")
     monkeypatch.setattr(
         operations_cli,
         "_tf_output",
         lambda name: {"resource_group_name": "rg-test", "web_app_name": "app-test"}[name],
     )
     monkeypatch.setattr(operations_cli, "_zip_tree", lambda *args, **kwargs: None)
-    monkeypatch.setattr(operations_cli, "_stamp_web_package", lambda *args, **kwargs: None)
+    monkeypatch.setattr(operations_cli, "_stamp_web_package", lambda package, version, revision: stamped.append(version))
     monkeypatch.setattr(operations_cli, "_az", fake_az)
     monkeypatch.setattr(operations_cli.time, "sleep", lambda *args: pytest.fail("Completed numeric deployment must not keep polling"))
 
@@ -1663,6 +1665,9 @@ def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, 
 
     operations_cli.deploy_webapp()
 
+    assert stamped == ["2026.10.24.1"]
+    assert any("DASHBOARD_VERSION=2026.10.24.1" in call for call in calls)
+    assert any("WEBSITES_CONTAINER_START_TIME_LIMIT=1800" in call for call in calls)
     deploy_index = next(index for index, call in enumerate(calls) if call[:2] == ("webapp", "deploy"))
     settings_index = next(
         index for index, call in enumerate(calls)
@@ -1691,17 +1696,50 @@ def test_webapp_deployment_reports_onedeploy_failure(monkeypatch):
         operations_cli._wait_for_webapp_deployment("resource-id", previous["deploymentId"])
 
 
-def test_webapp_deployment_rejects_mismatched_source_version(monkeypatch, tmp_path: Path):
+@pytest.mark.parametrize("override,expected", [(None, "2026.10.24.1"), ("custom+release", "custom+release"), ("custom release", "custom-release")])
+def test_webapp_deployment_uses_source_without_editing_customer_configuration(monkeypatch, tmp_path: Path, override, expected):
+    calls = []
+    stamped = []
+    config = tmp_path / "dashboard/config.js"
+    config.parent.mkdir()
+    config.write_text('window.VULNERABILITY_VIEW_CONFIG = {version: "2026.10.24.1"};')
+    customer_values = tmp_path / "infra/terraform/main.tfvars.json"
+    customer_values.parent.mkdir(parents=True)
+    customer_values.write_text('{"dashboard_version":"2026.10.12.13","resource_group_name":"customer-rg"}')
+    original = customer_values.read_bytes()
+    if override is None:
+        monkeypatch.delenv("DASHBOARD_VERSION", raising=False)
+    else:
+        monkeypatch.setenv("DASHBOARD_VERSION", override)
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
-    monkeypatch.setattr(operations_cli, "_values", lambda: {"dashboard_version": "2026.10.11.3"})
-    monkeypatch.setattr(operations_cli, "_dashboard_source_version", lambda: "2026.10.11.6")
+    monkeypatch.setattr(operations_cli, "_values", lambda: pytest.fail("Code deployment must not use customer dashboard_version"))
     monkeypatch.setattr(
         operations_cli,
         "_tf_output",
         lambda name: {"resource_group_name": "rg-test", "web_app_name": "app-test"}[name],
     )
+    monkeypatch.setattr(operations_cli, "_zip_tree", lambda *args, **kwargs: None)
+    monkeypatch.setattr(operations_cli, "_stamp_web_package", lambda package, version, revision: stamped.append(version))
+    monkeypatch.setattr(operations_cli, "_webapp_onedeploy_status", lambda *args: ({"deploymentId": "previous"}, ""))
+    monkeypatch.setattr(operations_cli, "_wait_for_webapp_deployment", lambda *args: None)
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0, stdout="resource-id"))
 
-    with pytest.raises(RuntimeError, match="Dashboard version mismatch"):
+    operations_cli.deploy_webapp()
+
+    assert stamped == [expected]
+    assert any(f"DASHBOARD_VERSION={expected}" in call for call in calls)
+    assert customer_values.read_bytes() == original
+
+
+@pytest.mark.parametrize("configuration", ["window.CONFIG = {};", 'window.CONFIG = {version: "not-a-release"};'])
+def test_webapp_deployment_rejects_missing_or_invalid_source_version_before_azure(monkeypatch, tmp_path: Path, configuration):
+    config = tmp_path / "dashboard/config.js"
+    config.parent.mkdir()
+    config.write_text(configuration)
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: pytest.fail("Invalid source must not modify Azure"))
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda *args: pytest.fail("Validate source before infrastructure lookups"))
+    with pytest.raises(RuntimeError, match="dashboard.*version|Dashboard source version"):
         operations_cli.deploy_webapp()
 
 

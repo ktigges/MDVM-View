@@ -767,6 +767,7 @@ resource "azurerm_linux_web_app" "dashboard" {
     "DASHBOARD_BRANDING_ENABLED"                  = "true"
     "DASHBOARD_BRANDING_ROLE"                     = "Dashboard.Administrator"
     "DASHBOARD_CACHE_SECONDS"                     = tostring(var.dashboard_cache_seconds)
+    "WEBSITES_CONTAINER_START_TIME_LIMIT"         = "1800"
     "DASHBOARD_VERSION"                           = var.dashboard_version
     "DASHBOARD_DATA_BROWSER_ENABLED"              = tostring(var.dashboard_data_browser_enabled)
     "DASHBOARD_DATA_BROWSER_ROLE"                 = var.dashboard_data_browser_enabled ? "Data.Evidence.Reader" : ""

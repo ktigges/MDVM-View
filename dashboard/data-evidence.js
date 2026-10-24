@@ -3,6 +3,7 @@ const $=id=>document.getElementById(id);
 const esc=value=>String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
 const fmt=value=>Number(value||0).toLocaleString();
 let reauthenticationStarted=false;
+let requestSequence=0,requestController;
 
 async function apiFetch(path,options){
   const response=await fetch(path,options);
@@ -48,14 +49,24 @@ function renderRows(payload){
 }
 
 async function loadRows(){
-  const parameters=new URLSearchParams({offset:String(state.offset),limit:String(state.limit)});
+  const sequence=++requestSequence;
+  requestController?.abort();
+  requestController=new AbortController();
+  const parameters=new URLSearchParams({offset:String(state.offset),limit:String(state.limit),snapshotId:state.catalog.snapshot.snapshotId});
   if(state.query)parameters.set("query",state.query);
   $("dataBrowserMetadata").textContent="Loading curated records.";
+  $("dataBrowserPrevious").disabled=true;
+  $("dataBrowserNext").disabled=true;
+  $("dataBrowserTable").innerHTML="";
   try{
-    const response=await apiFetch(`/api/data-browser/${encodeURIComponent(state.dataset)}?${parameters}`,{cache:"no-store"});
-    if(!response.ok)throw new Error(`Dataset request failed: ${response.status}`);
-    renderRows(await response.json());
+    const response=await apiFetch(`/api/data-browser/${encodeURIComponent(state.dataset)}?${parameters}`,{cache:"no-store",signal:requestController.signal});
+    const payload=await response.json();
+    if(sequence!==requestSequence)return;
+    if(!response.ok)throw new Error(payload.detail||`Dataset request failed: ${response.status}`);
+    if(payload.snapshotId!==state.catalog.snapshot.snapshotId)throw new Error("The dataset snapshot changed. Reload this page.");
+    renderRows(payload);
   }catch(error){
+    if(sequence!==requestSequence||error.name==="AbortError")return;
     $("dataBrowserMetadata").textContent=`Data evidence unavailable: ${error.message}`;
     $("dataBrowserTable").innerHTML="";
     $("dataBrowserPageStatus").textContent="";
@@ -68,8 +79,9 @@ async function loadCatalog(){
     if(!response.ok){const payload=await response.json().catch(()=>null);throw new Error(payload?.detail||`Catalog request failed: ${response.status}`);}
     state.catalog=await response.json();
     const dataset=$("dataBrowserDataset");
-    dataset.innerHTML=state.catalog.datasets.map(item=>`<option value="${esc(item.id)}">${esc(item.label)} · ${fmt(item.rowCount)}</option>`).join("");
-    state.dataset=state.catalog.datasets.some(item=>item.id===state.dataset)?state.dataset:state.catalog.datasets[0]?.id||"";
+    dataset.innerHTML=state.catalog.datasets.map(item=>`<option value="${esc(item.id)}"${item.available===false?" disabled":""}>${esc(item.label)} · ${item.available===false?"unavailable":fmt(item.rowCount)}</option>`).join("");
+    const available=state.catalog.datasets.filter(item=>item.available!==false);
+    state.dataset=available.some(item=>item.id===state.dataset)?state.dataset:available[0]?.id||"";
     dataset.value=state.dataset;
     dataset.disabled=!state.dataset;
     $("dataBrowserSearch").disabled=!state.dataset;

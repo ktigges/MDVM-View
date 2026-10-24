@@ -738,9 +738,12 @@ and then synchronizes Function triggers. Missing orchestration or activity
 functions fail readiness/verification instead of reporting a successful deploy.
 
 `python -m vulnerability_view.operations_cli deploy webapp` builds `webapp-source.zip`, stamps the
-operator-managed `dashboard_version` and deployment time, uploads the package,
+release version from the pulled `dashboard/config.js` and deployment time, uploads the package,
 and waits for Azure to report the final deployment result. The dashboard header
 shows both the release version and deployment time.
+Customers only need to pull the release and run deployment menu option 4.
+No local `dashboard_version` edit or version-bump command is required.
+An explicit `DASHBOARD_VERSION` environment override remains supported.
 
 Both ZIP files are local build artifacts and must not be committed.
 
@@ -875,8 +878,32 @@ paths are append-only. Only `current/manifest.json` is replaceable.
    assignments, but the current workflow does not require it.
 7. Assignment-required Enterprise Application access.
 8. App Service Easy Auth with unauthenticated requests redirected to Entra.
-9. Azure-backed FastAPI settings, a 300-second current-manifest refresh interval,
-   and per-dataset caching for the active immutable run.
+9. Azure-backed FastAPI settings and a 300-second current-manifest refresh
+   interval. Browser sessions pin an immutable snapshot; server-side SQLite
+   indexes provide aggregate metrics, filtering, and bounded table pages.
+   Dataset downloads are streamed and checksum-verified before indexing.
+
+The large-data dashboard enhancement is a **Web App code-only update**:
+use deployment-menu option 4, or `deploy webapp` followed by `verify webapp`.
+It requires neither a new collection nor a Function deployment, additional
+Storage permissions, or customer-side version edits. The existing `ijson`
+dependency is reused.
+
+Indexes and compressed dataset caches are disposable local files, not new
+historical Azure artifacts. Each worker retains at most two snapshots within
+an 8 GiB local cache budget. Ensure the App Service worker has sufficient free
+local disk for its inputs, indexes, and SQLite query scratch space. Initial
+startup after a restart takes longer while indexes and default Summary and
+Vulnerabilities results are prepared, before the worker accepts browser traffic.
+Deployment sets `WEBSITES_CONTAINER_START_TIME_LIMIT=1800` and verification
+allows the same startup window. New snapshots are prepared in the background
+before new sessions select them; allow disk room for both the served snapshot
+and its replacement. Startup failure prevents readiness; replacement failure
+retains the prior ready snapshot with explicit diagnostics and a visible notice.
+Already-cached views return directly, and browser revisits reuse bounded results.
+Other expensive queries use background workers and short polling requests.
+If a selected snapshot expires, reload
+the dashboard; do not delete retained history or start another collection.
 
 The Enterprise Application display name is `DVM Viewer`; the app registration
 uses the same name. After apply, Terraform outputs

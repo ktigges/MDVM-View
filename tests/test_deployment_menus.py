@@ -30,6 +30,15 @@ def test_legacy_webapp_deployment_defers_runtime_tracking_until_explicit_restart
     assert "az webapp start " not in deployment
 
 
+def test_legacy_webapp_deployment_uses_pulled_source_version_not_customer_values():
+    deploy = SHELL_DEPLOY.read_text(encoding="utf-8")
+    webapp = deploy.split('local dashboard_version web_app', 1)[1].split('Packaged dashboard version', 1)[0]
+    assert 'dashboard_version="${DASHBOARD_VERSION:-$source_dashboard_version}"' in webapp
+    assert ".dashboard_version" not in webapp
+    assert "Dashboard version mismatch" not in webapp
+    assert "YYYY.MM.DD.N format" in webapp
+
+
 def test_deployment_menus_expose_matching_options_and_confirmations():
     shell, powershell = menu_sources()
     options = (

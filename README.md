@@ -415,6 +415,111 @@ The navigation follows the way the work is normally reviewed:
    PDF and exported to CSV.
 7. **How to use** keeps the daily workflow available inside the application.
 
+The Vulnerabilities list shows **100 rows per page**, with First, Previous,
+Next, and Last navigation and a matching-record total. Switch between finding
+instances and distinct CVEs. Its search box shares the workspace search and
+searches all matching records, not just the current page. Workspace filter or
+search changes return the list to page one. First-seen and remediation metric
+links select the corresponding date window and finding/CVE view, honoring all
+selected severities rather than silently restricting results to Critical/High.
+The dashboard selects an immutable snapshot, then requests the Summary first.
+Other views and detail pivots load only when opened. Filtering, counting, CVE
+grouping, and paging run against a local SQLite index on the Web App, rather
+than sending complete findings and event histories to the browser. Counts
+describe the entire matching scope, not just the displayed page.
+In machine and vulnerability detail, **distinct active CVEs** counts unique CVEs
+on detected findings only (`Open`, `Reopened`, or `DetectionReturned`).
+**Active finding instances** counts those detected rows; multiple software or
+product findings can refer to the same CVE. Pending confirmation/verification
+rows remain visible but are excluded from these active totals, counted
+separately, and labelled as **evidence rows** in pagination/exports. A CVE with
+both detected and pending evidence is counted once as active, not twice.
+Endpoint severity totals likewise count detected findings, not pending rows.
+These are display/aggregation distinctions, not changes to SLA deadlines,
+qualified absence, or remediation verification rules. When comparing with
+Defender, use distinct active CVEs for the same device, snapshot time, and scope,
+not the combined evidence-row count.
+Summary comparisons use finding timestamps and compact run metadata; they do
+not require a full lifecycle-history index. Reporting builds its history index
+only when opened and reuses bounded aggregate caches across redraws and pages.
+
+Azure datasets are downloaded incrementally to local disk, verified against
+the selected manifest's compressed size and SHA-256, and indexed using streaming
+JSON readers. Requests stay pinned to the same snapshot, including its retained
+SLA policy. An expired snapshot returns an explicit reload message instead of
+mixing rows from different runs. Search is debounced and obsolete view requests
+are cancelled or ignored. CSV reports stream from the server rather than
+building a complete export in browser memory.
+Before accepting traffic, each Web App worker downloads/indexes the current
+snapshot and prepares the default Summary and Vulnerabilities first pages.
+Browser and server preparation share filter/workload defaults from
+`dashboard/config.js`; SLA and evidence calculations are unchanged. These two
+bounded results are retained separately (4 MiB total), so other queries cannot
+evict them. Cached server results return immediately without a polling round trip.
+The browser also retains up to sixteen bounded view/page responses within an
+8 MiB budget, so returning to the same view and filters does not repeat a query.
+Tracking-enabled browser entries expire after five seconds; tracking refreshes,
+snapshot changes, and explicit retries invalidate browser results.
+
+The server checks for new snapshots at the configured metadata refresh interval
+and prepares replacement Summary/Vulnerabilities results before selecting that
+snapshot for new sessions. Existing sessions remain pinned. The ready snapshot
+stays protected during replacement preparation; insufficient disk or another
+preparation failure retains the old ready snapshot and reports an explicit
+notice/log rather than silently serving incomplete data.
+`/api/diagnostics` exposes `dashboardQueries.preparation`, including the ready
+snapshot, preparation status, errors, and preparation duration.
+
+Cold startup still takes time before the Web App becomes available; it no longer
+makes the first visitor build the default screens. Deployment allows up to
+30 minutes for App Service container startup. Other first-time filtered queries,
+details, and historical reports can still require work through bounded background workers.
+The browser polls short requests while preparation continues, avoiding a single
+long HTTP connection that could exceed App Service's timeout. Two workspace-query
+workers and one separate report worker keep long reporting requests from
+occupying every workspace slot. At most sixteen pending/completed query results
+are retained per worker; each cached result is limited to 2 MiB.
+
+Each Web App worker retains at most two local snapshot caches, subject to an
+8 GiB total local-disk budget. Cold indexes take time to build; subsequent
+requests reuse them. Restarting the Web App discards this disposable cache,
+not Azure history. Local disk exhaustion is reported as an error; it does not
+trigger deletion of retained Storage data. Allow enough local disk for the
+compressed inputs and SQLite indexes.
+SQLite query scratch space requires additional free disk beyond retained indexes.
+The default deployment uses one Uvicorn worker. Additional worker processes each
+build their own cache, so increasing `web_app_worker_processes` also increases
+local disk requirements.
+When recommendation tracking is enabled, shared workflow reads are reused for
+up to five seconds to avoid rereading audit events on every page change.
+Saving a workflow action invalidates that worker's tracking cache immediately.
+If the server detects a newer published snapshot, recommendation workflow
+changes require a reload so an action is not marked against stale evidence.
+
+Interaction regressions run with
+`node --test tests/dashboard_findings.test.cjs tests/dashboard_queries.test.cjs`
+and are included in pytest when Node.js is available. A standalone scale check,
+not part of routine pytest, verifies two million findings plus two million
+lifecycle events, exact page/search/CVE totals, responses below 512 KiB, and
+peak RSS below 512 MiB:
+
+```bash
+PYTHONPATH=src .venv/bin/python tests/benchmark_dashboard_queries.py --rows 2000000 --events 2000000
+```
+
+Add `--prepare-defaults` to measure startup preparation separately and require
+each prepared Summary/Vulnerabilities response to be available in under one
+second locally.
+
+A local synthetic run with `--prepare-defaults` at that size used approximately
+79 MiB peak Python RSS, returned an 80 KiB overview page, and fetched the last
+100-row page in 2.4 seconds. Startup preparation took 131 seconds; the prepared
+Summary and Vulnerabilities cache reads took 0.1 ms and 0.4 ms respectively
+(not end-to-end browser or network latency).
+Its SQLite index occupied 6.7 GiB, excluding source inputs and query scratch
+space. Cold builds and first heavy queries still take time; these workstation
+measurements are not App Service latency or sizing guarantees.
+
 Executive Snapshot can show either finding instances or recommendation
 workload. Recommendation workload is a rollup of linked finding evidence. It
 does not create a separate recommendation SLA clock; the displayed SLA result

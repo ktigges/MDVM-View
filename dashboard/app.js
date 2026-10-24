@@ -21,6 +21,8 @@ const state={findings:[],findingEvents:[],recommendationEvents:[],runHistory:[],
 const DEFENDER_RECOMMENDATIONS_URL="https://security.microsoft.com/exposure-recommendations?tabId=Devices";
 const DEFENDER_VULNERABILITIES_URL="https://security.microsoft.com/vulnerabilities/devices";
 const MAX_CUSTOMER_LOGO_BYTES=2*1024*1024;
+const FINDINGS_PAGE_SIZE=100;
+const findingsList={mode:"findings",page:0,scopeKey:""};
 /** Find a dashboard element by ID. */
 const $=id=>document.getElementById(id);
 /** Interpret supported boolean representations. */
@@ -153,11 +155,8 @@ function applyPresentationConfig(){
 }
 applyPresentationConfig();
 
-/** Load a named dashboard JSON dataset. */
-const load=name=>apiFetch(`/api/data/${name}.json`).then(response=>{if(!response.ok)throw new Error(`${name}: ${response.status}`);return response.json()});
-apiFetch("/api/health").then(response=>response.ok?response.json():null).then(runtime=>{if(runtime?.localDevelopmentOnly)$("developmentWarning").hidden=false;state.recommendationTrackingEnabled=Boolean(runtime?.recommendationTrackingEnabled);state.recommendationTrackingLocalPreview=Boolean(runtime?.recommendationTrackingLocalPreview);$("recommendationTrackingFilterLabel").hidden=!state.recommendationTrackingEnabled;if(state.recommendationTrackingEnabled)refreshRecommendationTracking();}).catch(()=>{});
+apiFetch("/api/health").then(response=>response.ok?response.json():null).then(runtime=>{if(runtime?.localDevelopmentOnly)$("developmentWarning").hidden=false;state.recommendationTrackingEnabled=Boolean(runtime?.recommendationTrackingEnabled);state.recommendationTrackingLocalPreview=Boolean(runtime?.recommendationTrackingLocalPreview);$("recommendationTrackingFilterLabel").hidden=!state.recommendationTrackingEnabled;if(state.recommendationTrackingEnabled&&dashboardQuery.snapshot)void refreshRecommendationTracking();}).catch(()=>{});
 apiFetch("/api/auth").then(response=>{if(!response.ok)throw new Error(`Authentication status: ${response.status}`);return response.json();}).then(auth=>{const element=$("authStatus");element.hidden=presentation.authentication?.showStatus===false;element.textContent=auth.enabled?(auth.user?.displayName?`Signed in as ${auth.user.displayName}`:"Signed in with Microsoft Entra ID"):"Local access · authentication off";element.classList.toggle("authenticated",Boolean(auth.authenticated));configureSignedInUser(auth);configureBranding(auth);}).catch(()=>{$("authStatus").textContent="Authentication status unavailable";$("signedInUser").hidden=true;});
-apiFetch("/api/sla-policy").then(response=>{if(!response.ok)throw new Error(`SLA policy: ${response.status}`);return response.json();}).then(policy=>{state.slaPolicy=policy;renderSlaPolicySummary();if(state.activeView==="executiveSnapshot")renderExecutiveSnapshot();}).catch(()=>{$("slaPolicySummary").textContent="SLA policy values are unavailable for this dataset.";});
 const dashboardDatasets=[
   {name:"findings",key:"findings",label:"findings",required:true},
   {name:"finding-events",key:"findingEvents",label:"finding history",required:false},
@@ -196,13 +195,7 @@ function updateLoadingNotice(){
 /** Load dashboard datasets independently so completed sections render immediately. */
 function loadDashboardDatasets(){
   initialize();
-  updateLoadingNotice();
-  dashboardDatasets.forEach(dataset=>{
-    load(dataset.name)
-      .then(rows=>{state[dataset.key]=rows;dashboardLoad.loaded.add(dataset.name);rebuildDerivedState();render();})
-      .catch(error=>{const failure={...dataset,message:error.message};(dataset.required?dashboardLoad.requiredFailures:dashboardLoad.optionalFailures).push(failure);if(dataset.required){$("freshnessText").textContent=`Data unavailable: ${error.message}`;$("availabilityItems").innerHTML=`<span class="header-status-item unavailable" title="Required dashboard data is unavailable"><i aria-hidden="true"></i><strong>Dashboard data</strong><span class="status-info" aria-hidden="true">i</span></span>`;}})
-      .finally(()=>{dashboardLoad.completed+=1;updateLoadingNotice();});
-  });
+  return startSnapshotDashboard();
 }
 
 /** Initialize for the dashboard. */
@@ -221,8 +214,11 @@ function initialize(){
   $("newPeriodEnd").addEventListener("change",event=>{state.newPeriodEnd=event.target.value;clearSelectedWorkItem();render();});
   $("toggleNewPeriodFilter").addEventListener("click",()=>{if(state.remediationPeriodFilter){state.remediationPeriodFilter=false;state.newPeriodFilter=false;}else state.newPeriodFilter=!state.newPeriodFilter;$("applyNewPeriodFilter").checked=state.newPeriodFilter;clearSelectedWorkItem();render();});
   document.querySelectorAll(".latest-run-changes-toggle").forEach(input=>input.addEventListener("change",event=>{state.latestRunChangesOnly=event.target.checked;clearSelectedWorkItem();render();}));
-  document.querySelectorAll("[data-new-view]").forEach(button=>button.addEventListener("click",()=>{state.newPeriodFilter=true;state.remediationPeriodFilter=false;$("applyNewPeriodFilter").checked=true;activateView(button.dataset.newView);}));
-  document.querySelectorAll("[data-fixed-view]").forEach(button=>button.addEventListener("click",()=>{state.remediationPeriodFilter=true;state.newPeriodFilter=false;state.exposureStatus="All";$("applyNewPeriodFilter").checked=false;$("exposureStatusFilter").value="All";activateView(button.dataset.fixedView);}));
+  document.querySelectorAll("[data-new-view]").forEach(button=>button.addEventListener("click",()=>{state.newPeriodFilter=true;state.remediationPeriodFilter=false;$("applyNewPeriodFilter").checked=true;if(button.dataset.findingsMode)findingsList.mode=button.dataset.findingsMode;findingsList.page=0;clearSelectedWorkItem();activateView(button.dataset.newView);}));
+  document.querySelectorAll("[data-fixed-view]").forEach(button=>button.addEventListener("click",()=>{state.remediationPeriodFilter=true;state.newPeriodFilter=false;state.exposureStatus="All";$("applyNewPeriodFilter").checked=false;$("exposureStatusFilter").value="All";if(button.dataset.findingsMode)findingsList.mode=button.dataset.findingsMode;findingsList.page=0;clearSelectedWorkItem();activateView(button.dataset.fixedView);}));
+  $("findingsMode").addEventListener("change",event=>{findingsList.mode=event.target.value;findingsList.page=0;renderFindingsList(filteredFindings());});
+  $("findingsSearch").addEventListener("input",event=>{state.search=event.target.value.trim().toLowerCase();$("searchFilter").value=event.target.value;clearSelectedWorkItem();render();});
+  document.querySelectorAll("[data-findings-page]").forEach(button=>button.addEventListener("click",()=>{const action=button.dataset.findingsPage;findingsList.page=action==="first"?0:action==="last"?Number.MAX_SAFE_INTEGER:findingsList.page+(action==="next"?1:-1);renderFindingsList(filteredFindings());}));
   document.querySelectorAll('input[name="recommendationType"]').forEach(input=>input.addEventListener("change",()=>{state.recommendationTypes=new Set([...document.querySelectorAll('input[name="recommendationType"]:checked')].map(item=>item.value));clearSelectedWorkItem();render();}));
   document.querySelectorAll('input[name="assetDomain"]').forEach(input=>input.addEventListener("change",()=>{state.domains=new Set([...document.querySelectorAll('input[name="assetDomain"]:checked')].map(item=>item.value));clearSelectedWorkItem();render();}));
   document.querySelectorAll(".story-nav button[data-view]").forEach(button=>button.addEventListener("click",()=>activateView(button.dataset.view)));
@@ -261,7 +257,7 @@ function initialize(){
 function rebuildDerivedState(){
   const selectedTeam=state.team,selectedSubscription=state.subscription;
   const snapshotTimes=[...state.runs,...state.findings,...state.devices].map(row=>Date.parse(row.SnapshotTimeUtc)).filter(Number.isFinite);
-  state.snapshotTimeMs=snapshotTimes.length?Math.max(...snapshotTimes):NaN;
+  state.snapshotTimeMs=snapshotTimes.reduce((latest,time)=>Number.isFinite(latest)?Math.max(latest,time):time,NaN);
   state.recommendationsById.clear();
   state.subscriptionInventoryById.clear();
   state.recommendationMachinesByRecommendation.clear();
@@ -281,8 +277,6 @@ function rebuildDerivedState(){
   $("teamFilter").value=[...$("teamFilter").options].some(option=>option.value===selectedTeam)?selectedTeam:"All";
   $("subscriptionFilter").value=[...$("subscriptionFilter").options].some(option=>option.value===selectedSubscription)?selectedSubscription:"All";
 }
-
-loadDashboardDatasets();
 
 /** Activate view for the dashboard. */
 function activateView(view){
@@ -416,7 +410,7 @@ function showSlaSeverityDetail(rows,severity){const scoped=rows.filter(row=>row.
 /** Render sla breakdown for the dashboard. */
 function renderSlaBreakdown(id,rows){table(id,["Severity","FixedWithinSLA","FixedOutsideSLA","PendingVerification","OpenOutsideSLA","SLACompliance"],slaSeverityRows(rows));$(id).querySelectorAll(".sla-severity-link").forEach(button=>button.addEventListener("click",()=>showSlaSeverityDetail(rows,button.dataset.severity)));}
 /** Render for the dashboard. */
-function render(){
+function renderLegacyDashboard(){
   const rows=filteredFindings(),current=state.remediationPeriodFilter?rows:rows.filter(row=>detected(row)||pending(row)),slaRows=filteredFindings(state.newPeriodFilter,false);
   const recommendations=filteredRecommendations();
   const hasComparableRuns=comparableRunSnapshots().length>=2;
@@ -441,8 +435,7 @@ function render(){
   }else if(state.activeView==="overview"){
     const known=current.filter(row=>isWatchlistCve(row.CveId));
     const watchlist=[...known.reduce((byCve,row)=>{const cve=normalizedCve(row.CveId),existing=byCve.get(cve);if(!existing||Number(row.PriorityScore)>Number(existing.PriorityScore))byCve.set(cve,row);return byCve;},new Map()).values()].map(row=>({...row,WatchlistEvidence:watchlistEvidence(row.CveId),AffectedDevices:new Set(known.filter(item=>normalizedCve(item.CveId)===normalizedCve(row.CveId)).map(item=>item.DeviceId)).size}));
-    const findingDisplay=current.map(row=>({...row,WatchlistEvidence:watchlistEvidence(row.CveId)||"Not listed"}));
-    table("findingsTable",["FindingStatus","Severity","CveId","WatchlistEvidence","SoftwareName","OSPlatform","DeviceName","AssetClass","PriorityScore"],findingDisplay.filter(row=>["Critical","High"].includes(row.Severity)).sort((a,b)=>b.PriorityScore-a.PriorityScore).slice(0,80),true);
+    renderFindingsList(rows);
     table("exploitTable",["Severity","CveId","WatchlistEvidence","AffectedDevices","SoftwareName"],watchlist.sort((a,b)=>b.PriorityScore-a.PriorityScore).slice(0,60),true);
   }else if(state.activeView==="workstations"){
     renderWorkstations(rows);
@@ -470,6 +463,23 @@ function render(){
   }
   renderPivot();
   updateRecommendationHandoffStatus();
+}
+
+function renderFindingsList(rows){
+  const scopeKey=JSON.stringify([findingsList.mode,state.origin,state.severity,state.exposureStatus,state.assetClass,state.subscription,state.hideNonReporting,state.reportingDays,state.includeDiscoveredOnly,[...state.recommendationTypes],[...state.domains],state.team,state.search,state.newPeriod,state.newPeriodStart,state.newPeriodEnd,state.newPeriodFilter,state.remediationPeriodFilter,state.latestRunChangesOnly,state.snapshotTimeMs,state.findings.length]);
+  if(scopeKey!==findingsList.scopeKey){findingsList.page=0;findingsList.scopeKey=scopeKey;}
+  const grouped=findingsList.mode==="cves",ordered=grouped?cveRowsFor(rows):rows.slice().sort((a,b)=>Number(b.PriorityScore||0)-Number(a.PriorityScore||0)),pages=Math.max(1,Math.ceil(ordered.length/FINDINGS_PAGE_SIZE));
+  findingsList.page=Math.max(0,Math.min(findingsList.page,pages-1));
+  const start=findingsList.page*FINDINGS_PAGE_SIZE,pageRows=ordered.slice(start,start+FINDINGS_PAGE_SIZE),display=grouped?pageRows.map(row=>({...row,FindingInstances:row.rows.length})):pageRows.map(row=>({...row,WatchlistEvidence:watchlistEvidence(row.CveId)||"Not listed"}));
+  const columns=grouped?["CveId","Severity","CvssScore","KnownExploit","AffectedMachines","FindingInstances","OpenFindings","PendingFindings","FixedFindings"]:["FindingStatus","Severity","CveId","WatchlistEvidence","SoftwareName","OSPlatform","DeviceName","AssetClass","PriorityScore"];
+  table("findingsTable",columns,display,grouped?pivotToCve:showDetail);
+  $("findingsMode").value=findingsList.mode;
+  if($("findingsSearch").value.trim().toLowerCase()!==state.search)$("findingsSearch").value=state.search;
+  const unit=grouped?"distinct CVEs":"finding instances";
+  $("findingsPageStatus").textContent=ordered.length?`Showing ${fmt(start+1)}-${fmt(start+display.length)} of ${fmt(ordered.length)} ${unit} · Page ${fmt(findingsList.page+1)} of ${fmt(pages)}`:`No matching ${unit}. Adjust search or workspace filters.`;
+  $("findingsListTitle").textContent=grouped?"Distinct CVEs":"Vulnerability findings";
+  $("findingsListContext").textContent=state.newPeriodFilter?"First seen in the selected window; all selected severities":state.remediationPeriodFilter?"Remediation observed in the selected window; all selected severities":"All findings matching workspace filters";
+  document.querySelectorAll("[data-findings-page]").forEach(button=>{button.disabled=button.dataset.findingsPage==="first"||button.dataset.findingsPage==="previous"?findingsList.page===0:findingsList.page===pages-1;});
 }
 
 /** Latest live run rows for the dashboard. */
@@ -526,11 +536,11 @@ function showRecommendationOutcome(recommendationId,options={}){const allRows=fi
 /** Cards for the dashboard. */
 function cards(id,items,hint="Current filter context"){$(id).innerHTML=items.map(([value,label,itemHint])=>{const detail=itemHint??hint;return`<div class="metric"><span class="label">${esc(label)}</span><strong class="value">${typeof value==="number"?fmt(value):esc(value)}</strong>${detail?`<span class="hint">${esc(detail)}</span>`:""}</div>`;}).join("");}
 /** Header label for the dashboard. */
-function headerLabel(column){const labels={WorkAction:"Working here?",RemediationStarted:"Defender remediation started",TrackingStatus:"Dashboard work status",TrackingUpdatedBy:"Updated by",TrackingUpdatedUtc:"Updated UTC",SeverityScore:"Defender severity score",FixedWithinSLA:"Remediation observed within SLA",FixedOutsideSLA:"Remediation observed outside SLA",PendingVerification:"Pending verification",OpenOutsideSLA:"Detected findings overdue",SLACompliance:"Finding SLA compliance"};return labels[column]||column.replace(/([A-Z])/g," $1").trim().replace(/\bS L A\b/g,"SLA").replace(/\bC V E\b/g,"CVE").replace(/\bU T C\b/g,"UTC").replace(/\bI D\b/g,"ID");}
+function headerLabel(column){const labels={DetectedMachines:"Machines with detections",DetectedCVEs:"Distinct active CVEs",PendingCVEs:"CVEs with pending evidence",EvidenceRows:"Evidence rows",WorkAction:"Working here?",RemediationStarted:"Defender remediation started",TrackingStatus:"Dashboard work status",TrackingUpdatedBy:"Updated by",TrackingUpdatedUtc:"Updated UTC",SeverityScore:"Defender severity score",FixedWithinSLA:"Remediation observed within SLA",FixedOutsideSLA:"Remediation observed outside SLA",PendingVerification:"Pending verification",OpenOutsideSLA:"Detected findings overdue",SLACompliance:"Finding SLA compliance"};return labels[column]||column.replace(/([A-Z])/g," $1").trim().replace(/\bS L A\b/g,"SLA").replace(/\bC V E\b/g,"CVE").replace(/\bU T C\b/g,"UTC").replace(/\bI D\b/g,"ID");}
 /** Render compact work status beneath a recommendation name. */
 function recommendationWorkStatus(row){if(!state.recommendationTrackingEnabled||!Object.hasOwn(row,"TrackingStatus"))return"";const status=row.TrackingStatus||"Untracked",details=[row.TrackingUpdatedBy&&row.TrackingUpdatedBy!=="—"?row.TrackingUpdatedBy:"",row.TrackingUpdatedUtc&&row.TrackingUpdatedUtc!=="—"?row.TrackingUpdatedUtc:""].filter(Boolean).join(" · ");return`<span class="recommendation-work-status"><span class="tracking-status ${esc(status)}">${esc(recommendationTrackingLabel(status))}</span>${details?`<small>${esc(details)}</small>`:""}</span>`;}
 /** Table for the dashboard. */
-function table(id,columns,rows,onClick=false){const element=$(id);element.innerHTML=`<thead><tr>${columns.map(column=>`<th>${esc(headerLabel(column))}</th>`).join("")}</tr></thead><tbody>${rows.map((row,index)=>`<tr data-index="${index}">${columns.map(column=>`<td>${cell(column,row[column],row)}</td>`).join("")}</tr>`).join("")}</tbody>`;element.querySelectorAll("a").forEach(link=>link.addEventListener("click",event=>{event.stopPropagation();if(link.classList.contains("recommendation-handoff")){const recommendation=rows[Number(link.closest("tr").dataset.index)];navigator.clipboard?.writeText(`${recommendation.RecommendationName}\nRecommendation ID: ${recommendation.RecommendationId}`);}}));if(onClick){const handler=typeof onClick==="function"?onClick:showDetail;element.querySelectorAll("tbody tr").forEach((tr,index)=>{tr.tabIndex=0;tr.addEventListener("click",()=>handler(rows[index]));tr.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();handler(rows[index]);}});});}}
+function table(id,columns,rows,onClick=false){const element=$(id);element.innerHTML=`<thead><tr>${columns.map(column=>`<th>${esc(headerLabel(column))}</th>`).join("")}</tr></thead><tbody>${rows.map((row,index)=>`<tr data-index="${index}">${columns.map(column=>`<td>${cell(column,row[column],row)}</td>`).join("")}</tr>`).join("")}</tbody>`;element.querySelectorAll("a").forEach(link=>link.addEventListener("click",event=>{event.stopPropagation();if(link.classList.contains("recommendation-handoff")){const recommendation=rows[Number(link.closest("tr").dataset.index)];navigator.clipboard?.writeText(`${recommendation.RecommendationName}\nRecommendation ID: ${recommendation.RecommendationId}`).catch(()=>{dashboardStatus(`Copy unavailable. Search Defender for recommendation ${recommendation.RecommendationId}.`);});}}));if(onClick){const handler=typeof onClick==="function"?onClick:showDetail;element.querySelectorAll("tbody tr").forEach((tr,index)=>{tr.tabIndex=0;tr.addEventListener("click",()=>handler(rows[index]));tr.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();handler(rows[index]);}});});}}
 /** Render statistics cards for the dashboard. */
 function renderStatisticsCards(current,previous){
   const netRows=[...current._newRows.map(row=>({...row,EvidenceCategory:"New"})),...current._fixedRows.map(row=>({...row,EvidenceCategory:"Fixed"}))],items=[
@@ -599,9 +609,9 @@ function endpointRemediationImpact(row){const rows=state.findings.filter(item=>i
 /** Show detail for the dashboard. */
 function showDetail(row){const cve=normalizedCve(row.CveId),matches=cve?filteredFindings().filter(item=>normalizedCve(item.CveId)===cve):[],devices=[...matches.reduce((byDevice,item)=>{if(!byDevice.has(item.DeviceId))byDevice.set(item.DeviceId,item);return byDevice;},new Map()).values()].sort((a,b)=>String(a.DeviceName).localeCompare(String(b.DeviceName))),actionLink=$("defenderDeviceLink"),isLive=row.DataOrigin==="Live",showAction=isLive&&Boolean(cve||row.DeviceId);actionLink.href=cve?DEFENDER_VULNERABILITIES_URL:defenderDeviceUrl(row);actionLink.textContent=cve?"Open CVE in Defender":"Open device in Defender";actionLink.dataset.copyText=cve?cve:"";actionLink.hidden=!showAction;$("detailActionStatus").textContent=cve&&isLive?`${cve} copied. Paste it into Defender vulnerability search.`:"";$("detailTitle").textContent=cve?`${cve} · ${devices.length} API-matched device${devices.length===1?"":"s"}`:row.DeviceName||row.RecommendationName||row.Title||"Record detail";const fields=Object.entries(row).map(([key,value])=>`<div><small>${esc(key)}</small>${esc(value)}</div>`).join("");const deviceEvidence=cve?`<section class="device-evidence"><h3>Current-filter API matches</h3><table><thead><tr><th>Device</th><th>OS</th><th>Exposure</th><th>Last seen</th></tr></thead><tbody>${devices.map(device=>`<tr><td>${esc(device.DeviceName||device.DeviceId)}</td><td>${esc(device.OSPlatform)}</td><td>${esc(device.DeviceExposureLevel)}</td><td>${esc(device.LastSeenUtc)}</td></tr>`).join("")}</tbody></table></section>`:"";$("detailBody").innerHTML=endpointRemediationImpact(row)+fields+deviceEvidence;$("detailDialog").showModal();}
 /** Reload shared recommendation workflow state. */
-async function refreshRecommendationTracking(){try{const response=await apiFetch("/api/recommendation-tracking");if(!response.ok)throw new Error(`Tracking request failed: ${response.status}`);const payload=await response.json();state.recommendationTracking=new Map((payload.items||[]).map(row=>[String(row.recommendationId),row]));if(state.findings.length)render();}catch(error){$("recommendationTrackingStatus").textContent=`Tracking unavailable: ${error.message}`;}}
+async function refreshRecommendationTracking(){try{if(!dashboardQuery.snapshot)return false;const response=await apiFetch(`/api/recommendation-tracking?snapshotId=${encodeURIComponent(dashboardQuery.snapshot.snapshotId)}`);if(response.status===409){expireDashboardSnapshot();return false;}if(!response.ok)throw new Error(`Tracking request failed: ${response.status}`);const payload=await response.json();state.recommendationTracking=new Map((payload.items||[]).map(row=>[String(row.recommendationId),row]));return true;}catch(error){$("recommendationTrackingStatus").textContent=`Tracking unavailable: ${error.message}`;dashboardStatus(`Tracking unavailable: ${error.message}`);return false;}}
 /** Save a shared recommendation workflow action. */
-async function updateRecommendationTracking(status,recommendationId=state.selectedRecommendationId){const recommendation=state.recommendationsById.get(recommendationId);if(!recommendation||(recommendation.DataOrigin!=="Live"&&!state.recommendationTrackingLocalPreview))return false;const statusElement=$("recommendationTrackingStatus");statusElement.textContent="Saving dashboard work status…";try{const response=await apiFetch("/api/recommendation-tracking",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({recommendationId,status})});if(!response.ok)throw new Error(`Update failed: ${response.status}`);await refreshRecommendationTracking();return true;}catch(error){statusElement.textContent=`Dashboard work-status update failed: ${error.message}`;return false;}}
+async function updateRecommendationTracking(status,recommendationId=state.selectedRecommendationId){const recommendation=state.recommendationsById.get(recommendationId);if(!dashboardQuery.snapshot||dashboardQuery.expired||!recommendation||(recommendation.DataOrigin!=="Live"&&!state.recommendationTrackingLocalPreview))return false;const statusElement=$("recommendationTrackingStatus");statusElement.textContent="Saving dashboard work status…";try{const response=await apiFetch(`/api/recommendation-tracking?snapshotId=${encodeURIComponent(dashboardQuery.snapshot.snapshotId)}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({recommendationId,status})});if(response.status===409){expireDashboardSnapshot();return false;}if(!response.ok)throw new Error(`Update failed: ${response.status}`);await refreshRecommendationTracking();return true;}catch(error){statusElement.textContent=`Dashboard work-status update failed: ${error.message}`;return false;}}
 /** Render pivot for the dashboard. */
 function renderPivot(){const panel=$("pivotPanel"),recommendation=state.recommendationsById.get(state.selectedRecommendationId);panel.querySelectorAll(".empty-state").forEach(node=>node.remove());if(!recommendation||!recommendationMatches(recommendation)){panel.hidden=true;return;}panel.hidden=false;const recommendationSearchMatch=state.search&&matchesSearch(recommendation),findingInScope=row=>(state.origin==="Both"||row.DataOrigin===state.origin)&&(state.severity==="All"||row.Severity===state.severity)&&assetClassMatches(row)&&subscriptionMatches(row)&&reportingMatches(row)&&state.recommendationTypes.has(findingKind(row))&&state.domains.has(findingDomain(row))&&(state.team==="All"||row.OwnerTeam===state.team)&&(recommendationSearchMatch||matchesSearch(row)),machineInScope=row=>(state.origin==="Both"||row.DataOrigin===state.origin)&&assetClassMatches(row)&&subscriptionMatches(row)&&reportingMatches(row)&&state.domains.has(findingDomain(row))&&(state.team==="All"||row.OwnerTeam===state.team)&&(recommendationSearchMatch||matchesSearch(row)),findings=(state.findingsByRecommendation.get(state.selectedRecommendationId)||[]).filter(findingInScope),references=(state.recommendationMachinesByRecommendation.get(state.selectedRecommendationId)||[]).filter(machineInScope),byDevice=new Map();findings.forEach(row=>{const existing=byDevice.get(row.DeviceId);if(!existing||Number(row.PriorityScore)>Number(existing.PriorityScore))byDevice.set(row.DeviceId,row);});const fallbackMachines=[...byDevice.values()],machines=(references.length?references:fallbackMachines).map(row=>({...row,MachineSource:references.length?"Recommendation API":"Vulnerability fallback"})).sort((a,b)=>String(a.DeviceName).localeCompare(String(b.DeviceName))),linkedCves=new Set(findings.map(row=>normalizedCve(row.CveId)).filter(Boolean)),activities=remediationActivityEnabled?state.remediations.filter(row=>String(row.RecommendationId||"")===state.selectedRecommendationId&&(recommendationSearchMatch||matchesSearch(row)||findings.length||references.length)):[],isLive=recommendation.DataOrigin==="Live",position=state.detailRecommendationIds.indexOf(state.selectedRecommendationId);$("pivotTitle").textContent=recommendation.RecommendationName;$("pivotSummary").textContent=`${recommendationKind(recommendation)} · ${recommendationDomains(recommendation).join(" + ")} · ${fmt(recommendation.ExposedMachinesCount)} Defender-reported exposures`;$("pivotPosition").textContent=position>=0?`${position+1} of ${state.detailRecommendationIds.length}`:"";$("pivotPrevious").disabled=position<=0;$("pivotNext").disabled=position<0||position>=state.detailRecommendationIds.length-1;$("defenderRemediationLink").href=defenderRecommendationUrl(recommendation);$("defenderRemediationLink").hidden=!isLive;$("copyRecommendationReference").hidden=!isLive;$("pivotActionStatus").textContent=isLive?"Opens Defender; the recommendation reference is copied for portal search.":"Defender remediation is available for live recommendations.";cards("pivotCards",[[machines.length,"Affected machines"],[linkedCves.size,"Linked CVEs"],...(remediationActivityEnabled?[[activities.length,"Remediation activities"]]:[]),[recommendationSeverity(recommendation,findings),"Severity band"]]);table("pivotTable",["DeviceName","OSPlatform","DeviceExposureLevel","AssetClass","OwnerTeam","LastSeenUtc","MachineSource"],machines,true);if(!machines.length)$("pivotTable").insertAdjacentHTML("afterend",'<p class="empty-state">No affected machines match the current filters.</p>');}
 
@@ -732,7 +742,7 @@ function renderRecommendations(rows){
 /** Render remediation activities for the dashboard. */
 function renderRemediationActivities(rows){
   const terminal=new Set(["completed","cancelled","canceled","closed"]),active=rows.filter(row=>!terminal.has(String(row.Status).toLowerCase()));
-  const snapshotTimes=state.runs.map(row=>new Date(row.SnapshotTimeUtc).getTime()).filter(Number.isFinite),asOf=snapshotTimes.length?Math.max(...snapshotTimes):Date.now(),day=86400000;
+  const asOf=Number.isFinite(state.snapshotTimeMs)?state.snapshotTimeMs:Date.now(),day=86400000;
   const overdue=active.filter(row=>row.DueOnUtc&&new Date(row.DueOnUtc).getTime()<asOf),recent=active.filter(row=>row.StatusLastModifiedUtc&&asOf-new Date(row.StatusLastModifiedUtc).getTime()<=day),dueSoon=active.filter(row=>{const due=new Date(row.DueOnUtc).getTime();return Number.isFinite(due)&&due>=asOf&&due<=asOf+14*day;});
   cards("remediationActivityCards",[[active.length,"Tasks in progress"],[active.reduce((total,row)=>total+Number(row.TargetDevices||0),0),"Target devices"],[active.reduce((total,row)=>total+Number(row.FixedDevices||0),0),"Defender-confirmed fixed devices"],[recent.length,"Tasks updated in 24 hours"],[dueSoon.length,"Task due dates in 14 days"],[overdue.length,"Tasks past due date"]]);
   const display=rows.map(row=>{const recommendation=state.recommendationsById.get(String(row.RecommendationId||"")),taskStatus=taskDueStatus(row,asOf);return{...row,RecommendationName:recommendation?.RecommendationName||"Unlinked",RecommendationType:recommendation?recommendationKind(recommendation):"Unknown",AssetDomains:recommendation?recommendationDomains(recommendation).join(" + "):"Unknown",TaskDueStatus:taskStatus,TaskCompletedUtc:["CompletedWithinDueDate","CompletedOutsideDueDate"].includes(taskStatus)?row.StatusLastModifiedUtc:""};});
@@ -779,7 +789,7 @@ function renderMonthComparison(latestDate){
 }
 /** Build trend points for the dashboard. */
 function buildTrendPoints(){
-  const rows=trendScopedFindings().map(row=>({...row,_first:new Date(row.FirstObservedUtc||row.FirstSeenUtc).getTime(),_fixed:new Date(row.FixedUtc).getTime(),_reopened:new Date(row.ReopenedUtc).getTime(),_due:new Date(row.SlaDueUtc).getTime()})),snapshotTimes=rows.map(row=>new Date(row.SnapshotTimeUtc).getTime()).filter(Number.isFinite);if(!snapshotTimes.length)return[];const day=86400000,latest=new Date(Math.max(...snapshotTimes));latest.setUTCHours(0,0,0,0);return Array.from({length:90},(_,index)=>{const start=new Date(latest.getTime()-(89-index)*day),end=start.getTime()+day-1,remaining=rows.filter(row=>row._first<=end&&(!Number.isFinite(row._fixed)||row._fixed>end||(Number.isFinite(row._reopened)&&row._reopened<=end))),fixedToday=rows.filter(row=>Number.isFinite(row._fixed)&&row._fixed>=start.getTime()&&row._fixed<=end),statuses={within:0,outside:0};rows.forEach(row=>{if(row._first>end)return;const effectiveFixed=Number.isFinite(row._fixed)&&row._fixed<=end&&!(Number.isFinite(row._reopened)&&row._reopened<=end);if(effectiveFixed){if(Number.isFinite(row._due)&&(row._fixed<=row._due))statuses.within++;else statuses.outside++;}});return{date:start.toISOString().slice(0,10),added:rows.filter(row=>row._first>=start.getTime()&&row._first<=end).length,fixed:fixedToday.length,policyWithin:fixedToday.filter(row=>Number.isFinite(row._due)&&row._fixed<=row._due).length,policyOutside:fixedToday.filter(row=>Number.isFinite(row._due)&&row._fixed>row._due).length,remaining:remaining.length,backlog:remaining.filter(row=>truthy(row.PublicExploitAvailable)||truthy(row.VerifiedExploitAvailable)||truthy(row.ExploitKitAvailable)).length,fixedWithinSla:statuses.within,fixedOutsideSla:statuses.outside};});
+  const rows=trendScopedFindings().map(row=>({...row,_first:new Date(row.FirstObservedUtc||row.FirstSeenUtc).getTime(),_fixed:new Date(row.FixedUtc).getTime(),_reopened:new Date(row.ReopenedUtc).getTime(),_due:new Date(row.SlaDueUtc).getTime()})),snapshotTimes=rows.map(row=>new Date(row.SnapshotTimeUtc).getTime()).filter(Number.isFinite);if(!snapshotTimes.length)return[];const day=86400000,latest=new Date(snapshotTimes.reduce((maximum,time)=>Math.max(maximum,time),-Infinity));latest.setUTCHours(0,0,0,0);return Array.from({length:90},(_,index)=>{const start=new Date(latest.getTime()-(89-index)*day),end=start.getTime()+day-1,remaining=rows.filter(row=>row._first<=end&&(!Number.isFinite(row._fixed)||row._fixed>end||(Number.isFinite(row._reopened)&&row._reopened<=end))),fixedToday=rows.filter(row=>Number.isFinite(row._fixed)&&row._fixed>=start.getTime()&&row._fixed<=end),statuses={within:0,outside:0};rows.forEach(row=>{if(row._first>end)return;const effectiveFixed=Number.isFinite(row._fixed)&&row._fixed<=end&&!(Number.isFinite(row._reopened)&&row._reopened<=end);if(effectiveFixed){if(Number.isFinite(row._due)&&(row._fixed<=row._due))statuses.within++;else statuses.outside++;}});return{date:start.toISOString().slice(0,10),added:rows.filter(row=>row._first>=start.getTime()&&row._first<=end).length,fixed:fixedToday.length,policyWithin:fixedToday.filter(row=>Number.isFinite(row._due)&&row._fixed<=row._due).length,policyOutside:fixedToday.filter(row=>Number.isFinite(row._due)&&row._fixed>row._due).length,remaining:remaining.length,backlog:remaining.filter(row=>truthy(row.PublicExploitAvailable)||truthy(row.VerifiedExploitAvailable)||truthy(row.ExploitKitAvailable)).length,fixedWithinSla:statuses.within,fixedOutsideSla:statuses.outside};});
 }
 /** Build per-run workload points from retained successful snapshot history. */
 function buildRunHistoryPoints(){
@@ -925,3 +935,527 @@ function renderTrend(){
   $("weeklyComparisonTable").querySelectorAll(".delta-link").forEach(button=>button.addEventListener("click",()=>showTrendDelta(history[Number(button.closest("tr").dataset.index)],button.dataset.change)));
   if(remediationActivityEnabled)renderTaskDueHistory(latest.date);
 }
+
+// Only bounded, snapshot-pinned query results enter the live dashboard.
+const dashboardQuery={
+  snapshot:null,expired:false,scopeKey:"",lastSearch:state.search,searchTimer:null,
+  main:{sequence:0,controller:null},detail:{sequence:0,controller:null},
+  tables:new Map(),detailTables:new Map(),lastResponse:null,exportControllers:new Set(),exportSequence:0,
+  responses:new Map(),responseBytes:0
+};
+
+function dashboardResponseKey(request){
+  const filters={...request.filters};
+  for(const key of ["activeView","snapshotTimeMs","selectedEntity","selectedRecommendationId","selectedCveDialogId","pivotSourceLabel"])delete filters[key];
+  if(filters.newPeriod!=="custom"){delete filters.newPeriodStart;delete filters.newPeriodEnd;}
+  if(filters.statisticsPeriod!=="custom"){delete filters.statisticsStartDate;delete filters.statisticsEndDate;}
+  if(filters.executiveSnapshotPeriod!=="custom"){delete filters.executiveSnapshotStart;delete filters.executiveSnapshotEnd;}
+  return JSON.stringify({...request,filters});
+}
+
+function clearDashboardResponseCache(){
+  dashboardQuery.responses.clear();dashboardQuery.responseBytes=0;
+}
+
+function cacheDashboardResponse(key,payload){
+  const bytes=JSON.stringify(payload).length*2;
+  const previous=dashboardQuery.responses.get(key);
+  if(previous){dashboardQuery.responseBytes-=previous.bytes;dashboardQuery.responses.delete(key);}
+  if(bytes>2*1024*1024)return;
+  dashboardQuery.responses.set(key,{payload,bytes,time:Date.now()});
+  dashboardQuery.responseBytes+=bytes;
+  while(dashboardQuery.responses.size>16||dashboardQuery.responseBytes>8*1024*1024){
+    const oldest=dashboardQuery.responses.keys().next().value;
+    dashboardQuery.responseBytes-=dashboardQuery.responses.get(oldest).bytes;
+    dashboardQuery.responses.delete(oldest);
+  }
+}
+
+function dashboardFilters(){
+  const filters={};
+  for(const [key,value] of Object.entries(state)){
+    if(value instanceof Set)filters[key]=[...value];
+    else if(value===null||["string","number","boolean"].includes(typeof value))filters[key]=value;
+  }
+  for(const id of ["statisticsStartDate","statisticsEndDate"])filters[id]=$(id)?.value||"";
+  filters.workloadGrouping=workloadGroupingConfig;
+  filters.recommendationTracking=[...state.recommendationTracking.values()];
+  return filters;
+}
+
+function dashboardRequest(view=state.activeView,tableId=null,page=0){
+  const request={snapshotId:dashboardQuery.snapshot?.snapshotId,view,filters:dashboardFilters(),mode:findingsList.mode,page,limit:FINDINGS_PAGE_SIZE};
+  if(tableId)request.table=tableId;
+  if(view==="detail")request.selection=state.selectedEntity;
+  return request;
+}
+
+function invalidateDashboardChannel(channel){
+  channel.sequence++;
+  channel.controller?.abort();
+  channel.controller=null;
+}
+
+function dashboardStatus(message="",expired=false){
+  $("dashboardQueryStatus").hidden=!message;
+  $("dashboardQueryMessage").textContent=message;
+  $("reloadDashboardSnapshot").hidden=!expired;
+  $("retryDashboardQuery").hidden=expired;
+}
+
+function dashboardBusy(view,busy){
+  const root=$(view==="detail"?"pivotPanel":view);
+  root?.setAttribute("aria-busy",String(busy));
+  root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.executive-sla-meter-wrap,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid,.server-pagination,.server-record").forEach(node=>node.classList.toggle("query-pending",busy));
+  if(view!=="detail"){
+    $("loadingNotice").hidden=!busy;
+    if(busy)$("loadingNotice").innerHTML='<span class="loading-spinner" aria-hidden="true"></span><div><strong>Loading selected view</strong><span>Querying the pinned snapshot for the current filters.</span></div>';
+  }
+}
+
+function clearDashboardResults(view){
+  const root=$(view);
+  root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid").forEach(node=>node.innerHTML="");
+  root?.querySelectorAll(".server-pagination").forEach(node=>node.remove());
+  if(view==="executiveSnapshot")$("executiveSlaMeterValue").style.width="0%";
+  if(view==="overview")$("findingsPageStatus").textContent="Loading matching records…";
+}
+
+function expireDashboardSnapshot(){
+  dashboardQuery.expired=true;
+  clearDashboardResponseCache();
+  clearTimeout(dashboardQuery.searchTimer);
+  invalidateDashboardChannel(dashboardQuery.main);
+  invalidateDashboardChannel(dashboardQuery.detail);
+  for(const controller of dashboardQuery.exportControllers)controller.abort();
+  dashboardBusy(state.activeView,true);
+  if(state.selectedEntity)dashboardBusy("detail",true);
+  $("loadingNotice").hidden=true;
+  dashboardStatus("New snapshot available. Reload to continue; results from different snapshots have not been combined.",true);
+}
+
+async function dashboardResponse(response,isCurrent=()=>true){
+  if(response.status===409){expireDashboardSnapshot();throw new Error("Snapshot expired");}
+  if(!response.ok){
+    const payload=await response.json().catch(()=>({}));
+    throw new Error(payload.detail||payload.error||`Dashboard request failed (${response.status}).`);
+  }
+  const payload=await response.json();
+  if(!isCurrent())return null;
+  if(payload.snapshotId!==dashboardQuery.snapshot?.snapshotId){
+    expireDashboardSnapshot();throw new Error("Snapshot changed");
+  }
+  return payload;
+}
+
+async function startSnapshotDashboard(){
+  invalidateDashboardChannel(dashboardQuery.main);
+  invalidateDashboardChannel(dashboardQuery.detail);
+  dashboardQuery.expired=false;
+  dashboardQuery.snapshot=null;
+  dashboardQuery.scopeKey="";
+  dashboardQuery.tables.clear();
+  clearDashboardResponseCache();
+  dashboardStatus();
+  dashboardBusy(state.activeView,true);
+  const channel=dashboardQuery.main,sequence=channel.sequence;
+  channel.controller=new AbortController();
+  try{
+    const response=await apiFetch("/api/dashboard/snapshot",{signal:channel.controller.signal,cache:"no-store"});
+    if(sequence!==channel.sequence)return;
+    if(!response.ok)throw new Error(`Snapshot unavailable (${response.status}).`);
+    const snapshot=await response.json();
+    if(sequence!==channel.sequence)return;
+    if(!snapshot.snapshotId)throw new Error("Snapshot response is missing its identifier.");
+    dashboardQuery.snapshot=snapshot;
+    state.snapshotTimeMs=Date.parse(snapshot.snapshotTimeUtc);
+    state.slaPolicy=snapshot.slaPolicy;
+    $("freshnessText").textContent=formatLocal(snapshot.snapshotTimeUtc);
+    $("freshnessLocalText").textContent=`UTC: ${formatUtc(snapshot.snapshotTimeUtc)}`;
+    const date=String(snapshot.snapshotTimeUtc||"").slice(0,10);
+    if(date){
+      for(const [id,days] of [["statisticsStartDate",6],["statisticsEndDate",0],["executiveSnapshotStart",29],["executiveSnapshotEnd",0]]){
+        if(!$(id).value)$(id).value=shiftUtcDate(date,-days);
+        $(id).max=date;
+      }
+    }
+    renderSlaPolicySummary();
+    if(!state.slaPolicy)$("slaPolicySummary").textContent="SLA policy is unavailable for this pinned snapshot.";
+    render();
+    if(state.recommendationTrackingEnabled)void refreshRecommendationTracking();
+  }catch(error){
+    if(sequence!==channel.sequence||error.name==="AbortError")return;
+    $("loadingNotice").hidden=true;
+    $("freshnessText").textContent="Snapshot unavailable";
+    dashboardStatus(error.message||"Dashboard snapshot could not be loaded.");
+  }
+}
+
+/** Schedule just the selected view, never recomputing full-dataset metrics in the browser. */
+function render(){
+  if(dashboardQuery.expired){dashboardBusy(state.activeView,true);$("loadingNotice").hidden=true;return;}
+  if(!dashboardQuery.snapshot)return;
+  const request=dashboardRequest(),scopeKey=JSON.stringify({...request,page:0});
+  const searchChanged=state.search!==dashboardQuery.lastSearch;
+  dashboardQuery.lastSearch=state.search;
+  if(scopeKey!==dashboardQuery.scopeKey){
+    dashboardQuery.scopeKey=scopeKey;
+    dashboardQuery.tables.clear();
+    state.recommendationsById.clear();
+    findingsList.page=0;
+    clearDashboardResults(state.activeView);
+  }
+  clearTimeout(dashboardQuery.searchTimer);
+  invalidateDashboardChannel(dashboardQuery.main);
+  dashboardBusy(state.activeView,true);
+  $("filterCount").textContent="Loading matching scope…";
+  for(const id of ["newFindingCount","newCveCount","newMachineCount","newRecommendationCount","fixedWindowFindingCount","fixedWindowCveCount","fixedWindowMachineCount","fixedWindowRecommendationCount"])$(id).textContent="…";
+  $("findingsMode").value=findingsList.mode;
+  $("findingsSearch").value=$("searchFilter").value=state.search;
+  $("pendingOnlyFilter").setAttribute("aria-pressed",String(state.exposureStatus==="PendingOnly"));
+  $("pendingOnlyFilter").textContent=state.exposureStatus==="PendingOnly"?"Showing pending":"Pending only";
+  $("applyNewPeriodFilter").checked=state.newPeriodFilter;
+  $("toggleNewPeriodFilter").textContent=state.newPeriodFilter||state.remediationPeriodFilter?"Show all workspace data":"Limit workspace to these first-seen findings";
+  $("newActivityBar").classList.toggle("filtering",state.newPeriodFilter||state.remediationPeriodFilter);
+  renderScope([],[]);
+  document.querySelectorAll(".latest-run-changes-toggle").forEach(input=>input.checked=state.latestRunChangesOnly);
+  dashboardStatus();
+  if(searchChanged)dashboardQuery.searchTimer=setTimeout(()=>{void queryDashboardView();},250);
+  else void queryDashboardView();
+}
+
+function dashboardQueryAbort(){
+  const error=new Error("Dashboard query cancelled.");error.name="AbortError";return error;
+}
+
+function waitForDashboardPoll(milliseconds,signal){
+  return new Promise((resolve,reject)=>{
+    if(signal?.aborted){reject(dashboardQueryAbort());return;}
+    const abort=()=>{clearTimeout(timer);signal?.removeEventListener("abort",abort);reject(dashboardQueryAbort());};
+    const timer=setTimeout(()=>{signal?.removeEventListener("abort",abort);resolve();},milliseconds);
+    signal?.addEventListener("abort",abort,{once:true});
+  });
+}
+
+/** Poll one logical server query without changing its snapshot, filters or job ID. */
+async function postDashboardQuery(request,{signal,isCurrent=()=>true,onPreparing=()=>{}}={}){
+  const requestId=globalThis.crypto?.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const body=JSON.stringify({...request,asyncQuery:true,requestId});
+  for(;;){
+    if(signal?.aborted||!isCurrent())throw dashboardQueryAbort();
+    const response=await apiFetch("/api/dashboard/query",{method:"POST",headers:{"Content-Type":"application/json"},body,signal});
+    if(signal?.aborted||!isCurrent())throw dashboardQueryAbort();
+    const payload=await dashboardResponse(response,isCurrent);
+    if(signal?.aborted||!isCurrent())throw dashboardQueryAbort();
+    if(response.status!==202)return payload;
+    if(payload.status!=="preparing")throw new Error("The server returned an invalid query-preparation response.");
+    const retryAfterSeconds=Number(payload.retryAfterSeconds);
+    onPreparing();
+    await waitForDashboardPoll((Number.isFinite(retryAfterSeconds)&&retryAfterSeconds>0?retryAfterSeconds:2)*1000,signal);
+  }
+}
+
+async function queryDashboardView(view=state.activeView,tableId=null,page=0){
+  if(!dashboardQuery.snapshot||dashboardQuery.expired)return;
+  const detail=view==="detail",channel=detail?dashboardQuery.detail:dashboardQuery.main;
+  invalidateDashboardChannel(channel);
+  const sequence=channel.sequence,request=dashboardRequest(view,tableId,page);
+  channel.controller=new AbortController();
+  dashboardBusy(view,true);
+  dashboardStatus();
+  try{
+    const key=dashboardResponseKey(request),cached=dashboardQuery.responses.get(key);
+    const reusable=cached&&(!state.recommendationTrackingEnabled||Date.now()-cached.time<5000);
+    const payload=reusable?cached.payload:await postDashboardQuery(request,{signal:channel.controller.signal,isCurrent:()=>sequence===channel.sequence&&!dashboardQuery.expired,onPreparing:()=>{
+      if(detail)$("pivotSummary").textContent="Preparing exact snapshot detail. This can take several minutes for a cold snapshot; this panel will update automatically.";
+      else $("loadingNotice").innerHTML='<span class="loading-spinner" aria-hidden="true"></span><div><strong>Preparing exact snapshot results</strong><span>A cold snapshot can take several minutes. The server is working; this view will update automatically.</span></div>';
+    }});
+    if(sequence!==channel.sequence||dashboardQuery.expired)return;
+    renderDashboardResponse(payload,view,tableId);
+    if(!reusable)cacheDashboardResponse(key,payload);
+    else{dashboardQuery.responses.delete(key);dashboardQuery.responses.set(key,cached);}
+    dashboardBusy(view,false);
+    const notices=[...new Set([...(dashboardQuery.snapshot.notices||[]),...(payload.notices||[])])];
+    dashboardStatus(notices.join(" · "));
+  }catch(error){
+    if(sequence!==channel.sequence||error.name==="AbortError"||dashboardQuery.expired)return;
+    if(!detail)$("loadingNotice").hidden=true;
+    dashboardStatus(error.message||"Dashboard query failed. Retry to load this scope.");
+  }
+}
+
+function dashboardRowAction(action,row){
+  if(action==="machine")pivotToMachine(row);
+  else if(action==="recommendation")pivotToRecommendation(row);
+  else if(action==="cve")pivotToCve(row);
+  else if(action==="finding")openDashboardDetail({type:"finding",id:String(row.FindingKey||row.FindingId||row.Id||row.id||`${row.RecommendationId||""}|${row.DeviceId||""}|${row.CveId||""}`)},row);
+}
+
+function renderDashboardTable(id,result,view){
+  if(!$(id))return;
+  if(!Array.isArray(result.items)||result.items.length>200)throw new Error("The server returned an oversized table page.");
+  if(id==="executiveRecommendationImpact"){
+    $(id).innerHTML=result.items.map((row,index)=>`<button type="button" class="recommendation-impact-card" data-server-impact="${index}">${recommendationPreviewMarkup(row)}</button>`).join("")||'<p class="empty-state">No recommendations have linked open findings in the current filters.</p>';
+    $(id).querySelectorAll("[data-server-impact]").forEach(button=>button.addEventListener("click",()=>pivotToRecommendation(result.items[Number(button.dataset.serverImpact)])));
+  }else if(id==="executiveSnapshotStatus"){
+    $(id).className="executive-severity-status-grid";
+    $(id).innerHTML=result.items.map(row=>`<article class="${esc(String(row.Severity).toLowerCase())}"><span>${esc(row.Severity)}</span><strong>${esc(row.SLACompliance??"—")}</strong><small>SLA compliance</small><p>${fmt(row.FixedWithinSLA)} within · ${fmt(row.FixedOutsideSLA)} outside · ${fmt(row.OpenOutsideSLA)} open overdue</p></article>`).join("");
+  }else{
+    let target=id;
+    if($(id).tagName&&$(id).tagName.toUpperCase()!=="TABLE"){
+      target=`${id}Results`;$(id).innerHTML=`<div class="table-wrap"><table id="${esc(target)}"></table></div>`;
+    }
+    table(target,result.columns||[],result.items,result.action&&result.action!=="none"?row=>dashboardRowAction(result.action,row):false);
+    $(target).querySelectorAll(".cve-link").forEach(button=>{
+      button.addEventListener("click",event=>{event.stopPropagation();const row=result.items[Number(button.closest("tr").dataset.index)];if(row)pivotToCve(row);});
+      button.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" ")event.stopPropagation();});
+    });
+  }
+  const tables=view==="detail"?dashboardQuery.detailTables:dashboardQuery.tables;
+  tables.set(id,result);
+  if(id==="executiveSnapshotStatus")return;
+  if(result.action==="recommendation"){
+    for(const row of result.items){const key=String(row.RecommendationId||row.id||"");state.recommendationsById.set(key,{...state.recommendationsById.get(key),...row});}
+    if(view!=="detail")state.detailRecommendationIds=result.items.map(row=>String(row.RecommendationId||row.id||"")).filter(Boolean);
+  }
+  const total=Number(result.total||0),offset=Number(result.offset||0),limit=Math.min(200,Math.max(1,Number(result.limit||FINDINGS_PAGE_SIZE))),page=Math.floor(offset/limit),last=Math.max(0,Math.ceil(total/limit)-1);
+  if(id==="findingsTable"){
+    findingsList.page=page;
+    $("findingsPageStatus").textContent=total?`${fmt(offset+1)}-${fmt(Math.min(offset+result.items.length,total))} of ${fmt(total)} ${result.rowLabel||(findingsList.mode==="cves"?"distinct CVEs":"finding instances")}`:`No matching ${findingsList.mode==="cves"?"CVEs":"finding instances"}`;
+    document.querySelectorAll("[data-findings-page]").forEach(button=>button.disabled=!total||(["first","previous"].includes(button.dataset.findingsPage)?page===0:page>=last));
+    return;
+  }
+  const pagerId=`${id}Pagination`;
+  let pager=$(pagerId);
+  if(!pager){pager=document.createElement("div");pager.id=pagerId;pager.className="server-pagination";const anchor=$(id).tagName?.toUpperCase()==="TABLE"?$(id).parentElement:$(id);anchor.insertAdjacentElement("afterend",pager);}
+  pager.innerHTML=`<span role="status">${total?`${fmt(offset+1)}-${fmt(Math.min(offset+result.items.length,total))} of ${fmt(total)}${result.rowLabel?` ${esc(result.rowLabel)}`:""}`:"No matching records"}</span><div class="page-actions">${["First","Previous","Next","Last"].map((label,index)=>`<button type="button" data-query-page="${[0,Math.max(0,page-1),Math.min(last,page+1),last][index]}" ${!total||(index<2?page===0:page>=last)?"disabled":""}>${label}</button>`).join("")}<button type="button" data-query-export>Export CSV</button></div>`;
+  pager.querySelectorAll("[data-query-page]").forEach(button=>button.addEventListener("click",()=>{void queryDashboardView(view,id,Number(button.dataset.queryPage));}));
+  pager.querySelector("[data-query-export]").addEventListener("click",()=>{void exportDashboardCsv(view,id);});
+}
+
+function renderDashboardFacets(facets){
+  if(!facets)return;
+  const teams=facets.teams||[],subscriptions=facets.subscriptions||[];
+  state.subscriptionInventoryById.clear();
+  subscriptions.forEach(row=>{const id=String(row.SubscriptionId||row.subscriptionId||row.id||"");if(id)state.subscriptionInventoryById.set(id,row);});
+  const subscriptionOptions=subscriptions.map(row=>{const id=String(row.SubscriptionId||row.subscriptionId||row.id||"");return`<option value="${esc(id)}">${esc(row.SubscriptionName||row.DisplayName||row.displayName||row.name||id)}</option>`;}).join("");
+  for(const id of ["subscriptionFilter","executiveSnapshotSubscription"]){
+    $(id).innerHTML=`<option value="All">All subscriptions</option><option value="NoSubscription">No subscription</option>${subscriptionOptions}`;
+    $(id).value=id==="subscriptionFilter"?state.subscription:state.executiveSnapshotSubscription;
+  }
+  for(const id of ["teamFilter","executiveSnapshotOwner"]){
+    $(id).innerHTML=`<option value="All">All operating teams</option>${teams.map(team=>`<option value="${esc(team)}">${esc(team)}</option>`).join("")}`;
+    $(id).value=id==="teamFilter"?state.team:state.executiveSnapshotOwner;
+  }
+}
+
+function renderDashboardChart(id,chart){
+  id=({executiveSnapshotSubscriptionConcentration:"executiveSubscriptionConcentration",executiveSnapshotOwnerConcentration:"executiveOwnerConcentration"})[id]||id;
+  if(!$(id))return;
+  if(chart.kind==="meter"){
+    const value=chart.value==null?null:Number(chart.value),target=Number(state.slaPolicy?.complianceTargetPercent),hasTarget=Number.isFinite(target)&&target>0&&target<=100;
+    $(id).style.width=`${Math.max(0,Math.min(100,value||0))}%`;
+    $(id).style.backgroundColor=value===null?"#7893a3":"#176f86";
+    $("executiveSlaTargetMarker").hidden=!hasTarget;
+    if(hasTarget){$("executiveSlaTargetMarker").style.left=`${target}%`;$("executiveSlaTargetMarker").dataset.label=`${target}% target`;}
+    $("executiveSlaMeterText").textContent=value===null?"No completed finding-level SLA outcomes":`${value.toFixed(1)}% observed within SLA${hasTarget?` · ${target}% configured target`:" · no compliance target configured"}`;
+    return;
+  }
+  const rows=chart.rows||[],series=chart.series||[];
+  let maximum=1;
+  for(const row of rows)for(const item of series)maximum=Math.max(maximum,Number(row[item.key]||0));
+  if(chart.kind==="line"||chart.kind==="bars"){
+    const width=960,height=260,pad=36,plotHeight=height-pad*2,plotWidth=width-pad*2,colors=["#1673c9","#21835b","#c83d4d","#d68a16"],x=index=>pad+(rows.length>1?index/(rows.length-1)*plotWidth:plotWidth/2),y=value=>height-pad-Math.max(0,Number(value||0))/maximum*plotHeight,label=row=>String(row.label||row.date||row.timestamp||"").slice(0,10),every=Math.max(1,Math.ceil(rows.length/8));
+    const chartSeries=series.map((item,seriesIndex)=>{
+      const color=colors[seriesIndex%colors.length],points=rows.map((row,index)=>`${x(index)},${y(row[item.key])}`).join(" ");
+      if(chart.kind==="line")return`<polyline fill="none" stroke="${color}" stroke-width="2.5" points="${points}"/>${rows.map((row,index)=>`<circle cx="${x(index)}" cy="${y(row[item.key])}" r="3" fill="${color}"><title>${esc(`${label(row)} · ${item.label||item.key}: ${fmt(row[item.key])}`)}</title></circle>`).join("")}`;
+      const groupWidth=plotWidth/Math.max(1,rows.length),barWidth=Math.max(2,groupWidth/(series.length+1));
+      return rows.map((row,index)=>`<rect fill="${color}" x="${pad+index*groupWidth+seriesIndex*barWidth}" y="${y(row[item.key])}" width="${barWidth}" height="${height-pad-y(row[item.key])}"><title>${esc(`${label(row)} · ${item.label||item.key}: ${fmt(row[item.key])}`)}</title></rect>`).join("");
+    }).join("");
+    $(id).innerHTML=rows.length?`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Snapshot-pinned exposure movement"><line x1="${pad}" y1="${height-pad}" x2="${width-pad}" y2="${height-pad}" stroke="#9bb0bf"/><text x="${pad}" y="18">${fmt(maximum)}</text>${chartSeries}${rows.map((row,index)=>index%every===0||index===rows.length-1?`<text x="${x(index)}" y="${height-10}" text-anchor="middle">${esc(label(row).slice(5))}</text>`:"").join("")}</svg><div class="server-chart-legend">${series.map((item,index)=>`<span><i style="background:${colors[index%colors.length]}"></i>${esc(item.label||item.key)}</span>`).join("")}</div>`:"No matching chart data.";
+    return;
+  }
+  $(id).innerHTML=rows.map(row=>`<div class="server-chart-group"><strong>${esc(row.label||row.date||row.timestamp||row.Date||row.Severity||row.name||row.key||"")}</strong>${series.map(item=>`<div class="server-chart-row"><span>${esc(item.label||item.key)}</span><i class="server-bar ${esc(item.className||"")}" style="width:${Math.max(0,Number(row[item.key]||0))/maximum*65}%"></i><strong>${esc(row[item.key]??"—")}</strong></div>`).join("")}${chart.kind==="concentration"?`<small>${fmt(row.criticalHigh)} Critical/High findings · ${fmt(row.machines)} machines</small>`:""}</div>`).join("")||"No matching chart data.";
+}
+
+function bindDashboardCardActions(id,items){
+  if(!["executiveWorkload","executiveSlaPerformance","executiveRunMovement"].includes(id))return;
+  $(id).querySelectorAll(".metric").forEach((node,index)=>{
+    const label=String(items[index]?.[1]||"").toLowerCase();
+    node.tabIndex=0;node.setAttribute("role","button");node.classList.add("decision-metric");
+    const activate=()=>{
+      let target="trend";
+      if(id==="executiveSlaPerformance")target="sla";
+      else if(id==="executiveWorkload"){
+        if(label.includes("pending")){state.exposureStatus="PendingOnly";target="overview";}
+        else if(label.includes("machines"))target="workstations";
+        else if(label.includes("detected")){state.exposureStatus="DetectedOnly";target="overview";}
+      }
+      $("exposureStatusFilter").value=state.exposureStatus;activateView(target);
+    };
+    node.addEventListener("click",activate);
+    node.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();activate();}});
+  });
+}
+
+function renderDashboardResponse(payload,view,tableId){
+  const selectedRecommendation=state.recommendationsById.get(state.selectedRecommendationId);
+  state.recommendationsById.clear();
+  if(selectedRecommendation)state.recommendationsById.set(state.selectedRecommendationId,selectedRecommendation);
+  if(view==="detail"){if(!tableId)prepareDashboardDetail(payload);}
+  else{
+    dashboardQuery.lastResponse=payload;
+    renderDashboardFacets(payload.facets);
+    if(payload.metadata){
+      state.runs=payload.metadata.runs||[];state.runHistory=payload.metadata.runHistory||[];state.secureScores=payload.metadata.secureScores||[];
+      renderRecentRuns();
+      renderSecureScore();
+    }
+    const scope=payload.scope||{};
+    $("filterCount").textContent=`${fmt(scope.detected)} detected · ${fmt(scope.pending)} pending · ${fmt(scope.recommendations)} recommendations`;
+    // Scope text/chips use only the serialized filters, not the unloaded findings.
+    renderScope([],[]);
+    const activityIds={newFindings:"newFindingCount",newCves:"newCveCount",newMachines:"newMachineCount",newRecommendations:"newRecommendationCount",fixedFindings:"fixedWindowFindingCount",fixedCves:"fixedWindowCveCount",fixedMachines:"fixedWindowMachineCount",fixedRecommendations:"fixedWindowRecommendationCount"};
+    for(const [key,id] of Object.entries(activityIds))$(id).textContent=fmt(payload.activity?.[key]);
+    const range=newPeriodRange();
+    $("newActivityTitle").textContent=range?`${state.newPeriodFilter?"Filtering first-seen findings · ":state.remediationPeriodFilter?"Filtering remediation observations · ":""}${range.label}`:"Choose a valid custom range";
+    $("newActivityContext").textContent=range?`${formatUtc(range.start)} through ${formatUtc(range.end)} · counts use first-seen or remediation-observed timestamps inside this UTC window`:"The custom start date must not be after the end date.";
+    $("availabilityItems").innerHTML=`<span class="header-status-item available"><i aria-hidden="true"></i><strong>Pinned snapshot</strong><span>${esc(dashboardQuery.snapshot.runId||dashboardQuery.snapshot.snapshotId)}</span></span>`;
+  }
+  for(const [id,items] of Object.entries(payload.cards||{}))if($(id)){cards(id,items,"");bindDashboardCardActions(id,items);}
+  for(const [id,text] of Object.entries(payload.texts||{}))if($(id)&&!["freshnessText","freshnessLocalText"].includes(id))$(id).textContent=text;
+  for(const [id,result] of Object.entries(payload.tables||{}))if(!tableId||id===tableId)renderDashboardTable(id,result,view);
+  if(view==="executiveSnapshot"){
+    const severityRows=payload.tables?.executiveSnapshotSlaTable?.items;
+    if(severityRows)renderDashboardChart("executiveSnapshotSeverity",{kind:"severity",rows:severityRows.map(row=>({label:row.Severity,value:row.OpenAtPeriodEnd||0})),series:[{key:"value",label:"Open findings"}]});
+    $("executiveSnapshotGenerated").textContent=`Pinned snapshot: ${formatUtc(dashboardQuery.snapshot.snapshotTimeUtc)}`;
+  }
+  for(const [id,items] of Object.entries(payload.donuts||{}))if($(id))renderDonut(id,items);
+  for(const [id,graph] of Object.entries(payload.slaGraphs||{}))if($(id))renderSlaBarGraph(id,graph.rows||[],graph.series||[]);
+  for(const [id,chart] of Object.entries(payload.charts||{}))renderDashboardChart(id,chart);
+}
+
+function openDashboardDetail(selection,row={}){
+  if(dashboardQuery.expired)return;
+  const recommendationIds=state.detailRecommendationIds.slice();
+  clearSelectedWorkItem();
+  state.selectedEntity=selection;
+  state.selectedRecommendationId=selection.type==="recommendation"?selection.id:"";
+  state.pivotSourceLabel=state.activeView;
+  if(selection.type==="recommendation"){
+    state.recommendationsById.set(selection.id,row);
+    state.detailRecommendationIds=recommendationIds.includes(selection.id)?recommendationIds:[selection.id];
+  }
+  dashboardQuery.detailTables.clear();
+  const panel=$("pivotPanel");panel.hidden=false;panel.classList.add("fullscreen-mode");
+  document.body.classList.add("pivot-detail-open");$("pivotBackdrop").hidden=false;
+  $("pivotTitle").textContent="Loading selected item…";
+  $("pivotSummary").textContent="";
+  $("pivotCards").innerHTML="";$("pivotTable").innerHTML="";$("pivotDetails").innerHTML="";
+  $("defenderRemediationLink").hidden=true;$("copyRecommendationReference").hidden=true;
+  $("recommendationTrackingActions").hidden=true;$("recommendationCurrentStatus").hidden=true;
+  void queryDashboardView("detail");
+}
+
+function prepareDashboardDetail(payload){
+  const selection=state.selectedEntity;
+  if(!selection)return;
+  const record=payload.detail?.record||{},recommendation=selection.type==="recommendation",live=record.DataOrigin==="Live";
+  if(recommendation)state.recommendationsById.set(selection.id,record);
+  setPivotShell(`Selected: ${selection.type[0].toUpperCase()+selection.type.slice(1)}`,record.RecommendationName||record.DeviceName||record.CveId||selection.id,"",recommendation&&live,record);
+  const ids=Object.keys(payload.tables||{}).filter(id=>id!=="pivotTable");
+  renderPivotDetails(ids.map(id=>({id,title:headerLabel(id.replace(/^pivot/,"").replace(/Table$/,""))})));
+  $("pivotDetails").insertAdjacentHTML("afterbegin",`<div class="server-record">${Object.entries(record).filter(([,value])=>value===null||typeof value!=="object").map(([key,value])=>`<div><small>${esc(headerLabel(key))}</small>${esc(value)}</div>`).join("")}</div>`);
+  const position=state.detailRecommendationIds.indexOf(selection.id);
+  $("pivotPrevious").disabled=!recommendation||position<=0;
+  $("pivotNext").disabled=!recommendation||position<0||position>=state.detailRecommendationIds.length-1;
+  $("pivotPosition").textContent=recommendation&&position>=0?`${position+1} of ${state.detailRecommendationIds.length} recommendations on this results page`:"Snapshot-pinned detail";
+  if(!recommendation&&(selection.type==="machine"||selection.type==="cve")){
+    const href=selection.type==="machine"?defenderDeviceUrl({...record,DeviceId:record.DeviceId||selection.id}):DEFENDER_VULNERABILITIES_URL;
+    $("pivotDetails").insertAdjacentHTML("afterbegin",`<p><a class="action-link" href="${esc(href)}" target="_blank" rel="noopener">Open ${esc(selection.type)} in Defender</a>${selection.type==="cve"?` · Search for ${esc(selection.id)}`:""}</p>`);
+  }
+  const trackingAvailable=recommendation&&state.recommendationTrackingEnabled&&(live||state.recommendationTrackingLocalPreview);
+  $("recommendationTrackingActions").hidden=!trackingAvailable;$("recommendationCurrentStatus").hidden=!trackingAvailable;
+  if(trackingAvailable){
+    const tracking=state.recommendationTracking.get(selection.id)||{};
+    $("recommendationTrackingStatus").textContent=`${recommendationTrackingLabel(tracking.effectiveStatus||tracking.status||"Untracked")}${tracking.updatedByDisplayName?` · ${tracking.updatedByDisplayName}`:""}${tracking.updatedUtc?` · ${formatUtc(tracking.updatedUtc)}`:""}`;
+  }
+}
+
+async function exportDashboardCsv(view=state.activeView,tableId=null){
+  if(!dashboardQuery.snapshot||dashboardQuery.expired)return;
+  const controller=new AbortController(),snapshotId=dashboardQuery.snapshot.snapshotId;
+  dashboardQuery.exportControllers.add(controller);
+  const request=dashboardRequest(view,tableId);
+  dashboardStatus("Validating CSV export against the pinned snapshot…");
+  try{
+    const validation=await postDashboardQuery(request,{signal:controller.signal,isCurrent:()=>dashboardQuery.snapshot?.snapshotId===snapshotId&&!dashboardQuery.expired,onPreparing:()=>{
+      dashboardStatus("Preparing exact export detail from the pinned snapshot. The download will start when it is ready.");
+      $("retryDashboardQuery").hidden=true;
+    }});
+    if(tableId&&!validation.tables?.[tableId])throw new Error("The requested export detail is unavailable on this server. Retry after the dashboard update is complete.");
+    if(tableId&&Number(validation.tables[tableId].total)===0){dashboardStatus("No matching rows to export for the selected filters.");return;}
+    if(dashboardQuery.expired||dashboardQuery.snapshot?.snapshotId!==snapshotId)return;
+    const frame=document.createElement("iframe"),form=document.createElement("form"),input=document.createElement("input");
+    frame.name=`dashboard-export-${Date.now()}-${++dashboardQuery.exportSequence}`;frame.hidden=true;
+    frame.title="CSV download response";
+    frame.addEventListener("load",()=>{
+      try{
+        const text=frame.contentDocument?.body?.textContent?.trim();
+        if(!text)return;
+        const payload=JSON.parse(text),message=payload.detail||payload.error||"CSV export failed.";
+        if(/snapshot expired|reload.*(?:snapshot|dashboard)|data changed/i.test(message))expireDashboardSnapshot();else dashboardStatus(message);
+      }catch(error){dashboardStatus("The CSV download could not be completed. Check your sign-in and retry.");}
+    });
+    form.method="POST";form.action="/api/dashboard/export";form.target=frame.name;form.hidden=true;
+    input.type="hidden";input.name="payload";input.value=JSON.stringify(request);form.appendChild(input);
+    document.body.appendChild(frame);document.body.appendChild(form);
+    form.submit();form.remove();
+    dashboardStatus("CSV download requested for all matching rows, not just this page. Your browser streams the file directly.");
+    // A successful attachment has no iframe document load event.
+    setTimeout(()=>frame.remove(),300000);
+  }catch(error){if(error.name!=="AbortError")dashboardStatus(error.message||"CSV export failed.");}
+  finally{dashboardQuery.exportControllers.delete(controller);}
+}
+
+// Keep the existing controls and locally testable aggregation helpers, but route
+// every interactive render/drill-down through the same lazy query lifecycle.
+const clearLegacyWorkItem=clearSelectedWorkItem;
+clearSelectedWorkItem=function(){
+  invalidateDashboardChannel(dashboardQuery.detail);
+  dashboardQuery.detailTables.clear();
+  clearLegacyWorkItem();
+  if($("pivotPanel"))$("pivotPanel").hidden=true;
+};
+renderFindingsList=function(){
+  const result=dashboardQuery.tables.get("findingsTable"),last=Math.max(0,Math.ceil(Number(result?.total||0)/FINDINGS_PAGE_SIZE)-1);
+  if(result&&findingsList.mode===$("findingsMode").value){
+    const page=Math.max(0,Math.min(last,findingsList.page));
+    if(page!==Math.floor(Number(result.offset||0)/FINDINGS_PAGE_SIZE)){void queryDashboardView(state.activeView,"findingsTable",page);return;}
+  }
+  render();
+};
+renderTrend=renderExecutiveSnapshot=renderLifecycleReporting=()=>render();
+renderPivot=()=>{if(state.selectedEntity)void queryDashboardView("detail");else $("pivotPanel").hidden=true;};
+pivotToRecommendation=row=>openDashboardDetail({type:"recommendation",id:String(row.RecommendationId||row.id||"")},row);
+pivotToMachine=row=>openDashboardDetail({type:"machine",id:String(row.DeviceId||row.id||"")},row);
+pivotToCve=row=>openDashboardDetail({type:"cve",id:normalizedCve(row.CveId||row.id||row)},typeof row==="object"?row:{});
+showDetail=row=>dashboardRowAction(row.CveId?"cve":row.DeviceId?"machine":row.RecommendationId?"recommendation":"finding",row);
+exportLifecycleCsv=()=>{void exportDashboardCsv("trend","lifecycleDetailTable");};
+exportExecutiveSnapshotCsv=()=>{void exportDashboardCsv("executiveSnapshot",state.executiveSnapshotUnit==="recommendations"?"executiveSnapshotRecommendationTable":"executiveSnapshotFindingTable");};
+const refreshLegacyTracking=refreshRecommendationTracking;
+refreshRecommendationTracking=async()=>{
+  const success=await refreshLegacyTracking();
+  if(success)clearDashboardResponseCache();
+  if(success&&dashboardQuery.snapshot&&!dashboardQuery.expired){if(state.selectedEntity)void queryDashboardView("detail");else render();}
+  return success;
+};
+$("retryDashboardQuery").addEventListener("click",()=>{
+  clearDashboardResponseCache();
+  if(!dashboardQuery.snapshot)void startSnapshotDashboard();
+  else if(state.selectedEntity)void queryDashboardView("detail");
+  else render();
+});
+$("reloadDashboardSnapshot").addEventListener("click",()=>location.reload());
+$("exportFindingsCsv").addEventListener("click",()=>{void exportDashboardCsv("overview","findingsTable");});
+loadDashboardDatasets();

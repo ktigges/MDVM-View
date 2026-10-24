@@ -38,6 +38,21 @@ The Operations and diagnostics submenu includes a `FULL`-confirmed complete
 vulnerability baseline and recommendation-relationship reconciliation. Normal
 scheduled collection uses deltas between weekly full vulnerability baselines.
 
+Dashboard large-data changes use the existing **Deploy and verify Web App
+code** operation; no Function deployment or collection is needed. The dashboard
+loads summary metrics first, then requests snapshot-pinned server-side table
+pages and details. Its verified compressed downloads and SQLite indexes are
+disposable local cache files. Each worker retains up to two snapshots within
+an 8 GiB local budget; allow sufficient App Service local disk. A cold cache
+is prepared during worker startup, before browser traffic is accepted. Default
+Summary and Vulnerabilities results are ready at that point. Allow up to
+30 minutes for cold startup (`WEBSITES_CONTAINER_START_TIME_LIMIT=1800`).
+New snapshots are prepared before selection; allow space for the ready and
+replacement caches together. Browser revisits reuse bounded view results.
+`/api/diagnostics` includes `dashboardQueries.preparation` and `dashboardQueries`
+with retained snapshot IDs, active query counts, and local cache sizes.
+Nothing in cache eviction deletes or rewrites retained Azure history.
+
 For an existing App Service plan, SKU preflight preserves the explicitly
 configured `web_app_sku_name` instead of copying the deployed SKU back into
 `main.tfvars.json`. It still preserves the existing plan's region. If the
@@ -493,7 +508,7 @@ python -m vulnerability_view.operations_cli deploy webapp
 ```
 
 This is also a code-package update and does not run Terraform. It reads
-`dashboard_version` from `main.tfvars.json` (or a one-command
+the release version from the pulled `dashboard/config.js` (or a one-command
 `DASHBOARD_VERSION` override), stamps that release plus the UTC deployment
 revision into the UI, packages the dashboard and Python server without local
 dashboard data, uploads a clean ZIP deployment, and monitors Kudu/Oryx
@@ -501,6 +516,10 @@ deployment status. The app is not restarted while Oryx writes the package;
 after Kudu succeeds, the command stamps the hosted version and starts the app.
 A client-side timeout is treated as provisional until Kudu reports success or
 failure.
+Customers can pull the release with `git pull --ff-only` and run deployment menu
+option 4 without editing local version fields or running the maintainer's version
+bump script. A stale `dashboard_version` in customer Terraform values does not
+block or relabel the code deployment; those customer settings are not rewritten.
 
 Function and Web App package deployments are independent:
 

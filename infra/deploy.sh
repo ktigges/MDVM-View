@@ -296,8 +296,6 @@ tf_deploy() {
     webapp)
       local dashboard_version web_app
       web_app="$(tf_output web_app_name 2>/dev/null || true)"
-      dashboard_version="${DASHBOARD_VERSION:-$(jq -r '.dashboard_version // "unversioned"' "$TF_VARS")}"
-      dashboard_version="${dashboard_version//[^A-Za-z0-9._+-]/-}"
       package="$ROOT_DIR/webapp-source.zip"
       if [[ -z "$web_app" ]]; then
         echo "Web App infrastructure is not present. Run tfplan webapp and tfapply webapp first." >&2
@@ -315,14 +313,13 @@ import sys
 match = re.search(r'version:\s*"([^"]+)"', Path(sys.argv[1]).read_text(encoding="utf-8"))
 if not match:
     raise SystemExit("Could not read the dashboard version from dashboard/config.js")
+if not re.fullmatch(r"\d{4}\.\d{2}\.\d{2}\.\d+", match.group(1)):
+    raise SystemExit("Dashboard source version must use YYYY.MM.DD.N format in dashboard/config.js")
 print(match.group(1))
 PY
 )"
-      if [[ -z "${DASHBOARD_VERSION:-}" && "$source_dashboard_version" != "$dashboard_version" ]]; then
-        echo "Dashboard version mismatch: dashboard/config.js is $source_dashboard_version, but infra/terraform/main.tfvars.json is $dashboard_version." >&2
-        echo "Run ./bump-version.sh web or synchronize both files before deployment." >&2
-        exit 1
-      fi
+      dashboard_version="${DASHBOARD_VERSION:-$source_dashboard_version}"
+      dashboard_version="${dashboard_version//[^A-Za-z0-9._+-]/-}"
       (
         cd "$ROOT_DIR"
         zip -q -r "$package" dashboard requirements.txt pyproject.toml src \
@@ -428,7 +425,7 @@ PY
       az webapp config appsettings set \
         --resource-group "$resource_group" \
         --name "$web_app" \
-        --settings "DASHBOARD_VERSION=$dashboard_version" \
+        --settings "DASHBOARD_VERSION=$dashboard_version" "WEBSITES_CONTAINER_START_TIME_LIMIT=1800" \
         --output none
       az webapp restart \
         --resource-group "$resource_group" \

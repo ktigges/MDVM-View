@@ -1,12 +1,35 @@
 /**
  * Author: Kevin Tigges
- * Last modified: 2026-10-08
+ * Last modified: 2026-10-24
  * Purpose: Configure dashboard version, presentation, filters, and diagnostic labels.
  */
 
+window.VULNERABILITY_VIEW_DEFAULTS = {
+  "filters": {
+    "expandedByDefault": false,
+    "defaultSeverity": "All",
+    "defaultHideNonReporting": false,
+    "defaultReportingDays": 30,
+    "defaultIncludeDiscoveredOnly": false,
+    "defaultRecommendationTypes": ["Vulnerability"],
+    "defaultDomains": ["Devices", "Cloud"]
+  },
+  "workloadGrouping": {
+    "rules": [
+      {
+        "id": "generated-scale-hosts",
+        "label": "Generated scale workload",
+        "field": "DeviceName",
+        "operator": "prefix",
+        "value": "gen-"
+      }
+    ]
+  }
+};
+
 window.VULNERABILITY_VIEW_CONFIG = {
-  version: "2026.10.12.13",
-  revision: "2026-10-12T15:48:50Z",
+  version: "2026.10.24.4",
+  revision: "2026-10-24T14:12:23Z",
   branding: {
     eyebrow: "VULNERABILITY VIEW",
     title: "Microsoft Vulnerability Management",
@@ -25,30 +48,12 @@ window.VULNERABILITY_VIEW_CONFIG = {
     order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "executiveSnapshot", "help"],
     hidden: [],
   },
-  filters: {
-    expandedByDefault: false,
-    defaultSeverity: "All",
-    defaultHideNonReporting: false,
-    defaultReportingDays: 30,
-    defaultIncludeDiscoveredOnly: false,
-    defaultRecommendationTypes: ["Vulnerability"],
-    defaultDomains: ["Devices", "Cloud"],
-  },
+  filters: window.VULNERABILITY_VIEW_DEFAULTS.filters,
   diagnostics: {
     showExperimentalEndpoints: false,
   },
   authentication: {
     showStatus: true,
   },
-  workloadGrouping: {
-    rules: [
-      {
-        id: "generated-scale-hosts",
-        label: "Generated scale workload",
-        field: "DeviceName",
-        operator: "prefix",
-        value: "gen-",
-      },
-    ],
-  },
+  workloadGrouping: window.VULNERABILITY_VIEW_DEFAULTS.workloadGrouping,
 };

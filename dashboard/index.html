@@ -10,7 +10,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
   <link rel="icon" type="image/png" href="favicon.png?v=20261009-2216">
-  <link rel="stylesheet" href="styles.css?v=20261012-1549">
+  <link rel="stylesheet" href="styles.css?v=20261024-141223">
 </head>
 <body>
   <header class="topbar">
@@ -45,8 +45,13 @@
 
   <div id="loadingNotice" class="loading-notice" role="status" aria-live="polite">
     <span class="loading-spinner" aria-hidden="true"></span>
-    <div><strong>Loading dashboard data</strong><span>Reading and verifying the current dataset.</span></div>
+    <div><strong>Loading dashboard summary</strong><span>Pinning the current snapshot; detail is queried only when requested.</span></div>
   </div>
+  <section id="dashboardQueryStatus" class="dashboard-query-status" role="alert" hidden>
+    <span id="dashboardQueryMessage"></span>
+    <button id="retryDashboardQuery" type="button">Retry</button>
+    <button id="reloadDashboardSnapshot" type="button" hidden>New snapshot available · Reload</button>
+  </section>
 
   <section id="developmentWarning" class="development-warning" role="alert" hidden>
     <strong>Local development only</strong>
@@ -112,8 +117,8 @@
       <section class="new-activity-metric-group" aria-labelledby="firstSeenMetricLabel">
         <strong id="firstSeenMetricLabel">First seen in window</strong>
         <div class="new-activity-metrics">
-          <button type="button" data-new-view="overview" title="Apply the first-seen window and open these findings"><strong id="newFindingCount">0</strong><span>finding instances</span></button>
-          <button type="button" data-new-view="overview" title="Apply the first-seen window and open these CVEs"><strong id="newCveCount">0</strong><span>distinct CVEs</span></button>
+          <button type="button" data-new-view="overview" data-findings-mode="findings" title="Apply the first-seen window and open these findings"><strong id="newFindingCount">0</strong><span>finding instances</span></button>
+          <button type="button" data-new-view="overview" data-findings-mode="cves" title="Apply the first-seen window and open these CVEs"><strong id="newCveCount">0</strong><span>distinct CVEs</span></button>
           <button type="button" data-new-view="workstations" title="Apply the first-seen window and open matching endpoint devices"><strong id="newMachineCount">0</strong><span>machines first affected</span></button>
           <button type="button" data-new-view="recommendations" title="Apply the first-seen window and open matching recommendations"><strong id="newRecommendationCount">0</strong><span>recommendations</span></button>
         </div>
@@ -121,8 +126,8 @@
       <section class="new-activity-metric-group corrected" aria-labelledby="correctedMetricLabel">
         <strong id="correctedMetricLabel">Remediation observed in the same window</strong>
         <div class="new-activity-metrics corrected-metrics">
-          <button type="button" class="window-metric" data-fixed-view="overview" title="Apply the remediation window and open these finding instances"><strong id="fixedWindowFindingCount">0</strong><span>remediation observations</span></button>
-          <button type="button" class="window-metric" data-fixed-view="overview" title="Apply the remediation window and open these CVEs"><strong id="fixedWindowCveCount">0</strong><span>distinct CVEs with fixes</span></button>
+          <button type="button" class="window-metric" data-fixed-view="overview" data-findings-mode="findings" title="Apply the remediation window and open these finding instances"><strong id="fixedWindowFindingCount">0</strong><span>remediation observations</span></button>
+          <button type="button" class="window-metric" data-fixed-view="overview" data-findings-mode="cves" title="Apply the remediation window and open these CVEs"><strong id="fixedWindowCveCount">0</strong><span>distinct CVEs with fixes</span></button>
           <button type="button" class="window-metric" data-fixed-view="workstations" title="Apply the remediation window and open matching endpoint devices"><strong id="fixedWindowMachineCount">0</strong><span>machines with fixes</span></button>
           <button type="button" class="window-metric" data-fixed-view="recommendations" title="Apply the remediation window and open matching recommendations"><strong id="fixedWindowRecommendationCount">0</strong><span>recommendations with fixes</span></button>
         </div>
@@ -221,12 +226,29 @@
         <article class="panel"><div class="panel-title"><div><h3 id="executiveSlaTableTitle">SLA performance by severity</h3><span id="executiveSlaTableContext">Remediation observed during the selected period</span></div></div><div class="table-wrap executive-table-wrap"><table id="executiveSnapshotSlaTable"></table></div></article>
         <article class="panel"><div class="panel-title"><div><h3>Highest remaining management risks</h3><span>Recommendations ranked by severity and open impact</span></div></div><div class="table-wrap executive-table-wrap"><table id="executiveSnapshotRiskTable"></table></div></article>
       </div>
+      <article class="panel"><div class="panel-title"><div><h3>Recommendation workload and management risks</h3><span>Recommendation-level progress with paged machine and CVE drill-downs</span></div></div><div class="table-wrap executive-table-wrap"><table id="executiveSnapshotRecommendationTable"></table></div></article>
       <footer class="executive-report-footer"><span id="executiveSnapshotGenerated"></span><span>Source: Microsoft Defender observations retained by Vulnerability View</span></footer>
     </section>
     <section id="overview" class="story">
       <div class="section-heading"><div><h2>Vulnerabilities and known exploits</h2></div></div>
       <div class="split">
-        <article class="panel wide"><div class="panel-title"><h3>Current Critical and High</h3><span>Click a row to inspect the device</span></div><div class="table-wrap"><table id="findingsTable"></table></div></article>
+        <article class="panel wide">
+          <div class="panel-title"><h3 id="findingsListTitle">Vulnerability findings</h3><span id="findingsListContext">All findings matching workspace filters</span></div>
+          <div class="findings-list-controls">
+            <label>Show<select id="findingsMode"><option value="findings">Finding instances</option><option value="cves">Distinct CVEs</option></select></label>
+            <label>Search workspace<input id="findingsSearch" type="search" placeholder="CVE, software, machine..." aria-describedby="findingsSearchHelp"></label>
+            <small id="findingsSearchHelp">Search applies to all matching records, not just this page, and updates workspace counts.</small>
+          </div>
+          <div class="table-wrap"><table id="findingsTable"></table></div>
+          <nav class="findings-pagination" aria-label="Finding list pages">
+            <span id="findingsPageStatus" role="status" aria-live="polite"></span>
+            <button type="button" data-findings-page="first">First</button>
+            <button type="button" data-findings-page="previous">Previous</button>
+            <button type="button" data-findings-page="next">Next</button>
+            <button type="button" data-findings-page="last">Last</button>
+            <button id="exportFindingsCsv" type="button">Export matching CSV</button>
+          </nav>
+        </article>
         <article class="panel"><div class="panel-title"><h3>Known exploit watchlist</h3><span>One correlated row per CVE with public, verified, or exploit-kit evidence</span></div><div class="table-wrap"><table id="exploitTable"></table></div></article>
       </div>
     </section>
@@ -324,6 +346,7 @@
 
       <div id="collectionRunTrend" class="subsection-heading"><div><h3>Collection-run workload trajectory</h3></div></div>
       <article class="panel chart-panel"><div class="trend-chart-head"><div><strong>Completed snapshots from the last 90 days</strong><span id="trendFilterContext" class="filter-chip"></span></div><div class="legend"><span class="new">New / reopened</span><span class="fixed">Fixed</span><span class="remaining">Open</span></div></div><div id="trendChart" class="chart"></div></article>
+      <article class="panel"><div class="panel-title"><h3>Retained collection-run totals</h3><span>Exact collector counters, distinct from current-scope reconstructed exposure</span></div><div class="table-wrap"><table id="runHistoryTable"></table></div></article>
       <article class="panel trend-history"><div class="panel-title"><h3>Weekly change history</h3><span>Select New or Fixed for recommendation, CVE, and machine details</span></div><div class="weekly-legend"><span><i class="new-key"></i>New</span><span><i class="fixed-key"></i>Fixed</span></div><div id="weeklyTrendChart" class="weekly-chart"></div><div class="table-wrap"><table id="weeklyComparisonTable"></table></div></article>
       <section id="remediationTaskHistorySection" data-feature="remediation-activity" hidden>
         <div class="subsection-heading"><div><h3>Weekly remediation task due-date history</h3></div></div>
@@ -353,7 +376,7 @@
   <aside id="recommendationPreview" class="recommendation-preview" role="status" hidden></aside>
   <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
   <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
-  <script src="config.js?v=20261012-1549"></script>
-  <script src="app.js?v=20261012-1549"></script>
+  <script src="config.js?v=20261024-141223"></script>
+  <script src="app.js?v=20261024-141223"></script>
 </body>
 </html>
