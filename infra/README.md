@@ -44,8 +44,9 @@ loads summary metrics first, then requests snapshot-pinned server-side table
 pages and details. Its verified compressed downloads and SQLite indexes are
 disposable local cache files. Each worker retains up to two snapshots within
 an 8 GiB local budget; allow sufficient App Service local disk. A cold cache
-is prepared during worker startup, before browser traffic is accepted. Default
-Summary and Vulnerabilities results are ready at that point. Allow up to
+is prepared during worker startup, before browser traffic is accepted. All nine
+default navigation views, including Reporting, are ready at that point.
+Analytical facts are separate from compressed original evidence. Allow up to
 30 minutes for cold startup (`WEBSITES_CONTAINER_START_TIME_LIMIT=1800`).
 New snapshots are prepared before selection; allow space for the ready and
 replacement caches together. Browser revisits reuse bounded view results.

@@ -440,21 +440,30 @@ qualified absence, or remediation verification rules. When comparing with
 Defender, use distinct active CVEs for the same device, snapshot time, and scope,
 not the combined evidence-row count.
 Summary comparisons use finding timestamps and compact run metadata; they do
-not require a full lifecycle-history index. Reporting builds its history index
-only when opened and reuses bounded aggregate caches across redraws and pages.
+not require a full lifecycle-history scan. Reporting's history index is built
+during startup preparation and reuses bounded aggregate caches across redraws
+and pages.
 
 Azure datasets are downloaded incrementally to local disk, verified against
 the selected manifest's compressed size and SHA-256, and indexed using streaming
-JSON readers. Requests stay pinned to the same snapshot, including its retained
+JSON readers. Local indexes separate typed analytical facts, literal-search
+text, and losslessly compressed original evidence. Standard analytical paths
+avoid reading full JSON evidence. Evidence pages, exports, and custom grouping
+rules decompress original records when needed; arbitrary custom fields retain
+their existing rule behavior rather than using an approximate fast path.
+Searched views materialize matching row IDs once and reuse them across widgets.
+Requests stay pinned to the same snapshot, including its retained
 SLA policy. An expired snapshot returns an explicit reload message instead of
 mixing rows from different runs. Search is debounced and obsolete view requests
 are cancelled or ignored. CSV reports stream from the server rather than
 building a complete export in browser memory.
 Before accepting traffic, each Web App worker downloads/indexes the current
-snapshot and prepares the default Summary and Vulnerabilities first pages.
+snapshot and prepares every default navigation view: Summary, Vulnerabilities,
+Recommendations, Prioritize, Endpoint assets, Remediate (SLA), Reporting,
+Executive Snapshot, and How to use.
 Browser and server preparation share filter/workload defaults from
-`dashboard/config.js`; SLA and evidence calculations are unchanged. These two
-bounded results are retained separately (4 MiB total), so other queries cannot
+`dashboard/config.js`; SLA and evidence calculations are unchanged. These nine
+bounded results are retained separately (20 MiB total, 2 MiB per result), so other queries cannot
 evict them. Cached server results return immediately without a polling round trip.
 The browser also retains up to sixteen bounded view/page responses within an
 8 MiB budget, so returning to the same view and filters does not repeat a query.
@@ -462,7 +471,7 @@ Tracking-enabled browser entries expire after five seconds; tracking refreshes,
 snapshot changes, and explicit retries invalidate browser results.
 
 The server checks for new snapshots at the configured metadata refresh interval
-and prepares replacement Summary/Vulnerabilities results before selecting that
+and prepares all replacement default views before selecting that
 snapshot for new sessions. Existing sessions remain pinned. The ready snapshot
 stays protected during replacement preparation; insufficient disk or another
 preparation failure retains the old ready snapshot and reports an explicit
@@ -472,8 +481,8 @@ snapshot, preparation status, errors, and preparation duration.
 
 Cold startup still takes time before the Web App becomes available; it no longer
 makes the first visitor build the default screens. Deployment allows up to
-30 minutes for App Service container startup. Other first-time filtered queries,
-details, and historical reports can still require work through bounded background workers.
+30 minutes for App Service container startup. Uncached filters, details, and
+nondefault historical reports still use bounded background workers.
 The browser polls short requests while preparation continues, avoiding a single
 long HTTP connection that could exceed App Service's timeout. Two workspace-query
 workers and one separate report worker keep long reporting requests from
@@ -482,8 +491,9 @@ are retained per worker; each cached result is limited to 2 MiB.
 
 Each Web App worker retains at most two local snapshot caches, subject to an
 8 GiB total local-disk budget. Cold indexes take time to build; subsequent
-requests reuse them. Restarting the Web App discards this disposable cache,
-not Azure history. Local disk exhaustion is reported as an error; it does not
+requests reuse them. Replacing the Web App container can discard this disposable
+cache, not Azure history; worker restarts reuse indexes only when that local
+cache survives. Local disk exhaustion is reported as an error; it does not
 trigger deletion of retained Storage data. Allow enough local disk for the
 compressed inputs and SQLite indexes.
 SQLite query scratch space requires additional free disk beyond retained indexes.
@@ -504,21 +514,48 @@ lifecycle events, exact page/search/CVE totals, responses below 512 KiB, and
 peak RSS below 512 MiB:
 
 ```bash
-PYTHONPATH=src .venv/bin/python tests/benchmark_dashboard_queries.py --rows 2000000 --events 2000000
+PYTHONPATH=src .venv/bin/python tests/benchmark_dashboard_queries.py \
+  --rows 2000000 --events 2000000 --prepare-defaults --all-views \
+  --broad-filters --mixed-lifecycle --enforce-targets
 ```
 
-Add `--prepare-defaults` to measure startup preparation separately and require
-each prepared Summary/Vulnerabilities response to be available in under one
-second locally.
+This measures startup separately, verifies that all nine prepared views remain
+cached, and enforces five-second cached-view and ten-second uncached-filter,
+search, grouping, and detail limits. Broad `Live` filters match the full
+synthetic scope; the mixed fixture includes fixed, pending, reopened, and open
+evidence with varied observation dates. Omit `--mixed-lifecycle` to also exercise
+two million simultaneously detected findings. The output includes index size,
+compressed inputs, and estimated retained space for two equal-sized snapshots.
+Each filtered view starts without a shared filter-header cache, so the gate does
+not depend on visiting another screen with those filters first. Two measured
+equal-sized snapshots must fit the existing 8 GiB budget with 128 MiB headroom.
+These are local query-engine measurements, not end-to-end browser/network
+latency or App Service sizing guarantees. Verify the customer snapshot and
+deployment hardware separately before accepting production performance.
 
-A local synthetic run with `--prepare-defaults` at that size used approximately
-79 MiB peak Python RSS, returned an 80 KiB overview page, and fetched the last
-100-row page in 2.4 seconds. Startup preparation took 131 seconds; the prepared
-Summary and Vulnerabilities cache reads took 0.1 ms and 0.4 ms respectively
-(not end-to-end browser or network latency).
-Its SQLite index occupied 6.7 GiB, excluding source inputs and query scratch
-space. Cold builds and first heavy queries still take time; these workstation
-measurements are not App Service latency or sizing guarantees.
+Local acceptance measurements for Web App version `2026.10.25.1`:
+
+| Measurement | 2 million detected findings | 2 million mixed-lifecycle findings |
+|---|---:|---:|
+| Lifecycle events | 2 million | 2 million |
+| Default views retained | All 9 | All 9 |
+| Prepared-result read, slowest | 0.3 ms | 0.6 ms |
+| Uncached view/filter check, slowest | 9.975 s | 9.318 s |
+| Literal off-page search | 4.282 s | 6.940 s |
+| Distinct-CVE grouping | 3.310 s | 4.647 s |
+| Detail lookup, slowest | 1.934 s | 1.641 s |
+| Peak process RSS | 96 MiB | 83 MiB |
+| Two equal retained snapshots, including compressed inputs | 7.32 GiB | 7.67 GiB |
+
+The all-detected run built fresh indexes and prepared all nine screens in
+221.283 seconds from already-local compressed inputs; Azure download time is
+additional. The mixed run reused a verified existing index with fresh response
+caches and prepared the views in 47.180 seconds. That second measurement is
+**not** a cold index-build time. These engine timings exclude HTTP, browser
+rendering, and concurrent-user contention. Summary's all-detected uncached
+filter is close to the ten-second limit, so production hardware and customer
+snapshot validation remain necessary. Wider evidence records or more retained
+events can also require more disk than these synthetic fixtures.
 
 Executive Snapshot can show either finding instances or recommendation
 workload. Recommendation workload is a rollup of linked finding evidence. It

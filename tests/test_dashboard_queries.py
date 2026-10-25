@@ -200,6 +200,135 @@ def test_data_browser_uses_all_fields_and_searches_all_rows(tmp_path):
         e.page_dataset("../findings")
 
 
+def test_analytical_scans_do_not_read_json_or_search_payloads(tmp_path):
+    query_engine = engine(tmp_path)
+    query_engine._ensure("findings")
+    with query_engine._connect() as db:
+        sql = """
+            SELECT count(*),sum(_fixed<=_due),
+                count(DISTINCT DeviceId),count(DISTINCT _cve)
+            FROM findings WHERE Severity='High'
+        """
+        plan = " ".join(row["detail"] for row in db.execute("EXPLAIN QUERY PLAN " + sql))
+        assert "CORRELATED SCALAR SUBQUERY" not in plan
+        opened = {row["p2"] for row in db.execute("EXPLAIN " + sql) if row["opcode"] == "OpenRead"}
+        roots = dict(db.execute("""
+            SELECT name,rootpage FROM sqlite_master
+            WHERE tbl_name='findings_facts' OR name IN ('findings_payloads','findings_searches')
+        """))
+        fact_roots = {root for name, root in roots.items() if name not in ("findings_payloads", "findings_searches")}
+        assert opened and opened <= fact_roots
+        assert not {roots["findings_payloads"], roots["findings_searches"]} & opened
+        db.execute(sql).fetchone()
+        payload_plan = " ".join(row["detail"] for row in db.execute(
+            "EXPLAIN QUERY PLAN SELECT data FROM findings WHERE _rowid=1"
+        ))
+        assert "CORRELATED SCALAR SUBQUERY" in payload_plan
+
+
+def test_cve_mode_cannot_bypass_other_prepared_views(tmp_path, monkeypatch):
+    query_engine = engine(tmp_path)
+    for view in ("executive", "overview", "recommendations"):
+        query_engine.prepare({"view": view, "mode": "findings"})
+    assert query_engine.cached({"view": "overview", "mode": "cves"}) is None
+
+    def unexpected_query(*args, **kwargs):
+        pytest.fail("A prepared view must not reopen SQLite after changing CVE mode")
+
+    monkeypatch.setattr(query_engine, "_connect", unexpected_query)
+    for view in ("executive", "recommendations"):
+        assert query_engine.query({"view": view, "mode": "cves"}) == query_engine.cached({"view": view})
+
+
+def test_separated_records_round_trip_unknown_fields_and_multiple_pages(tmp_path):
+    data = datasets(401)
+    data["findings"][0].update(
+        CustomObject={"nested": [None, "MÜNCHEN", {"quote": "O'Brien"}]},
+        NullableField=None, CustomBoolean=True,
+    )
+    query_engine = engine(tmp_path, data)
+    assert list(query_engine.iter_dataset("findings")) == data["findings"]
+    assert query_engine.page_dataset("findings", 399, 100)["items"] == data["findings"][399:]
+    assert query_engine.page_dataset("findings", query="MÜNCHEN")["items"] == data["findings"][:1]
+
+
+def test_deferred_timestamps_and_oldest_detection_preserve_original_text(tmp_path):
+    data = datasets(0)
+    first = "2026-10-23T16:00:00+03:00"
+    data["findings"] = [
+        finding(index, FirstSeenUtc=first, FirstObservedUtc=observed,
+                LastSeenUtc="2026-10-24T14:00:00+03:00")
+        for index, observed in enumerate((None, "", "2026-10-23T14:00:00+01:00"))
+    ]
+    query_engine = engine(tmp_path, data)
+    query_engine._ensure("findings")
+    with query_engine._connect() as db:
+        rows = db.execute("""
+            SELECT FirstSeenUtc,FirstObservedUtc,LastSeenUtc,SnapshotTimeUtc,_observed_text
+            FROM findings ORDER BY _rowid
+        """).fetchall()
+    for row, source in zip(rows, data["findings"], strict=True):
+        assert dict(row) == {
+            **{field: source[field] for field in ("FirstSeenUtc", "FirstObservedUtc", "LastSeenUtc", "SnapshotTimeUtc")},
+            "_observed_text": source["FirstObservedUtc"] if source["FirstObservedUtc"] is not None else first,
+        }
+    result = query_engine.query({"view": "trend"})
+    oldest = {row["DeviceId"]: row["OldestDetectionUtc"] for row in result["tables"]["weeklyRiskTable"]["items"]}
+    assert oldest == {"device-0": first, "device-1": "", "device-2": "2026-10-23T14:00:00+01:00"}
+
+
+def test_shared_sla_statistics_include_unknown_severities_without_changing_graphs(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, Severity=None, FindingStatus="Fixed", SlaStatus="FixedWithinSla", FixedUtc=SNAPSHOT),
+        finding(1, Severity="Informational", SlaStatus="OpenOutsideSla"),
+    ]
+    query_engine = engine(tmp_path, data)
+    sla = query_engine.query({"view": "sla"})
+    assert [card[0] for card in sla["cards"]["slaCards"]] == [2, 1, 0, 1, 0, 1]
+    assert all(row["FixedWithinSLA"] == 0 for row in sla["slaGraphs"]["findingSlaGraph"]["rows"])
+    summary = query_engine.query({"view": "executive"})
+    assert [card[0] for card in summary["cards"]["executiveSlaPerformance"]] == ["100%", 1, 0, 1]
+
+
+def test_executive_concentration_other_keeps_distinct_machine_counts(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(index, OwnerTeam=f"team-{index}", DeviceId=f"device-{min(index, 6)}")
+        for index in range(9)
+    ]
+    result = engine(tmp_path, data).query({"view": "executiveSnapshot"})
+    rows = result["charts"]["executiveOwnerConcentration"]["rows"]
+    assert len(rows) == 7
+    assert rows[-1] == {"label": "Other", "value": 3, "criticalHigh": 3, "machines": 1}
+
+
+@pytest.mark.parametrize("rule", [
+    {"id": "unicode", "field": "DeviceName", "operator": "prefix", "value": "mün", "label": "Unicode hosts"},
+    {"id": "quotes", "field": "DeviceName", "operator": "contains", "value": "o'brien", "label": "O'Brien hosts"},
+    {"id": "custom", "field": "CustomBoolean", "operator": "exact", "value": "true"},
+])
+def test_optimized_workload_expressions_preserve_python_rules_and_vmss_precedence(tmp_path, rule):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceName="MÜNCHEN O'Brien", CustomBoolean=True),
+        finding(1, DeviceName="MÜNCHEN O'Brien", CustomBoolean=True,
+                AzureResourceId="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachineScaleSets/pool/virtualMachines/1"),
+        finding(2, DeviceName="ordinary-host"),
+    ]
+    query_engine = engine(tmp_path, data)
+    filters = {"workloadGrouping": {"rules": [rule]}}
+    query_engine._ensure("findings")
+    with query_engine._connect(filters) as db:
+        query_engine._finding_scope(db, "scoped", "1", [], filters)
+        actual = db.execute("""
+            SELECT _workload,_workload_name,_workload_type FROM scoped ORDER BY _rowid
+        """).fetchall()
+        assert [tuple(row) for row in actual] == [
+            query_engine._workload(row, filters) for row in data["findings"]
+        ]
+
+
 @pytest.mark.parametrize("view", [
     "executive", "overview", "workstations", "recommendations", "priority", "sla",
     "trend", "executiveSnapshot", "help",
@@ -218,6 +347,30 @@ def test_all_views_have_bounded_snapshot_pinned_output(tmp_path, view):
     assert "findings" not in result
     if view == "executive":
         assert not {"devices", "vulnerabilities", "recommendation-events", "daily-summary"} & e.reads.keys()
+
+
+def test_sla_fixed_device_pairs_preserve_unresolved_and_null_key_semantics(tmp_path):
+    data = datasets(0)
+    cases = [
+        ("fixed-only", "rec-0", "Fixed"),
+        ("mixed", "rec-0", "Fixed"), ("mixed", "rec-0", "Open"),
+        ("pending", "rec-0", "Fixed"), ("pending", "rec-0", "PendingVerification"),
+        ("other-recommendation", "rec-0", "Fixed"), ("other-recommendation", "rec-1", "Open"),
+        ("unlinked", None, "Fixed"), ("unlinked", None, "Open"),
+        (None, "rec-0", "Fixed"), (None, "rec-0", "Open"),
+    ]
+    data["findings"] = [
+        finding(index, DeviceId=device, RecommendationId=recommendation, FindingStatus=status,
+                FixedUtc=SNAPSHOT if status == "Fixed" else None,
+                SlaStatus="FixedWithinSla" if status == "Fixed" else "OpenWithinSla")
+        for index, (device, recommendation, status) in enumerate(cases)
+    ]
+    result = engine(tmp_path, data).query({"view": "sla"})
+    rows = {row["RecommendationId"]: row for row in result["tables"]["remediationOutcomeTable"]["items"]}
+    assert rows["rec-0"]["FixedDevicesToday"] == 2
+    assert rows["rec-1"]["FixedDevicesToday"] == 0
+    assert rows[None]["FixedDevicesToday"] == 1
+    assert rows["rec-0"]["FixedToday"] == 5
 
 
 def test_sla_ignores_exposure_and_period_filters_and_uses_first_absence(tmp_path):
@@ -428,6 +581,31 @@ def test_cached_pages_do_not_recompute_exact_header_aggregates(tmp_path, monkeyp
     assert second["tables"]["findingsTable"]["offset"] == 100
 
 
+def test_broad_activity_uses_covering_index_without_changing_counts(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(i, FindingStatus=status, EffectiveRemediationUtc=SNAPSHOT if i else None)
+        for i, status in enumerate(("Open", "Fixed", "PendingVerification", "Reopened"))
+    ]
+    e = engine(tmp_path, data)
+    broad = e.query({"view": "overview", "filters": {"origin": "Live"}})
+    selective = e.query({
+        "view": "overview", "filters": {"origin": "Live", "hideNonReporting": True},
+    })
+    assert broad["activity"] == selective["activity"]
+    assert broad["activity"]["newFindings"] == 3
+    assert broad["activity"]["fixedFindings"] == 3
+    statements = []
+    with e._connect() as db:
+        db.set_trace_callback(statements.append)
+        e._header(db, {key: {} for key in ("activity", "facets", "metadata", "texts")}, {"origin": "Live"})
+        activity = [sql for sql in statements if "count(*) Findings" in sql]
+        assert len(activity) == 2
+        for sql in activity:
+            plan = " ".join(row["detail"] for row in db.execute("EXPLAIN QUERY PLAN " + sql))
+            assert "COVERING INDEX findings_recommendation_rank" in plan
+
+
 def test_global_cve_exploit_evidence_is_union_of_all_finding_evidence(tmp_path):
     data = datasets(0)
     data["findings"] = [
@@ -442,21 +620,24 @@ def test_global_cve_exploit_evidence_is_union_of_all_finding_evidence(tmp_path):
     assert row["AffectedDevices"] == 3
 
 
-def test_daily_interval_aggregation_matches_legacy_history_predicates(tmp_path):
+@pytest.mark.parametrize("copies", [1, 3])
+def test_daily_interval_aggregation_matches_legacy_history_predicates(tmp_path, copies):
     data = datasets(0)
     snapshot = datetime.fromisoformat(SNAPSHOT.replace("Z", "+00:00"))
     for i in range(120):
         first = snapshot - timedelta(days=120 - i, hours=i % 24)
         fixed = first + timedelta(days=i % 17) if i % 3 else None
         reopened = first + timedelta(days=i % 21) if i % 5 == 0 else None
-        data["findings"].append(finding(
-            i, FirstObservedUtc=first.isoformat(), FirstSeenUtc=first.isoformat(),
-            FixedUtc=fixed.isoformat() if fixed else "",
-            ReopenedUtc=reopened.isoformat() if reopened else "",
-            PublicExploitAvailable=i % 2 == 0,
-            SlaDueUtc=(first + timedelta(days=7)).isoformat(),
-        ))
-    points = engine(tmp_path, data).query({"view": "trend"})["charts"]["weeklyTrendChart"]["rows"]
+        for copy in range(copies):
+            data["findings"].append(finding(
+                i * copies + copy, FirstObservedUtc=first.isoformat(), FirstSeenUtc=first.isoformat(),
+                FixedUtc=fixed.isoformat() if fixed else "",
+                ReopenedUtc=reopened.isoformat() if reopened else "",
+                PublicExploitAvailable=i % 2 == 0,
+                SlaDueUtc=(first + timedelta(days=7)).isoformat(),
+            ))
+    e = engine(tmp_path, data)
+    points = e.query({"view": "trend"})["charts"]["weeklyTrendChart"]["rows"]
     for point in points:
         end = datetime.fromisoformat(point["date"]).replace(tzinfo=timezone.utc) + timedelta(days=1, milliseconds=-1)
         remaining = within = outside = backlog = 0
@@ -475,6 +656,28 @@ def test_daily_interval_aggregation_matches_legacy_history_predicates(tmp_path):
         assert point["backlog"] == backlog
         assert point["fixedWithinSla"] == within
         assert point["fixedOutsideSla"] == outside
+    buckets = e.query({"view": "executiveSnapshot"})["charts"]["executiveSnapshotTrend"]["rows"]
+    earliest = datetime.min.replace(tzinfo=timezone.utc)
+    for index, bucket in enumerate(buckets):
+        start = datetime.fromisoformat(bucket["label"]).replace(tzinfo=timezone.utc)
+        next_start = (
+            datetime.fromisoformat(buckets[index + 1]["label"]).replace(tzinfo=timezone.utc)
+            if index + 1 < len(buckets) else snapshot.replace(hour=0) + timedelta(days=1)
+        )
+        end = next_start - timedelta(milliseconds=1)
+        new = fixed_count = opened = 0
+        for row in data["findings"]:
+            first = datetime.fromisoformat(row["FirstSeenUtc"])
+            fixed = datetime.fromisoformat(row["FixedUtc"]) if row["FixedUtc"] else None
+            reopened = datetime.fromisoformat(row["ReopenedUtc"]) if row["ReopenedUtc"] else None
+            new += start <= first <= end
+            fixed_count += bool(fixed and start <= fixed <= end)
+            prior_open = max(first, reopened if reopened and reopened <= end else earliest)
+            prior_fixed = fixed if fixed and fixed <= end else earliest
+            opened += first <= end and prior_open > prior_fixed
+        assert bucket["new"] == new
+        assert bucket["fixed"] == fixed_count
+        assert bucket["open"] == opened
 
 
 def test_header_recommendation_scope_includes_machine_only_evidence_and_tracking(tmp_path):

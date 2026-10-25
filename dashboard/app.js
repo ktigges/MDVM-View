@@ -984,7 +984,7 @@ function dashboardFilters(){
 }
 
 function dashboardRequest(view=state.activeView,tableId=null,page=0){
-  const request={snapshotId:dashboardQuery.snapshot?.snapshotId,view,filters:dashboardFilters(),mode:findingsList.mode,page,limit:FINDINGS_PAGE_SIZE};
+  const request={snapshotId:dashboardQuery.snapshot?.snapshotId,view,filters:dashboardFilters(),mode:view==="overview"?findingsList.mode:"findings",page,limit:FINDINGS_PAGE_SIZE};
   if(tableId)request.table=tableId;
   if(view==="detail")request.selection=state.selectedEntity;
   return request;

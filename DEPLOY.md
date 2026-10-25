@@ -892,9 +892,10 @@ dependency is reused.
 Indexes and compressed dataset caches are disposable local files, not new
 historical Azure artifacts. Each worker retains at most two snapshots within
 an 8 GiB local cache budget. Ensure the App Service worker has sufficient free
-local disk for its inputs, indexes, and SQLite query scratch space. Initial
-startup after a restart takes longer while indexes and default Summary and
-Vulnerabilities results are prepared, before the worker accepts browser traffic.
+local disk for its inputs, indexes, and SQLite query scratch space. Analytical
+facts are indexed separately from losslessly compressed evidence payloads.
+Initial startup after a restart takes longer while indexes and all nine default
+navigation views are prepared, before the worker accepts browser traffic.
 Deployment sets `WEBSITES_CONTAINER_START_TIME_LIMIT=1800` and verification
 allows the same startup window. New snapshots are prepared in the background
 before new sessions select them; allow disk room for both the served snapshot

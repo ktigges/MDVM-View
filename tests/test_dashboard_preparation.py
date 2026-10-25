@@ -11,7 +11,7 @@ import pytest
 
 from vulnerability_view.config import Settings
 from vulnerability_view.dashboard_preparation import DashboardPreparation, initial_filters
-from vulnerability_view.dashboard_queries import _cache_filters
+from vulnerability_view.dashboard_queries import PREPARED_VIEWS, _cache_filters
 from vulnerability_view.dashboard_server import DashboardQueryRequest, create_app
 from test_dashboard_queries import SNAPSHOT, datasets, engine
 from test_dashboard_query_api import request
@@ -166,7 +166,7 @@ def test_custom_dates_are_part_of_cache_key():
         assert _cache_filters({mode: "custom", start: "2026-10-01"})[start] == "2026-10-01"
 
 
-def test_real_lifespan_prepares_first_summary_and_overview_before_serving(tmp_path, monkeypatch):
+def test_real_lifespan_prepares_every_default_view_before_serving(tmp_path, monkeypatch):
     data = tmp_path / "dashboard/data"
     data.mkdir(parents=True)
     for name, rows in datasets().items():
@@ -191,11 +191,12 @@ def test_real_lifespan_prepares_first_summary_and_overview_before_serving(tmp_pa
                 def unexpected(*args, **kwargs):
                     raise AssertionError("First browser request must use prepared results")
                 monkeypatch.setattr(entry.engine, "_connect", unexpected)
-            for view in ("executive", "overview"):
+            for view in PREPARED_VIEWS:
                 filters = initial_filters(ROOT / "dashboard/config.js")
                 filters.update(activeView=view, selectedEntity=None, snapshotTimeMs=0)
                 payload = DashboardQueryRequest(
-                    snapshotId=snapshot["snapshotId"], view=view, mode="findings", filters=filters,
+                    snapshotId=snapshot["snapshotId"], view=view,
+                    mode="findings" if view == "overview" else "cves", filters=filters,
                     asyncQuery=True, requestId=f"prepared-{view}",
                 ).model_dump()
                 status, _, body = await asyncio.to_thread(
