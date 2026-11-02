@@ -130,14 +130,106 @@ def test_start_does_not_replace_active_workflow(state):
     client.rewind.assert_not_called()
 
 
-def test_failed_run_is_resumed_not_recollected():
+def test_failed_run_restarts_execution_with_original_checkpoints_not_rewind(caplog):
+    original = {
+        "runId": "live-20261023T160000Z", "snapshotUtc": "2026-10-23T16:00:00+00:00",
+        "collection": "auto", "enrichment": "targeted", "pageSize": 2500, "_failures": 12,
+    }
+    store = PlanStore()
+    reference = prepare_run(original, store, {"policyVersion": "original"})
+    frozen = dict(store.files)
+    store.settings.exclude_scale_sets = True
     client = SimpleNamespace(
-        get_status=AsyncMock(return_value=SimpleNamespace(runtime_status=SimpleNamespace(value="Failed"))),
+        get_status=AsyncMock(return_value=SimpleNamespace(
+            runtime_status=SimpleNamespace(value="Failed"), input_=original,
+        )),
+        start_new=AsyncMock(return_value=INSTANCE_ID), rewind=AsyncMock(),
+    )
+    with caplog.at_level(logging.INFO):
+        assert asyncio.run(start_collection(client, {"collection": "full", "pageSize": 100})) == INSTANCE_ID
+    client.get_status.assert_awaited_once_with(INSTANCE_ID, show_input=True)
+    client.rewind.assert_not_called()
+    client.start_new.assert_awaited_once_with(
+        "dataprep_orchestrator", INSTANCE_ID, {**original, "_failures": 0},
+    )
+    assert original["_failures"] == 12
+    recovered = client.start_new.call_args.args[2]
+    assert prepare_run(recovered, store, {"policyVersion": "changed"}) == reference
+    assert store.files == frozen
+    assert "Requested checkpoint recovery" in caplog.text
+    assert original["runId"] in caplog.text
+
+
+@pytest.mark.parametrize("original", [
+    None, [], "{}", "{invalid", {},
+    {"runId": "invalid", "snapshotUtc": "2026-10-23T16:00:00Z"},
+    {"runId": "live-20261023T160000Z"},
+    {"runId": "live-20261023T160000Z", "snapshotUtc": "invalid"},
+    {"runId": "live-20261023T160000Z", "snapshotUtc": "2026-10-23T16:00:00"},
+    {"runId": "live-20261023T160000Z", "snapshotUtc": "2026-10-23T17:00:00Z"},
+])
+def test_failed_run_without_valid_original_identity_does_not_start_fresh(original):
+    client = SimpleNamespace(
+        get_status=AsyncMock(return_value=SimpleNamespace(
+            runtime_status=SimpleNamespace(value="Failed"), input_=original,
+        )),
         start_new=AsyncMock(), rewind=AsyncMock(),
     )
-    assert asyncio.run(start_collection(client, {})) == INSTANCE_ID
-    client.rewind.assert_awaited_once()
+    with pytest.raises(RuntimeError, match="Cannot recover failed collection"):
+        asyncio.run(start_collection(client, {"collection": "full"}))
     client.start_new.assert_not_called()
+    client.rewind.assert_not_called()
+
+
+def test_failed_recovery_submission_does_not_log_success(caplog):
+    client = SimpleNamespace(
+        get_status=AsyncMock(return_value=SimpleNamespace(
+            runtime_status=SimpleNamespace(value="Failed"), input_={
+                "runId": "live-20261023T160000Z", "snapshotUtc": "2026-10-23T16:00:00Z",
+            },
+        )),
+        start_new=AsyncMock(side_effect=RuntimeError("Durable unavailable")), rewind=AsyncMock(),
+    )
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError, match="Durable unavailable"):
+        asyncio.run(start_collection(client, {}))
+    assert "Requested checkpoint recovery" not in caplog.text
+    client.rewind.assert_not_called()
+
+
+@pytest.mark.parametrize("identifier", [None, "unexpected-instance"])
+def test_recovery_rejects_unconfirmed_submission(identifier, caplog):
+    client = SimpleNamespace(
+        get_status=AsyncMock(return_value=SimpleNamespace(
+            runtime_status=SimpleNamespace(value="Failed"), input_={
+                "runId": "live-20261023T160000Z", "snapshotUtc": "2026-10-23T16:00:00Z",
+            },
+        )),
+        start_new=AsyncMock(return_value=identifier), rewind=AsyncMock(),
+    )
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError, match="expected collection instance ID"):
+        asyncio.run(start_collection(client, {}))
+    assert "Requested checkpoint recovery" not in caplog.text
+    client.rewind.assert_not_called()
+
+
+def test_repeated_trigger_keeps_recovery_execution_when_pending():
+    client = SimpleNamespace(
+        get_status=AsyncMock(side_effect=[
+            SimpleNamespace(runtime_status=SimpleNamespace(value="Failed"), input_={
+                "runId": "live-20261023T160000Z", "snapshotUtc": "2026-10-23T16:00:00Z",
+            }),
+            SimpleNamespace(runtime_status=SimpleNamespace(value="Pending")),
+        ]),
+        start_new=AsyncMock(return_value=INSTANCE_ID), rewind=AsyncMock(),
+    )
+
+    async def invoke_twice():
+        assert await start_collection(client, {}) == INSTANCE_ID
+        assert await start_collection(client, {"collection": "full"}) == INSTANCE_ID
+
+    asyncio.run(invoke_twice())
+    client.start_new.assert_awaited_once()
+    client.rewind.assert_not_called()
 
 
 def test_first_start_records_only_small_run_options():
@@ -158,19 +250,24 @@ def test_first_run_accepts_sdk_empty_status_for_missing_instance():
     client.start_new.assert_awaited_once()
 
 
+@pytest.mark.parametrize("serialized", [False, True])
 @pytest.mark.parametrize("state", ["Running", "Pending", "Suspended", "ContinuedAsNew", "Failed", "Completed"])
-def test_starter_handles_actual_sdk_existing_instance_status(state):
+def test_starter_handles_actual_sdk_existing_instance_status(state, serialized):
+    original = {"runId": "live-20261023T160000Z", "snapshotUtc": "2026-10-23T16:00:00Z"}
     status = DurableOrchestrationStatus(
         instanceId=INSTANCE_ID, runtimeStatus=state,
         createdTime="2026-10-23T16:00:00Z", lastUpdatedTime="2026-10-23T16:01:00Z",
+        input=json.dumps(original) if serialized else original,
     )
     client = SimpleNamespace(get_status=AsyncMock(return_value=status), start_new=AsyncMock(return_value=INSTANCE_ID), rewind=AsyncMock())
     assert asyncio.run(start_collection(client, {})) == INSTANCE_ID
     if state == "Completed":
         client.start_new.assert_awaited_once()
     elif state == "Failed":
-        client.rewind.assert_awaited_once()
-        client.start_new.assert_not_called()
+        client.start_new.assert_awaited_once_with(
+            "dataprep_orchestrator", INSTANCE_ID, {**original, "_failures": 0},
+        )
+        client.rewind.assert_not_called()
     else:
         client.start_new.assert_not_called()
         client.rewind.assert_not_called()
@@ -286,8 +383,10 @@ def test_orchestrator_uses_durable_cooldown_and_separate_file_verification():
     context = OrchestrationContext()
     workflow = orchestrate(context)
     assert next(workflow)[0] == "dataprep_prepare"
+    assert context.statuses == [{"phase": "prepare", "runId": context.options["runId"]}]
     reference = {"runId": context.options["runId"], "planPath": "runs/plan.json"}
     assert workflow.send(reference)[0] == "dataprep_collect_batch"
+    assert context.statuses[-1] == {"phase": "collect", **reference}
     timer = workflow.send({"done": False, "retry": True, "retryAfter": 7200, "newRequests": 0})
     assert timer[0] == "timer"
     assert (timer[1] - context.current_utc_datetime).total_seconds() == 7200
@@ -327,4 +426,5 @@ def test_repeated_failures_stop_explicitly_without_advancing_to_processing():
         workflow.send(None)
     with pytest.raises(RuntimeError, match="Repeated API failures"):
         workflow.send({"done": False, "newRequests": 0, "retry": True})
-    assert all(status["phase"] == "collect" for status in context.statuses)
+    assert context.statuses[0]["phase"] == "prepare"
+    assert all(status["phase"] == "collect" for status in context.statuses[1:])

@@ -1130,13 +1130,54 @@ python -m vulnerability_view.operations_cli verify function
 ```
 
 Scheduled and manual invocations start or retain the singleton
-`vulnerability-collection`. If it failed, another invocation resumes it; if it
-is active, another invocation does not replace its scope or data. A new
-immutable run starts only after the previous workflow is terminal. Its current
+`vulnerability-collection`. If it failed, another invocation submits a new
+Durable execution under the same instance ID using the original run input.
+This replaces the failed runtime execution/history, not the immutable DVM
+run, frozen settings/policy/baseline, or retained evidence and checkpoints.
+Completed checkpoints are reused; the internal consecutive-failure counter
+is reset. Missing or inconsistent original run identity stops recovery
+explicitly instead of silently starting a different snapshot. Active
+instances are not replaced or given new scope/data.
+A new immutable run starts only after the previous workflow is terminal and
+is not awaiting failed-run recovery. Its current
 manifest advances only after all files are verified and the frozen baseline
 ETag still matches. Do not purge Durable runtime state or delete historical
 checkpoints to retry. Use `check-runs --progress` to distinguish starter
 acceptance from workflow completion and publication.
+
+Recovery intentionally does not use Durable rewind: Microsoft
+[does not support rewind for orchestrations using durable timers](https://learn.microsoft.com/en-us/azure/azure-functions/durable/durable-functions-instance-management#rewind-instances-preview).
+The recovery-request log only confirms submission; verify that workflow state
+and progress advance. Progress reports `prepare` and `collect` before those
+activities begin.
+For incomplete referenced-CVE metadata, collection targets only the IDs still
+missing, with at most three additional lookup attempts per batch. Each attempt
+uses a separate append-only request-checkpoint path under the same immutable
+run. Original responses remain retained; replay reuses those attempts rather
+than resetting their budget. Refreshes share the existing activity request/time
+limits and HTTP-throttling cooldowns. Accepted metadata pages are archived in
+sequence alongside the original pages, so replay retains every finding.
+Missing CVE metadata is optional enrichment, not incomplete findings collection.
+After bounded refreshes, missing details or metadata API availability failures
+produce `PartialSuccess`, with `MissingCveCount`, `MissingCveIds`, and an explicit
+error in endpoint status. All device/CVE/software findings remain present.
+Curated findings and CVE detail records carry `CveMetadataStatus=Unavailable`;
+unknown CVSS, EPSS, exposure counts, and exploit flags are null, not zero or
+negative evidence. Placeholder detail records are derived reporting data, never
+fabricated raw API responses. The dashboard labels these gaps and still shows
+affected machines and recommendations. Priority uses available finding severity
+and device context, with an explanation that CVSS/exploit contributions are unknown.
+A complete, verified findings bundle can publish with enrichment warnings.
+Unexpected catalog IDs, malformed/corrupt evidence, required device/finding
+failures, and publication integrity failures still stop the job.
+An older run blocked only by exhausted, cached missing-CVE responses can now
+finish through ordinary checkpoint recovery without deleting or replacing history.
+Later full runs and delta runs retry missing metadata in their new immutable
+run paths; delta placeholders do not count as successfully collected metadata,
+even if the CVE is absent from the updated-since response.
+Deploying the recovery fix does not itself invoke
+collection. After a Function-only deployment, invoke once intentionally and
+check authoritative progress rather than repeatedly triggering or restarting.
 
 ### Existing Flex deployments
 

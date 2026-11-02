@@ -226,7 +226,8 @@ def test_interrupted_local_cache_append_does_not_poison_saved_remote_page(monkey
     assert cache.read("raw/run/page.json.gz") == b"complete saved checkpoint"
 
 
-def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(monkeypatch, tmp_path):
+@pytest.mark.parametrize("metadata", ["available", "missing", "recovered_missing", "http_error"])
+def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(monkeypatch, tmp_path, metadata):
     monkeypatch.chdir(tmp_path)
     credential = SimpleNamespace(get_token=lambda *args: SimpleNamespace(token="test-only-token"))
     monkeypatch.setattr(collection_worker, "create_credential", lambda *args: credential)
@@ -245,7 +246,7 @@ def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(mon
             "id": "finding-1", "machineId": "device-1", "cveId": "CVE-2026-0001",
             "severity": "High", "productName": "Product",
         }],
-        "/api/vulnerabilities": [{"id": "CVE-2026-0001", "severity": "High"}],
+        "/api/vulnerabilities": [{"id": "CVE-2026-0001", "severity": "High"}] if metadata == "available" else [],
     }
     requests_sent = []
 
@@ -253,7 +254,7 @@ def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(mon
         requests_sent.append(url)
         response = requests.Response()
         response.url = url
-        response.status_code = 200
+        response.status_code = 404 if metadata == "http_error" and urlsplit(url).path == "/api/vulnerabilities" else 200
         response._content = json.dumps({"value": payloads.get(urlsplit(url).path, [])}).encode()
         return response
 
@@ -264,7 +265,24 @@ def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(mon
     store = WorkerStore()
     frozen = plan()
     cache = tmp_path / "cache"
+    if metadata == "recovered_missing":
+        from vulnerability_view import live_collector
+
+        original_collect = live_collector._collect_referenced_catalog
+
+        def old_failure(*args, **kwargs):
+            original_collect(*args, **kwargs)
+            raise RuntimeError("Old collector failed after retaining the missing CVE responses")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(live_collector, "_collect_referenced_catalog", old_failure)
+            with pytest.raises(RuntimeError, match="Old collector"):
+                collection_worker.collect_batch(frozen, store, cache)
+        prior_catalog_calls = sum(urlsplit(url).path == "/api/vulnerabilities" for url in requests_sent)
+        assert prior_catalog_calls == 4
     assert collection_worker.collect_batch(frozen, store, cache)["done"]
+    if metadata == "recovered_missing":
+        assert sum(urlsplit(url).path == "/api/vulnerabilities" for url in requests_sent) == prior_catalog_calls
     original_requests = len(requests_sent)
     assert original_requests > 0
     assert collection_worker.collect_batch(frozen, store, cache)["done"]
@@ -289,6 +307,16 @@ def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(mon
     assert findings["rowCount"] == len(rows) == 1
     assert rows[0]["CveId"] == "CVE-2026-0001"
     assert {"FindingKey", "SlaStatus", "LifecycleReason"} <= rows[0].keys()
+    if metadata != "available":
+        assert rows[0]["CveMetadataStatus"] == "Unavailable"
+        assert rows[0]["CvssScore"] is None
+        assert rows[0]["FindingStatus"] == "Open"
+        metadata_status = next(row for row in manifest["endpointStatuses"] if row["Endpoint"] == "vulnerabilities")
+        assert metadata_status["Status"] == "PartialSuccess"
+        assert metadata_status["MissingCveIds"] == ["CVE-2026-0001"]
+        catalog = next(item for item in manifest["files"] if item.get("dataset") == "vulnerabilities")
+        details = json.loads(gzip.decompress(store.read(catalog["path"])))
+        assert details[0]["CveMetadataStatus"] == "Unavailable"
     assert collection_worker.process_batch(frozen, store, cache) == prepared
     assert len(requests_sent) == original_requests
     assert all(not name.startswith("current/") for name in store.uploads)

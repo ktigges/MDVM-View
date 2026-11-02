@@ -99,6 +99,36 @@ def test_distinct_cves_do_not_replace_finding_instances(tmp_path):
     assert result["scope"]["findings"] == 237
 
 
+def test_unavailable_metadata_keeps_findings_counts_and_exports_unknown_cve_details(tmp_path):
+    data = datasets(3)
+    for row in data["findings"]:
+        row.update(CveId="CVE-2026-61359", CveMetadataStatus="Unavailable", CvssScore=None,
+                   PublicExploitAvailable=None, VerifiedExploitAvailable=None, ExploitKitAvailable=None)
+    data["vulnerabilities"] = [{
+        "CveId": "CVE-2026-61359", "CveMetadataStatus": "Unavailable",
+        "CvssScore": None, "PublicExploitAvailable": None, "VerifiedExploitAvailable": None,
+    }]
+    e = engine(tmp_path, data)
+    findings = e.query({"view": "overview"})["tables"]["findingsTable"]
+    assert findings["total"] == 3
+    assert "CveMetadataStatus" in findings["columns"]
+    assert all(row["CveMetadataStatus"] == "Unavailable" for row in findings["items"])
+    request = {"view": "overview", "mode": "cves"}
+    grouped = e.query(request)["tables"]["findingsTable"]
+    assert grouped["total"] == 1
+    cve = grouped["items"][0]
+    assert cve["OpenFindings"] == cve["EvidenceRows"] == 3
+    assert cve["CvssScore"] is None and cve["KnownExploit"] is None
+    assert cve["CveMetadataStatus"] == "Unavailable"
+    exported = list(e.iter_export(request))
+    assert exported[0]["CveMetadataStatus"] == "Unavailable"
+    assert exported[0]["CvssScore"] is None and exported[0]["KnownExploit"] is None
+    detail = e.query({"view": "detail", "selection": {"type": "cve", "id": "CVE-2026-61359"}})
+    assert detail["detail"]["record"]["CveMetadataStatus"] == "Unavailable"
+    assert detail["detail"]["counts"]["activeFindings"] == 3
+    assert "metadata unavailable" in detail["texts"]["pivotSummary"]
+
+
 def test_machine_active_totals_exclude_pending_but_keep_all_evidence_and_distinct_cves(tmp_path):
     data = datasets(0)
     device = "example-workstation"

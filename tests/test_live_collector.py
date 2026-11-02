@@ -955,33 +955,153 @@ def test_full_catalog_fetches_only_distinct_included_cves_in_paged_batches(devic
         assert replayed[dataset] == actual[dataset]
 
 
-@pytest.mark.parametrize("case", ["missing", "unexpected", "http_error"])
+def test_missing_cve_refresh_keeps_all_findings_and_raw_replay(device_scoped_run, tmp_path, monkeypatch):
+    _, _, calls, _ = device_scoped_run
+    original_get = requests.Session.get
+    missed = False
+
+    def get(self, url, **kwargs):
+        nonlocal missed
+        result = original_get(self, url, **kwargs)
+        if urlsplit(url).path == "/api/vulnerabilities" and not missed:
+            result._content = b'{"value":[]}'
+            missed = True
+        return result
+
+    monkeypatch.setattr(requests.Session, "get", get)
+    progress = []
+    actual, statuses = collect_live(
+        Settings().defender_api_base_url, Credential(), progress.append, exclude_scale_sets=False,
+    )
+    assert len(actual["findings"]) == 5
+    assert {row["CveId"] for row in actual["findings"]} == {"CVE-2026-0001"}
+    assert {row["CveId"] for row in actual["vulnerabilities"]} == {"CVE-2026-0001"}
+    status = next(row for row in statuses if row["Endpoint"] == "vulnerabilities")
+    assert status["RequestedCveCount"] == status["RowCount"] == 1
+    assert status["PageCount"] == 2
+    assert len([url for url in calls if urlsplit(url).path == "/api/vulnerabilities"]) == 2
+    assert any("refreshing 1 missing CVE details; attempt 1/3" in message for message in progress)
+    run_folder = next((tmp_path / "output/raw").iterdir())
+    pages = sorted(run_folder.glob("vulnerabilities-page-*.json.gz"))
+    assert len(pages) == 2
+    assert json.loads(gzip.decompress(pages[0].read_bytes()))["value"] == []
+    replayed, _ = replay_raw_snapshot(run_folder)
+    for dataset in ("findings", "devices", "vulnerabilities"):
+        assert replayed[dataset] == actual[dataset]
+
+
+@pytest.mark.parametrize("case", ["unexpected", "invalid"])
 def test_referenced_catalog_errors_prevent_normalization_and_publication(device_scoped_run, monkeypatch, case):
     from vulnerability_view import dataprep_cli
 
-    payloads, _, _, _ = device_scoped_run
-    if case == "missing":
-        payloads["vulnerabilities"] = []
-    else:
-        original_collect = DefenderClient.collect
+    original_collect = DefenderClient.collect
 
-        def collect(self, endpoint, *args, **kwargs):
-            if endpoint.name == "vulnerabilities":
-                if case == "http_error":
-                    raise DefenderApiError("403 authorization denied")
-                return [{"id": "CVE-2099-9999"}], {"PageCount": 1}
-            return original_collect(self, endpoint, *args, **kwargs)
+    def collect(self, endpoint, *args, **kwargs):
+        if endpoint.name == "vulnerabilities":
+            if case == "invalid":
+                raise DefenderApiError("invalid collection page")
+            return [{"id": "CVE-2099-9999"}], {"PageCount": 1}
+        return original_collect(self, endpoint, *args, **kwargs)
 
-        monkeypatch.setattr(DefenderClient, "collect", collect)
+    monkeypatch.setattr(DefenderClient, "collect", collect)
     monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity"))
     monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
     monkeypatch.setattr(dataprep_cli, "_read_existing", lambda *args: {})
     monkeypatch.setattr(dataprep_cli, "_resolve_collection_mode", lambda *args: ("full", None))
-    monkeypatch.setattr(live_collector, "normalize_live", lambda *args, **kwargs: pytest.fail("Missing required CVE metadata must prevent normalization"))
-    monkeypatch.setattr(dataprep_cli, "_persist_live_run", lambda *args, **kwargs: pytest.fail("Missing required CVE metadata must prevent publication"))
+    monkeypatch.setattr(live_collector, "normalize_live", lambda *args, **kwargs: pytest.fail("Invalid metadata must prevent normalization"))
+    monkeypatch.setattr(dataprep_cli, "_persist_live_run", lambda *args, **kwargs: pytest.fail("Invalid metadata must prevent publication"))
 
-    with pytest.raises(RuntimeError, match="authorization denied|referenced-CVE response"):
+    with pytest.raises(RuntimeError, match="invalid collection page|referenced-CVE response"):
         dataprep_cli.main(["collect-live"])
+
+
+@pytest.mark.parametrize("case", ["missing", "http_error", "multiple_missing"])
+def test_metadata_gaps_keep_every_finding_and_replay_with_unknown_details(device_scoped_run, tmp_path, monkeypatch, caplog, case):
+    payloads, source_findings, _, _ = device_scoped_run
+    payloads["vulnerabilities"] = []
+    missing_ids = {"CVE-2026-0001"}
+    if case == "multiple_missing":
+        source_findings["device-1"][0]["cveId"] = "CVE-2026-61359"
+        missing_ids.add("CVE-2026-61359")
+    if case == "http_error":
+        original_get = requests.Session.get
+
+        def get(self, url, **kwargs):
+            result = original_get(self, url, **kwargs)
+            if urlsplit(url).path == "/api/vulnerabilities":
+                result.status_code = 403
+            return result
+
+        monkeypatch.setattr(requests.Session, "get", get)
+    actual, statuses = collect_live(Settings().defender_api_base_url, Credential())
+    assert len(actual["findings"]) == 5
+    assert {row["CveId"] for row in actual["findings"]} == missing_ids
+    assert all(row["FindingStatus"] == "Open" and row["Severity"] == "High" for row in actual["findings"])
+    assert all(row["CveMetadataStatus"] == "Unavailable" for row in actual["findings"])
+    assert all(row["CvssScore"] is None and row["PublicExploitAvailable"] is None for row in actual["findings"])
+    assert all(row["ExploitabilityLevel"] == "Unknown" for row in actual["findings"])
+    assert {row["CveId"] for row in actual["vulnerabilities"]} == missing_ids
+    assert all(row["CveMetadataStatus"] == "Unavailable" for row in actual["vulnerabilities"])
+    status = next(row for row in statuses if row["Endpoint"] == "vulnerabilities")
+    assert status["Status"] == "PartialSuccess" and status["Required"] is False
+    assert status["MissingCveIds"] == sorted(missing_ids)
+    assert status["MissingCveCount"] == len(missing_ids)
+    assert "metadata" in caplog.text.lower()
+    run_folder = next((tmp_path / "output/raw").iterdir())
+    replayed, replay_statuses = replay_raw_snapshot(run_folder)
+    for dataset in ("findings", "devices", "vulnerabilities"):
+        assert replayed[dataset] == actual[dataset]
+    replay_status = next(row for row in replay_statuses if row["Endpoint"] == "vulnerabilities")
+    assert replay_status["MissingCveIds"] == sorted(missing_ids)
+    assert replay_status["Status"] == "PartialSuccess"
+    if case == "http_error":
+        assert not list(run_folder.glob("vulnerabilities-page-*.json.gz"))
+
+
+@pytest.mark.parametrize("restored", [False, True])
+def test_delta_retries_unavailable_baseline_metadata_and_keeps_findings(device_scoped_run, tmp_path, monkeypatch, restored):
+    payloads, source_findings, calls, _ = device_scoped_run
+    for rows in source_findings.values():
+        for row in rows:
+            row["productVersion"] = row["id"]
+    payloads["vulnerabilities"] = []
+    first_snapshot = live_collector.datetime.fromisoformat("2026-10-25T00:30:00+00:00")
+    previous, _ = collect_live(Settings().defender_api_base_url, Credential(), snapshot=first_snapshot)
+    payloads["vulnerability_changes"] = []
+    if restored:
+        payloads["vulnerabilities"] = [{"id": "CVE-2026-0001", "severity": "High", "cvssV3": 8.2}]
+    original_get = requests.Session.get
+
+    def get(self, url, **kwargs):
+        result = original_get(self, url, **kwargs)
+        query = parse_qs(urlsplit(url).query)
+        if query.get("$filter", [""])[0].startswith("updatedOn ge "):
+            result._content = b'{"value":[]}'
+        return result
+
+    monkeypatch.setattr(requests.Session, "get", get)
+    before = len(calls)
+    data, statuses = collect_live(
+        Settings().defender_api_base_url, Credential(),
+        snapshot=live_collector.datetime.fromisoformat("2026-10-26T00:30:00+00:00"),
+        vulnerability_collection_mode="delta",
+        previous_findings=previous["findings"], previous_vulnerabilities=previous["vulnerabilities"],
+        previous_snapshot=first_snapshot,
+    )
+    assert len(data["findings"]) == 5
+    assert all(row["FindingStatus"] == "Open" for row in data["findings"])
+    expected = "Available" if restored else "Unavailable"
+    assert all(row["CveMetadataStatus"] == expected for row in data["findings"])
+    assert all(row["CveMetadataStatus"] == expected for row in data["vulnerabilities"])
+    assert all(row["CvssScore"] == (8.2 if restored else None) for row in data["findings"])
+    catalog_calls = [parse_qs(urlsplit(url).query) for url in calls[before:] if urlsplit(url).path == "/api/vulnerabilities"]
+    assert any(query.get("$filter") == ["id eq 'CVE-2026-0001'"] for query in catalog_calls)
+    detail_status = next(row for row in statuses if row["Endpoint"] == "vulnerability_delta_details")
+    assert detail_status["Status"] == ("Success" if restored else "PartialSuccess")
+    run_folder = tmp_path / "output/raw/live-20261026T003000Z"
+    replayed, _ = replay_raw_snapshot(run_folder)
+    for dataset in ("findings", "devices", "vulnerabilities"):
+        assert replayed[dataset] == data[dataset]
 
 
 def test_no_findings_skips_catalog_api_but_preserves_replay(device_scoped_run, tmp_path):

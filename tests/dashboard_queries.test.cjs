@@ -119,6 +119,32 @@ test("initial load pins metadata and requests only the summary, never full datas
   assert.equal(app.elements.get("loadingNotice").hidden,true);
 });
 
+test("missing CVE metadata shows unavailable details and unknown scores without hiding findings",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  const missing={CveId:"CVE-2026-61359",CveMetadataStatus:"Unavailable",Severity:"High",CvssScore:null,PublicExploitAvailable:null,VerifiedExploitAvailable:null};
+  app.context.missing=missing;
+  assert.equal(app.run('cell("CvssScore",null,missing)'),"Unknown");
+  assert.equal(app.run('cell("KnownExploit",null,missing)'),"Unknown");
+  assert.match(app.run('cell("CveMetadataStatus","Unavailable",missing)'),/Details unavailable/);
+  assert.match(app.run('cveDetailStatus(missing)'),/All findings are retained/);
+  assert.match(app.run('cveSummaryText(missing,missing)'),/CVSS Unknown/);
+  assert.match(app.run('cveSummaryText(missing,missing)'),/Exploit information unknown/);
+  assert.ok(!app.run('cveSummaryText(missing,missing)').includes("No known exploit"));
+  assert.equal(app.run('cveDetailCards(missing,missing).find(([,name])=>name==="CVSS")[0]'),"Unknown");
+  assert.equal(app.run('cveDetailCards(missing,missing).find(([,name])=>name==="EPSS")[0]'),"Unknown");
+  const row=app.run('cveRowsFor([{...missing,DeviceId:"device-1",FindingStatus:"Open"}])[0]');
+  assert.equal(row.OpenFindings,1);
+  assert.equal(row.KnownExploit,null);
+  app.run('activateView("overview")');
+  app.query().at(-1).resolve(app.payload({
+    tables:{findingsTable:{columns:["CveId","CvssScore","CveMetadataStatus"],items:[missing],total:1,offset:0,limit:100,action:"cve"}},
+  }));await tick();
+  assert.match(app.elements.get("findingsTable").innerHTML,/CVE-2026-61359/);
+  assert.match(app.elements.get("findingsTable").innerHTML,/Details unavailable/);
+  assert.match(app.elements.get("findingsTable").innerHTML,/Unknown/);
+});
+
 test("navigation lazily requests just the selected view and ignores aborted stale responses",async()=>{
   const app=fixture();await tick();
   const first=app.query()[0];

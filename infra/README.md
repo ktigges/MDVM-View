@@ -335,11 +335,34 @@ per-run plan. A host restart can replay saved responses without downloading them
 from Defender again. The local disk cache is only an optimization.
 
 There is one collection instance, `vulnerability-collection`. A normal, full,
-or scheduled trigger retains an active run and resumes a failed run rather
-than starting over. A full request does not change the scope of an already
+or scheduled trigger retains an active run. For a failed run, it submits a new
+Durable execution under the same instance ID with the original run input and
+a reset consecutive-failure counter. The failed runtime execution/history is
+replaced, while immutable DVM evidence, checkpoints, frozen policy/baseline,
+run ID, and snapshot time remain unchanged. Completed work is reused.
+Durable rewind is not used because this orchestration uses durable timers.
+A full request does not change the scope of an already
 active/failing run; let that run finish before requesting a new forced full run.
 Inspect `check-runs --progress`, correct permission/configuration failures, and
-invoke again to resume. Failed required endpoints and integrity conflicts
+invoke again to request recovery. Submission is not proof of execution;
+verify state and progress advance. Missing original run identity is an explicit
+recovery failure, not permission to start a fresh snapshot.
+Incomplete CVE metadata triggers up to three targeted refresh attempts for only
+the missing IDs. Attempt responses use separate append-only checkpoint paths,
+retain the original evidence, and share activity request/time limits and
+throttling cooldowns. Replay does not reset that retry budget. Findings remain
+intact. Missing details and metadata HTTP/transport availability failures are
+non-blocking enrichment gaps: the run publishes as `PartialSuccess` after required
+findings and files pass verification. Endpoint status records `MissingCveCount`,
+`MissingCveIds`, and the issue. Curated findings and CVE details have
+`CveMetadataStatus=Unavailable`, with null CVSS/exploit data shown as unknown in
+the dashboard. No finding is dropped, marked fixed, or assigned fabricated
+metadata; no raw response is invented for a failed request.
+Recovery of an older missing-CVE failure can reuse its retained responses and
+complete with warnings. Later full/delta runs use new immutable request paths
+and retry unavailable metadata, including unavailable baseline placeholders.
+Unexpected IDs, malformed responses, and corrupt evidence still fail explicitly.
+Failed required endpoints and integrity conflicts
 remain explicit failures; do not clear checkpoints to hide them.
 
 Raw collection, disk-backed processing, file verification, and pointer

@@ -107,20 +107,27 @@ the endpoint name and page number:
 | `GET /api/machines/SoftwareVulnerabilityChangesByMachine?sinceTime=<prior-snapshot>` | Delta run | New, fixed, and updated device vulnerability relationships since the prior published snapshot | `vulnerability_changes-page-####.json.gz` |
 | `GET /api/vulnerabilities?$filter=id eq '<CVE>' ...` | Full vulnerability run, after findings | Details only for distinct CVEs referenced by included-device findings, in batches of up to 50 IDs with paging; no unfiltered catalog download | `vulnerabilities-page-####.json.gz`, numbered continuously across batches |
 | `GET /api/vulnerabilities?$filter=updatedOn ge <prior-snapshot>` | Delta run | CVE catalog rows changed since the prior snapshot | `vulnerabilities-page-####.json.gz` |
-| `GET /api/vulnerabilities?$filter=id eq '<CVE>' ...` | Delta run only when needed | Details for a CVE referenced by a changed finding but missing from the reconstructed catalog | `vulnerability_delta_details--#-page-####.json.gz` |
+| `GET /api/vulnerabilities?$filter=id eq '<CVE>' ...` | Delta run only when needed | Details for a referenced CVE missing from the reconstructed catalog, including unavailable baseline placeholders | `vulnerability_delta_details-page-####.json.gz` |
 | `GET /api/recommendations` | Every run | Defender recommendation name, product, category, remediation text, exposure impact, score impact, status, and exposed-machine count | `recommendations-page-####.json.gz` |
 | `GET /api/recommendations/{id}/machineReferences` | Based on enrichment mode | Machines affected by a recommendation when the relationship cannot be derived locally, or for every applicable recommendation during manual full enrichment | `recommendation_machines--<id>-page-####.json.gz` |
 | `GET /api/remediationTasks` | Only when experimental endpoints are enabled | Supporting Defender remediation-task evidence | `remediation_tasks-page-####.json.gz` |
 
 Full runs collect machine inventory, apply configured scale-set exclusions, and
 collect device-scoped findings before fetching the distinct referenced CVE
-details and recommendations. Missing requested CVEs or unexpected catalog IDs
-abort publication. Each CVE is requested in only one batch regardless of the
+details and recommendations. Missing requested CVE metadata is retried up to
+three times, then reported as non-blocking enrichment warnings. Metadata HTTP
+and transport availability failures also preserve findings and permit publication
+with `PartialSuccess`. Unexpected catalog IDs and malformed/corrupt evidence
+still abort publication. Each CVE is requested in only one batch regardless of the
 number of findings that reference it; full batches still follow all pages.
 A failed device query aborts publication rather than
 silently skipping that device. Device names appear in progress logs, but Defender
-machine IDs are used in filters. Dashboard schemas and delta collection are
-unchanged. This serial per-device path still depends on API throughput and the
+machine IDs are used in filters. `CveMetadataStatus=Unavailable` identifies
+curated placeholders and affected findings; unknown CVSS, EPSS, and exploit
+information is not represented as zero or "no exploit." Delta runs retry these
+placeholders on later snapshots. Raw history remains append-only, and the
+current pointer advances only after bundle verification.
+This serial per-device path still depends on API throughput and the
 Function execution limit.
 
 Targeted recommendation enrichment avoids repeating expensive API calls:
