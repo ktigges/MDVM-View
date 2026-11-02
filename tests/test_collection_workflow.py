@@ -4,6 +4,7 @@ import hashlib
 import logging
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -69,16 +70,45 @@ def test_worker_failure_preserves_error_output_and_exit_code(monkeypatch, caplog
     assert "ValueError: invalid checkpoint" in caplog.text
 
 
-def test_worker_log_forwarding_preserves_timeout(monkeypatch):
+@pytest.mark.parametrize("stage", ["collect", "process"])
+def test_worker_is_not_killed_at_the_former_wall_clock_deadline(monkeypatch, stage):
     popen = subprocess.Popen
-    monkeypatch.setattr(collection_workflow, "WORKER_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr(collection_workflow, "WORKER_TIMEOUT_SECONDS", 0.05, raising=False)
 
     def worker(command, **kwargs):
-        return popen([sys.executable, "-c", "import time; time.sleep(10)"], **kwargs)
+        script = (
+            "import json, pathlib, sys, time; time.sleep(0.15); "
+            "pathlib.Path(sys.argv[1]).write_text(json.dumps({'done': True}))"
+        )
+        return popen([sys.executable, "-c", script, command[-1]], **kwargs)
 
     monkeypatch.setattr(collection_workflow.subprocess, "Popen", worker)
-    with pytest.raises(subprocess.TimeoutExpired):
-        collection_workflow.execute_worker({"stage": "collect"})
+    started = time.monotonic()
+    assert collection_workflow.execute_worker({"stage": stage}) == {"done": True}
+    assert time.monotonic() - started >= 0.15
+
+
+def test_worker_is_stopped_if_the_supervisor_is_interrupted(monkeypatch):
+    popen = subprocess.Popen
+    children = []
+
+    def worker(command, **kwargs):
+        child = popen(
+            [sys.executable, "-c", "import time; print('INFO [processing] working', flush=True); time.sleep(10)"],
+            **kwargs,
+        )
+        children.append(child)
+        return child
+
+    def interrupt(*args, **kwargs):
+        raise RuntimeError("Supervisor interrupted")
+
+    monkeypatch.setattr(collection_workflow.subprocess, "Popen", worker)
+    monkeypatch.setattr(collection_workflow.logging, "log", interrupt)
+    with pytest.raises(RuntimeError, match="Supervisor interrupted"):
+        collection_workflow.execute_worker({"stage": "process"})
+    assert children[0].returncode is not None
+    assert children[0].returncode != 0
 
 
 class PlanStore:

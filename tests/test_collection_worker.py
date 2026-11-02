@@ -2,6 +2,7 @@ import gzip
 import hashlib
 import json
 import logging
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -64,6 +65,44 @@ def plan():
         "settings": asdict(Settings()), "baseline": None,
         "collection": "full", "enrichment": "targeted", "pageSize": 2500,
     }
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_processing_heartbeat_reports_progress_without_a_deadline_and_stops(monkeypatch, caplog, interrupted):
+    monkeypatch.setattr(collection_worker, "PROCESSING_HEARTBEAT_SECONDS", 0.01)
+    observed = threading.Event()
+    log = collection_worker.logging.info
+
+    def capture(message, *args, **kwargs):
+        log(message, *args, **kwargs)
+        if "heartbeat" in message:
+            observed.set()
+
+    monkeypatch.setattr(collection_worker.logging, "info", capture)
+    monitors = []
+
+    def run():
+        with collection_worker._processing_progress(plan()["runId"]) as progress:
+            progress("stage=normalize step=replay rows=123 https://example.invalid?secret=value")
+            monitors.extend(thread for thread in threading.enumerate() if thread.name == "dvm-processing-heartbeat")
+            assert observed.wait(3), "A blocked processing step must still emit heartbeats"
+            if interrupted:
+                raise RuntimeError("Processing interrupted")
+
+    with caplog.at_level(logging.INFO):
+        if interrupted:
+            with pytest.raises(RuntimeError, match="Processing interrupted"):
+                run()
+        else:
+            run()
+    assert "executionDeadline=none" in caplog.text
+    assert "heartbeat runId=live-20261023T160000Z" in caplog.text
+    assert "cpuSeconds=" in caplog.text
+    assert "lastProgressAgeSeconds=" in caplog.text
+    assert "stage=normalize step=replay rows=123" in caplog.text
+    assert "secret" not in caplog.text
+    assert "https://" not in caplog.text
+    assert monitors and all(not thread.is_alive() for thread in monitors)
 
 
 def test_worker_collect_uses_frozen_snapshot_and_yields_small_progress(monkeypatch, tmp_path):

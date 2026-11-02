@@ -1118,6 +1118,13 @@ synchronizes Function triggers. Isolated activity workers use temporary writable
 directories and an expendable local response cache under `/tmp`; neither is
 authoritative history. Immutable remote API checkpoints, frozen run plans,
 completed stage outputs, and Durable runtime state survive worker restarts.
+The packaged host uses `functionTimeout: "-1"` for the Always On Dedicated
+collector, and isolated workers no longer have a 20-minute execution deadline.
+API request timeouts and retry budgets still apply. Processing emits 60-second
+heartbeats plus substep/row-count telemetry; see
+[processing diagnostics](docs/troubleshooting.md#processing-substeps-and-heartbeats).
+An interrupted processing stage resumes from its preceding committed stage,
+not an intra-stage finding offset.
 
 ## Run the deployed collector
 

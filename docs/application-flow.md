@@ -188,6 +188,15 @@ It performs the following steps:
 8. **Calculate file size and SHA-256.** Those values are written into the run
    manifest and verified again when the Web App downloads a dataset.
 
+Hosted processing commits an immutable continuation after each normalization,
+reconciliation, event, summary, history, and bundle stage. Completed stages
+survive loss of the worker's local files; an interrupted stage is replayed from
+the preceding checkpoint. Processing has no application wall-clock kill timer,
+and the Always On Dedicated Function host uses `functionTimeout: "-1"`.
+Network request timeouts and retry budgets are independent safeguards.
+`[processing]` traces expose stage/substep timings, input/output counts,
+compressed bytes, and 60-second heartbeats while long-running work continues.
+
 ## 5. What files are created
 
 Each run has a unique ID such as:

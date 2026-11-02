@@ -52,14 +52,18 @@ def test_every_stage_survives_complete_worker_loss_and_matches_single_pass(work,
     expected = process_archived_run(raw, settings, baseline, policy, work / "expected", snapshot=SNAPSHOT, run_id=RUN_ID)
     durable = DurableArtifacts(work / "durable")
     state = None
+    progress = []
     for index, stage in enumerate(STAGES[:-1]):
         worker = work / f"worker-{index}"
         state = advance_archived_run(
             raw, settings, baseline if state is None else {"do-not-read": iter(())},
             policy, worker, snapshot=SNAPSHOT, run_id=RUN_ID, state=state,
             save_artifact=durable.save, load_artifact=durable.load, input_identity="frozen-inputs",
+            progress_callback=progress.append,
         )
         assert state["nextStage"] == STAGES[index + 1]
+        assert f"stage={stage} step=start-stage" in progress
+        assert f"stage={stage} step=persist-checkpoint nextStage={state['nextStage']}" in progress
         assert len(json.dumps(state)) < 2000
         shutil.rmtree(worker)
     restored = materialize_prepared_bundle(state, work / "restored", load_artifact=durable.load)
@@ -67,6 +71,8 @@ def test_every_stage_survives_complete_worker_loss_and_matches_single_pass(work,
     assert json.loads((restored / "manifest.json").read_text()) == json.loads((expected / "manifest.json").read_text())
     for basename in DATASET_FILES.values():
         assert (restored / "curated" / f"{basename}.json.gz").read_bytes() == (expected / "curated" / f"{basename}.json.gz").read_bytes()
+    assert any("step=replay-raw [replay] endpoint=machine_vulnerabilities rows=" in message for message in progress)
+    assert any("step=write-dataset section=datasets dataset=findings rows=" in message for message in progress)
 
 
 def test_retries_reuse_content_addressed_artifacts_and_do_not_repeat_normalization(work, monkeypatch):
@@ -88,10 +94,11 @@ def test_retries_reuse_content_addressed_artifacts_and_do_not_repeat_normalizati
     assert outputs[0] == outputs[1]
 
 
-def test_stage_failure_does_not_commit_a_continuation_and_can_retry(work):
+@pytest.mark.parametrize("stage", ["normalize", "reconcile"])
+def test_stage_failure_does_not_commit_a_continuation_and_can_retry(work, stage):
     raw, policy = setup_run(work)
     durable = DurableArtifacts(work / "durable")
-    state = advance_archived_run(
+    state = None if stage == "normalize" else advance_archived_run(
         raw, Settings(), {}, policy, work / "first", snapshot=SNAPSHOT, run_id=RUN_ID,
         save_artifact=durable.save, load_artifact=durable.load,
     )
@@ -109,7 +116,7 @@ def test_stage_failure_does_not_commit_a_continuation_and_can_retry(work):
         raw, Settings(), {}, policy, work / "resumed", snapshot=SNAPSHOT, run_id=RUN_ID,
         state=state, save_artifact=durable.save, load_artifact=durable.load,
     )
-    assert resumed["nextStage"] == "finding-events"
+    assert resumed["nextStage"] == ("reconcile" if stage == "normalize" else "finding-events")
 
 
 def test_checkpoint_corruption_and_policy_drift_are_rejected(work):

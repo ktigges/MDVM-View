@@ -41,10 +41,9 @@ def async_handler(builder):
     return inspect.unwrap(builder._function.get_user_function())
 
 
-def test_function_execution_timeout_is_four_hours():
+def test_function_execution_has_no_host_wall_clock_deadline():
     host = json.loads(Path(function_app.__file__).with_name("host.json").read_text())
-    hours, minutes, seconds = map(int, host["functionTimeout"].split(":"))
-    assert hours * 3600 + minutes * 60 + seconds == 14400
+    assert host["functionTimeout"] == "-1"
 
 
 def test_host_logging_suppresses_coordination_noise_but_keeps_collection_progress():

@@ -307,7 +307,10 @@ consumption-driven scale-in; it does not prevent maintenance, deployment, or
 failure-related restarts. Billing is continuous rather than per execution.
 The schedule and append-only publication contract are unchanged. Collection now
 uses checkpointed Durable activities rather than one invocation carrying the
-whole run. The four-hour host timeout is not the overall workflow deadline.
+whole run. The packaged host uses `functionTimeout: "-1"` and isolated workers
+have no wall-clock kill timer. Large processing stages can run to completion
+instead of failing at an application-imposed 20-minute deadline. Individual API
+request timeouts, retry budgets, and cooperative collection yields remain.
 
 ### Resumable collection deployment and recovery
 
@@ -376,10 +379,15 @@ Processing also checkpoints normalization, reconciliation, events, summaries,
 and bundle preparation to immutable, verified intermediate artifacts. A fresh
 worker restores the previous stage instead of repeating completed processing.
 Resume is at **stage boundaries**, not at every finding: an interrupted stage
-restarts that stage. Individual processing stages still scan their whole input
-and the isolated worker has a 20-minute safety timeout. This is not an
-unlimited-size or unlimited-disk guarantee; measure larger datasets and
-histories before deploying beyond the tested scale.
+restarts that stage. Individual processing stages still scan their whole input,
+without an elapsed-time cutoff. `[processing]` traces include raw/baseline
+restoration, dataset counts, compressed bytes, replay/normalization row progress,
+artifact transfer, bundle verification, and checkpoint commits. A heartbeat
+every 60 seconds reports activity elapsed time, CPU time, last-progress age, and
+the latest substep even while a transfer or transform is blocked. A heartbeat is
+evidence of a live worker, not of advancing rows or successful publication.
+Platform restarts and finite memory/disk capacity still apply; stage-boundary
+recovery and publication integrity checks are unchanged.
 
 Durability prevents lost API work; it does not remove Defender quotas, guarantee
 a completion time, or make Dedicated hosting scale to zero. Larger CVE filter
