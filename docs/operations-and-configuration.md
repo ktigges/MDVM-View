@@ -1,6 +1,6 @@
 # Operations and monitoring
 
-> **Last modified:** 2026-09-28
+> **Last modified:** 2026-11-03
 > **Purpose:** Run and monitor collection, confirm publication, manage dashboard access, and understand runtime configuration.
 
 For initial installation use the [Azure deployment guide](../DEPLOY.md). For a
@@ -36,6 +36,40 @@ CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
 
 Each successful invocation creates a new immutable run and advances only the
 current manifest pointer after validation.
+
+### Export the latest published snapshot for analysis
+
+In either deployment menu select **7 → 13** (Operations and diagnostics →
+Export latest published snapshot), or run:
+
+```powershell
+.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli export-latest-snapshot
+```
+
+On macOS/Linux use `.venv/bin/python` instead. No application deployment or new
+collection is required. The signed-in Azure CLI identity needs Storage Blob Data
+Reader access to the history and current-pointer containers, plus network access
+to the storage account. Management-plane Reader alone does not grant blob reads.
+
+The command reads `current/manifest.json` once, pins that completed run, and
+streams every referenced raw/curated/policy file to a ZIP under
+`output/snapshots/<UTC-time>-<unique-id>/`. It checks each file's compressed size
+and SHA-256 before publishing the local ZIP; failure removes the partial ZIP and
+returns an error. Repeated exports use new folders. Azure blobs, retained history,
+and the current pointer are never modified.
+
+The ZIP preserves each blob's relative path and contains the pinned
+`manifest.json` plus `export-summary.json` with verified bytes/files and
+manifest-reported dataset row counts. Use these to inspect data coverage,
+schemas, and contents or build a local reporting reproduction. This is the latest
+**published** snapshot, not an in-progress collection; it may differ from the
+snapshot currently cached by a dashboard worker. It excludes unlisted checkpoints/intermediates,
+other run bundles, live collaboration state, and Web App timing diagnostics.
+Publication and hashes prove integrity, not semantic uniqueness or report speed.
+
+**The ZIP contains sensitive, unredacted customer/device/vulnerability data.**
+Keep it in approved local storage and review it before sharing; nothing is
+uploaded automatically.
 
 ### Update collector or dashboard code
 
@@ -237,7 +271,12 @@ runtime setting.
 
 ### Dashboard server settings
 
-The dashboard runs as a same-origin FastAPI application. The browser always requests `/api/data/<dataset>.json`; only the server knows whether those rows came from local files or Azure Storage.
+The dashboard runs as a same-origin FastAPI application. Normal browser
+navigation selects a ready snapshot with `GET /api/dashboard/snapshot`, then
+uses `POST /api/dashboard/query` for aggregates and bounded table pages.
+Complete findings and event histories stay on the server. The
+`/api/data/<dataset>.json` routes remain compatibility/full-dataset routes,
+not the ordinary browser loading path.
 
 | Mode | Credential | User authentication | Data location | Intended use |
 |---|---|---|---|---|
@@ -245,7 +284,22 @@ The dashboard runs as a same-origin FastAPI application. The browser always requ
 | `DASHBOARD_DATA_SOURCE=azure` locally | Developer credential | `DASHBOARD_AUTH_ENABLED=false` | Current manifest and immutable curated blobs | Production-like data integration testing without deployment |
 | `DASHBOARD_DATA_SOURCE=azure` in App Service | Web App managed identity | `DASHBOARD_AUTH_ENABLED=true` plus App Service Authentication | Current manifest and immutable curated blobs | Hosted dashboard |
 
-Azure mode rejects incomplete manifests and verifies each requested curated blob's compressed size and SHA-256 before returning it. The Web App refreshes the current pointer after `DASHBOARD_CACHE_SECONDS` and caches only requested datasets for the active immutable run. A new run ID invalidates those dataset entries. This avoids downloading large optional datasets during the initial dashboard load and never writes to storage.
+Azure mode rejects incomplete manifests, streams required curated blobs to
+local disk, verifies compressed sizes and SHA-256, and indexes JSON rows
+without retaining complete finding/event lists in memory. FastAPI startup
+prepares all nine default views before accepting traffic. A background watcher
+detects new snapshots using `DASHBOARD_CACHE_SECONDS` and prepares their default
+views while continuing to serve the previous ready snapshot.
+
+Each Uvicorn process owns a disposable temporary index cache (at most two
+snapshots, 8 GiB total), bounded response caches, two workspace-query threads,
+and one report thread. Process restart rebuilds the temporary indexes; browser
+refresh does not. Additional processes/instances multiply this work and resource
+use. Data reads/cache eviction never modify retained Azure history; optional
+workflow actions and branding have separate explicit write APIs.
+
+See [Web App startup, memory, caches, and handoff](application-flow.md#7-web-app-startup-indexing-memory-and-caches)
+for exact bounds, invalidation, restart behavior, and diagnostic interpretation.
 
 Available operational endpoints are:
 
@@ -254,6 +308,9 @@ GET /api/health
 GET /api/auth
 GET /api/diagnostics
 GET /api/status
+GET /api/dashboard/snapshot
+POST /api/dashboard/query
+POST /api/dashboard/export
 GET /api/sla-policy
 GET /api/recommendation-tracking
 PUT /api/recommendation-tracking
@@ -268,10 +325,14 @@ Service Health Check uses it to verify that the FastAPI process can respond
 without requiring a user session or forcing an Azure Storage read. All other
 dashboard APIs remain protected by App Service Authentication.
 
-`GET /api/diagnostics` reports bounded, in-process request timings, current
-data-loading activity, cached dataset names, manifest state, and recent storage
-operations. It requires the same authenticated access as the dashboard and does
-not expose tokens, user identities, query strings, or vulnerability records.
+`GET /api/diagnostics` reports bounded request timings, manifest state, and
+legacy data-store activity, plus `dashboardQueries` for retained local
+snapshots, byte usage, active queries, and `preparation` readiness/duration/error
+state. Legacy cached-dataset names are not an inventory of query indexes.
+It requires the same authenticated access as the dashboard and does not expose
+tokens, user identities, query strings, or vulnerability records. During
+initial startup preparation, use App Service logs because the application
+cannot yet serve diagnostics requests.
 
 ### Azure Functions host settings
 

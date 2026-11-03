@@ -1186,7 +1186,11 @@ def test_cost_calculator_is_local_only():
     assert "'dashboard/calculator.html'" in deploy_script
     assert "'dashboard/tools/*'" in deploy_script
     assert 'id="tfvarsFile"' in calculator
-    assert 'id="functionMemory"' in calculator
+    assert 'id="functionMemory"' not in calculator
+    assert 'id="collectorHourlyRate"' in calculator
+    assert 'id="billingHours"' in calculator
+    assert 'id="manifestFile"' in calculator
+    assert 'id="publishedFiles"' in calculator
     assert 'id="appServiceTier"' in calculator
     assert 'id="existingHistoryGib"' in calculator
     assert 'id="runSizeGib"' in calculator
@@ -1194,7 +1198,10 @@ def test_cost_calculator_is_local_only():
     assert 'id="modeledRetentionDays"' in calculator
     assert 'id="immutabilityDays"' in calculator
     assert 'id="annualTotal"' in calculator
-    assert 'id="writesPerRun"' in calculator
+    assert 'id="extraWritesPerRun"' in calculator
+    assert 'id="extraReadsPerRun"' in calculator
+    assert 'id="checkpointGib"' in calculator
+    assert 'id="failedRunGib"' in calculator
     assert 'id="workflowEvents"' in calculator
     assert 'id="runtimeStorageGib"' in calculator
     assert 'id="logsPerCollectionGib"' in calculator
@@ -1202,10 +1209,15 @@ def test_cost_calculator_is_local_only():
     assert 'id="egressGib"' in calculator
     assert 'id="licenseCost"' in calculator
     assert "collectionsFromSchedule" in calculator
-    assert 'value="25.55" selected>B2' in calculator
-    assert 'id="collectionsPerDay" type="number" min="0" step=".1" value="2"' in calculator
+    assert 'value="B2" selected>B2' in calculator
+    assert 'id="collectionsPerDay" type="number" min="0" step=".1" value="1"' in calculator
+    assert 'value("collectorHourlyRate")*value("billingHours")' in calculator
+    assert 'readLocalFile("manifestFile","manifestStatus",loadManifest)' in calculator
+    assert "reader.readAsText(file)" in calculator
+    assert "fetch(" not in calculator
+    assert "XMLHttpRequest" not in calculator
     assert "The application does not delete retained raw or curated evidence." in calculator
-    assert "The bounded option changes estimates only; it does not configure deletion." in calculator
+    assert "The bounded option is hypothetical only: it never configures deletion" in calculator
     assert "[Azure cost calculator](tools/calculator.html)" in readme
     assert "Every deployed Azure resource can incur charges." in readme
     assert "[Azure Pricing Calculator](https://azure.microsoft.com/pricing/calculator/)" in readme

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-> **Last modified:** 2026-10-12
+> **Last modified:** 2026-11-03
 > **Purpose:** Diagnose local collection, Azure Function, Web App, storage, authentication, and data-publication problems.
 
 Start with the smallest read-only check that can distinguish the failure.
@@ -239,9 +239,19 @@ Kudu status `4` is successful and `3` is failed.
 | UI code changed but the old layout remains | Confirm the newest deployment succeeded, then reload. Deployment packages stamp a new UI revision and static assets require revalidation. |
 | UI revision did not change | Check the `Packaged Web App UI revision ...` deployment output and the latest Kudu deployment status. |
 | Data timestamp did not change after Web App deployment | Expected. Publishing UI code does not run the collector. Wait for the Function schedule or intentionally invoke one run after confirming none is active. |
-| Changes appear several minutes late | The verified Azure data cache can retain the current bundle for `dashboard_cache_seconds`. |
+| Changes appear several minutes late | Current-manifest detection follows `DASHBOARD_CACHE_SECONDS` (hosted default 300 seconds), then the server must prepare the replacement snapshot. New sessions select the replacement only when it is ready; existing sessions remain pinned until reload. |
+| Initial deployment/restart shows 502/503 or waits before the dashboard opens | The process downloads/indexes data and prepares all nine default views before serving application traffic. Inspect App Service startup/container logs; diagnostics cannot respond before startup finishes. The 1,800-second container startup allowance is not a guaranteed preparation time. A preparation exception fails startup explicitly. |
+| A new daily dataset is published but the dashboard still shows the previous run | Inspect `dashboardQueries.preparation` in `/api/diagnostics`. The old ready run remains served while the replacement prepares or if it fails. Compare the ready snapshot ID with `retainedSnapshots[]` run IDs and the Storage pointer, then reload after successful handoff. Do not rerun collection just to warm the Web App. |
+| New snapshot fails with disk-budget or insufficient-space errors | Each process permits at most two snapshots and 8 GiB of local snapshot files, with extra free space needed for SQLite scratch work. Downloaded gzip files and indexes both count. A protected ready snapshot cannot be evicted to make a replacement appear successful. Check real local bytes/free disk and worker count; do not delete Azure history. |
+| Navigation/filtering shows HTTP 202 repeatedly | This means a background query is preparing, not that collection is running. The browser polls the same logical query every two seconds. Check server errors/resource pressure if it does not complete. Two workspace threads and one report thread share a 16-job bound per process; saturation can return 503 with `Retry-After`. |
+| Dashboard asks to reload with HTTP 409 | Its pinned snapshot was evicted, local data changed, or a workflow write targeted an outdated snapshot. Reload to select the ready run; do not merge old and new results. |
+| Startup cost returns after every process restart | Expected for the current process-owned temporary indexes. They are reused across requests, not discovered/reused by a new process. Always On reduces idle unloading but does not prevent restarts. |
 | Some dashboard datasets load but others return 500 or 50x | Check the live App Service plan and Always On setting before blaming the data. The deployment baseline is one B2 instance, one Uvicorn worker, and Always On enabled. Use deployment-menu choice 2 to review and restore infrastructure drift. Use `/api/diagnostics` and App Service logs to identify the failed dataset or Storage operation. Retrying can warm part of the cache, but that does not fix capacity or configuration drift. |
 | The hosted dashboard appears to work only after a developer runs `az login` locally | The hosted Web App must not use the workstation login. Browser users authenticate through App Service Authentication, and the Web App reads Storage with its managed identity. Check the Web App identity, `AZURE_CLIENT_ID`, and Storage Blob Data Reader assignment. Local `az login` is used only by deployment commands and locally hosted development. |
+
+For the complete startup sequence, cache budgets, memory/disk distinctions,
+and browser/server responsibilities, see
+[Web App runtime](application-flow.md#7-web-app-startup-indexing-memory-and-caches).
 
 ## 9. API retrieval and performance checks
 
@@ -264,15 +274,18 @@ worker instances can report different values. Health responses use
 |---|---|
 | `GET /api/health` | Public liveness endpoint used by App Service Health Check. It confirms server availability and non-secret configuration without forcing a dataset download. |
 | `GET /api/auth` | Confirms the current dashboard identity and authentication state. |
-| `GET /api/diagnostics` | Reports bounded request timings, active and recent Azure Storage operations, pending requests, manifest-cache lifetime, and cached dataset names. It returns no dataset rows or identity details. |
+| `GET /api/diagnostics` | Reports request/legacy data-store diagnostics plus `dashboardQueries` local snapshot sizes, active queries, retention limits, and preparation status/duration/errors. Legacy cached dataset names do not describe query indexes. It returns no dataset rows or identity details. |
 | `GET /api/status` | Reads the local run status or retrieves the Azure current manifest and reports its run ID, snapshot time, source, and Secure Score availability. |
+| `GET /api/dashboard/snapshot` | Selects the ready dashboard snapshot and returns its identity, retained SLA policy, and notices; it may lag the Storage pointer during preparation. |
+| `POST /api/dashboard/query` | Normal browser query path: snapshot-pinned aggregates and bounded pages, maximum 200 rows per table page. Async requests can return 202 before completion; expired snapshots return 409. |
+| `POST /api/dashboard/export` | Streams snapshot-pinned CSV rows. Does not modify Azure history. |
 | `GET /api/sla-policy` | Retrieves the SLA policy retained with the current run. |
 | `GET /api/recommendation-tracking` | Retrieves shared workflow state and the findings required to build the tracking view. |
 | `PUT /api/recommendation-tracking` | Appends a workflow event. This is a write operation; do not use it for read-only availability or load testing. |
-| `GET /api/data-browser/catalog` | Retrieves metadata for every evidence-browser dataset. This can load all datasets and requires data-browser authorization. |
+| `GET /api/data-browser/catalog` | Retrieves metadata for evidence-browser datasets. Azure manifests supply row counts without indexing every dataset when available; local/fallback metadata can require indexing. Requires data-browser authorization. |
 | `GET /api/data-browser/<dataset>?offset=0&limit=50&query=<text>` | Retrieves a filtered, paginated evidence view. `limit` is 1–200 and `query` is at most 200 characters. |
-| `GET /api/data/<asset>.json` | Retrieves one complete dashboard dataset from local files or the verified current Azure bundle. |
-| `GET /api/data/cve-details/<cve-id>.json` | Retrieves one CVE record; the first request can load and verify the vulnerabilities dataset. |
+| `GET /api/data/<asset>.json` | Compatibility/full-dataset route; parses/caches complete datasets and is not the normal dashboard query path. Avoid using a full findings download as a low-impact availability probe. |
+| `GET /api/data/cve-details/<cve-id>.json` | Compatibility CVE route; normal UI detail uses a snapshot-pinned dashboard query instead. |
 
 If a tracking `PUT` succeeds but the following tracking `GET` returns 502 or
 503 with `JSONDecodeError`, check whether the workflow container uses
@@ -311,15 +324,20 @@ curl --silent --show-error --output /dev/null \
   "$BASE_URL/api/status"
 curl --silent --show-error --output /dev/null \
   --write-out 'status=%{http_code} start=%{time_starttransfer}s total=%{time_total}s bytes=%{size_download}\n' \
-  "$BASE_URL/api/data/findings.json"
+  "$BASE_URL/api/dashboard/snapshot"
 curl --silent --show-error "$BASE_URL/api/diagnostics"
 ```
 
-Compare the first request after process start or a new run with a second request
-to distinguish Azure retrieval and integrity verification from an in-process
-cache hit. `GET /api/diagnostics` identifies cached datasets and records the
-most recent API and storage-operation durations. Query strings, tokens,
-identities, and response rows are intentionally omitted from diagnostics.
+After readiness, use browser Network timings for a default view and a new
+filter/detail to distinguish prepared results from uncached query work.
+Record cold startup separately from App Service logs: requesting snapshot
+metadata after readiness does not measure index-build time.
+`dashboardQueries.preparation.durationSeconds` covers default preparation,
+including data downloads/indexing it triggers, but excludes earlier manifest/
+policy loading and process initialization. Local benchmark timings may exclude
+Azure download entirely; do not compare the two as identical measurements.
+Query strings, tokens, identities, and response rows are intentionally omitted
+from diagnostics.
 
 For the deployed Web App, use an authenticated browser session and the browser
 Network panel, or an authorized authenticated HTTP client. An anonymous `curl`

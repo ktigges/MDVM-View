@@ -943,6 +943,43 @@ const dashboardQuery={
   tables:new Map(),detailTables:new Map(),lastResponse:null,exportControllers:new Set(),exportSequence:0,
   responses:new Map(),responseBytes:0
 };
+const dashboardVisualProgress={timer:null,startedAt:null,checks:0};
+
+function stopDashboardVisualProgress(){
+  clearTimeout(dashboardVisualProgress.timer);
+  dashboardVisualProgress.timer=null;
+  dashboardVisualProgress.startedAt=null;
+}
+
+function updateDashboardProgressElapsed(){
+  if(dashboardVisualProgress.startedAt===null)return;
+  const seconds=Math.max(0,Math.floor((Date.now()-dashboardVisualProgress.startedAt)/1000));
+  const elapsed=$("reportProgressElapsed");
+  if(elapsed)elapsed.textContent=`Elapsed ${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;
+}
+
+function showDashboardVisualProgress(title,message,phase){
+  $("loadingNotice").innerHTML=`<span class="loading-spinner" aria-hidden="true"></span><div class="loading-notice-content"><strong>${esc(title)}</strong><span>${esc(message)}</span><div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="${esc(phase)}; completion percentage unavailable"><span class="report-progress-indicator"></span></div><div class="report-progress-meta"><span id="reportProgressPhase">${esc(phase)}</span><span id="reportProgressElapsed" aria-live="off"></span></div><small>Completion percentage and remaining time are not reported by the server.</small></div>`;
+  updateDashboardProgressElapsed();
+}
+
+function startDashboardVisualProgress(){
+  stopDashboardVisualProgress();
+  dashboardVisualProgress.startedAt=Date.now();
+  dashboardVisualProgress.checks=0;
+  showDashboardVisualProgress("Loading selected view","Querying the pinned snapshot for the current filters.","Waiting for server response");
+  const tick=()=>{
+    if($("loadingNotice").hidden){stopDashboardVisualProgress();return;}
+    updateDashboardProgressElapsed();
+    dashboardVisualProgress.timer=setTimeout(tick,1000);
+  };
+  dashboardVisualProgress.timer=setTimeout(tick,1000);
+}
+
+function hideDashboardLoadingNotice(){
+  stopDashboardVisualProgress();
+  $("loadingNotice").hidden=true;
+}
 
 function dashboardResponseKey(request){
   const filters={...request.filters};
@@ -1009,7 +1046,8 @@ function dashboardBusy(view,busy){
   root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.executive-sla-meter-wrap,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid,.server-pagination,.server-record").forEach(node=>node.classList.toggle("query-pending",busy));
   if(view!=="detail"){
     $("loadingNotice").hidden=!busy;
-    if(busy)$("loadingNotice").innerHTML='<span class="loading-spinner" aria-hidden="true"></span><div><strong>Loading selected view</strong><span>Querying the pinned snapshot for the current filters.</span></div>';
+    if(busy)startDashboardVisualProgress();
+    else hideDashboardLoadingNotice();
   }
 }
 
@@ -1030,7 +1068,7 @@ function expireDashboardSnapshot(){
   for(const controller of dashboardQuery.exportControllers)controller.abort();
   dashboardBusy(state.activeView,true);
   if(state.selectedEntity)dashboardBusy("detail",true);
-  $("loadingNotice").hidden=true;
+  hideDashboardLoadingNotice();
   dashboardStatus("New snapshot available. Reload to continue; results from different snapshots have not been combined.",true);
 }
 
@@ -1085,7 +1123,7 @@ async function startSnapshotDashboard(){
     if(state.recommendationTrackingEnabled)void refreshRecommendationTracking();
   }catch(error){
     if(sequence!==channel.sequence||error.name==="AbortError")return;
-    $("loadingNotice").hidden=true;
+    hideDashboardLoadingNotice();
     $("freshnessText").textContent="Snapshot unavailable";
     dashboardStatus(error.message||"Dashboard snapshot could not be loaded.");
   }
@@ -1093,7 +1131,7 @@ async function startSnapshotDashboard(){
 
 /** Schedule just the selected view, never recomputing full-dataset metrics in the browser. */
 function render(){
-  if(dashboardQuery.expired){dashboardBusy(state.activeView,true);$("loadingNotice").hidden=true;return;}
+  if(dashboardQuery.expired){dashboardBusy(state.activeView,true);hideDashboardLoadingNotice();return;}
   if(!dashboardQuery.snapshot)return;
   const request=dashboardRequest(),scopeKey=JSON.stringify({...request,page:0});
   const searchChanged=state.search!==dashboardQuery.lastSearch;
@@ -1168,7 +1206,10 @@ async function queryDashboardView(view=state.activeView,tableId=null,page=0){
     const reusable=cached&&(!state.recommendationTrackingEnabled||Date.now()-cached.time<5000);
     const payload=reusable?cached.payload:await postDashboardQuery(request,{signal:channel.controller.signal,isCurrent:()=>sequence===channel.sequence&&!dashboardQuery.expired,onPreparing:()=>{
       if(detail)$("pivotSummary").textContent="Preparing exact snapshot detail. This can take several minutes for a cold snapshot; this panel will update automatically.";
-      else $("loadingNotice").innerHTML='<span class="loading-spinner" aria-hidden="true"></span><div><strong>Preparing exact snapshot results</strong><span>A cold snapshot can take several minutes. The server is working; this view will update automatically.</span></div>';
+      else{
+        const checks=++dashboardVisualProgress.checks;
+        showDashboardVisualProgress("Preparing exact snapshot results","The server has accepted this report for preparation; this view updates automatically when results are ready.",`Server preparation pending · ${checks} status check${checks===1?"":"s"}`);
+      }
     }});
     if(sequence!==channel.sequence||dashboardQuery.expired)return;
     renderDashboardResponse(payload,view,tableId);
@@ -1179,7 +1220,7 @@ async function queryDashboardView(view=state.activeView,tableId=null,page=0){
     dashboardStatus(notices.join(" · "));
   }catch(error){
     if(sequence!==channel.sequence||error.name==="AbortError"||dashboardQuery.expired)return;
-    if(!detail)$("loadingNotice").hidden=true;
+    if(!detail)hideDashboardLoadingNotice();
     dashboardStatus(error.message||"Dashboard query failed. Retry to load this scope.");
   }
 }

@@ -1,7 +1,7 @@
 <!--
   Author: Kevin Tigges
-  Last modified: 2026-10-08
-  Purpose: Provide a local-only interactive cost model for the complete Azure design, including lifecycle reporting datasets.
+  Last modified: 2026-11-03
+  Purpose: Estimate the current Dedicated collector design using explicit rates, workload evidence, and append-only history growth.
 -->
 <!doctype html>
 <html lang="en">
@@ -31,24 +31,33 @@
             <button id="clearProfile" type="button">Reset profile message</button>
           </div>
           <div id="profileStatus" class="profile-status">No file loaded. Values stay in this browser and are never uploaded.</div>
-          <span class="hint">Recognized cost drivers: location, memory, schedule, replication, immutability/soft-delete days, Web App SKU, deployment stages, tracking, mode, cache, and subscription-reader count. Naming, tags, RBAC, identities, app registration, and containers are reported as no-direct-charge configuration.</span>
+          <span class="hint">Loads region, schedule, replication, immutability, Web App SKU and worker count. Legacy Function memory settings do not size the Dedicated collector. Terraform stage flags do not prove which resources are deployed. File contents stay local.</span>
+        </section>
+
+        <section class="panel">
+          <h2>Workload evidence and measured manifest</h2>
+          <div class="fields">
+            <label>Devices<input id="deviceCount" type="number" min="0" step="1" value="2075"></label>
+            <label>Finding records<input id="findingCount" type="number" min="0" step="1" value="1837575"></label>
+            <label>Referenced CVEs<input id="cveCount" type="number" min="0" step="1" value="13222"></label>
+            <label>Published files per run<input id="publishedFiles" type="number" min="0" step="1" value="2570"></label>
+            <label>Completed run manifest JSON<input id="manifestFile" type="file" accept=".json,application/json"></label>
+          </div>
+          <div id="manifestStatus" class="profile-status" role="status">Reference: the large-tenant recovery reported on 2026-11-02 published 1,837,575 findings, 2,075 devices, 13,222 CVEs and 2,570 files. Its total bundle bytes and end-to-end duration were not supplied.</div>
+          <span class="hint">Import a complete manifest.json to replace counts and published bundle size with measurements. It does not include every request checkpoint, processing artifact, failed attempt, or billable Storage transaction. Findings are device/software/CVE records, not distinct CVEs; a successful publication is not a duplicate-identity audit.</span>
+          <div class="notice warning"><strong>Collector success is not Web App capacity certification.</strong> The local collector checks covered one and two million generated findings, but used only 100 CVEs. The hosted reference has 13,222 CVEs. Web App startup/index preparation returned 503 and remains unvalidated at that scale. Measure CPU, memory, disk, cold preparation, concurrent users, and two-snapshot replacement before choosing capacity. No runtime or SKU guarantee is inferred from finding count.</div>
         </section>
 
         <section class="panel">
           <h2>Collector Function workload</h2>
           <div class="fields">
-            <label>Function memory (GB)<select id="functionMemory"><option value="2">2 GB</option><option value="4" selected>4 GB</option></select></label>
-            <label>Average collection duration (minutes)<input id="collectionMinutes" type="number" min="0" step=".1" value="8"></label>
-            <label>Collections per day<input id="collectionsPerDay" type="number" min="0" step=".1" value="2"></label>
+            <label>Dedicated Linux B2 collector rate ($/hour)<input id="collectorHourlyRate" type="number" min="0" step=".0001" value=".035"></label>
+            <label>Billing hours per month<input id="billingHours" type="number" min="1" step="1" value="730"></label>
+            <label>End-to-end duration per run (minutes; blank if unknown)<input id="collectionMinutes" type="number" min="0" step=".1" placeholder="Not yet measured"></label>
+            <label>Planned completed collections per day<input id="collectionsPerDay" type="number" min="0" step=".1" value="1"></label>
             <label>Days per month<input id="daysPerMonth" type="number" min="1" max="31" step="1" value="30"></label>
-            <label>Executions per collection<input id="executionsPerCollection" type="number" min="1" step="1" value="1"></label>
-            <label>Free executions per month<input id="freeExecutions" type="number" min="0" step="1000" value="250000"></label>
-            <label>Execution price per million ($)<input id="executionMillionRate" type="number" min="0" step=".01" value=".40"></label>
-            <label>Free GB-seconds per month<input id="freeGbSeconds" type="number" min="0" step="1000" value="100000"></label>
-            <label>On-demand execution rate per GB-second ($)<input id="executionRate" type="number" min="0" step=".000001" value=".000026"></label>
-            <label>Always Ready/base charge ($/month)<input id="alwaysReadyCost" type="number" min="0" step=".01" value="0"></label>
           </div>
-          <span class="hint">Current Terraform sets one FC1 Flex Consumption instance maximum and configures no Always Ready instance. The calculator frequency does not change the deployed NCRONTAB schedule.</span>
+          <span class="hint">Current Terraform provisions one fixed B2 collector worker with Always On, separate from the dashboard plan. Compute is paid continuously, not by GB-seconds or Durable activity count. The current schedule is daily at 05:00 UTC. Rates use 730 planning hours; adjust hours/days for the month being budgeted. Duration is a scheduling/capacity check only: the observed 30.35-minute normalization activity was not a complete run duration. Calculator inputs do not change deployment settings.</span>
         </section>
 
         <section class="panel">
@@ -56,15 +65,15 @@
           <div class="fields">
             <label>Linux App Service tier
               <select id="appServiceTier">
-                <option value="13.14">B1 — editable planning rate $13.14/month</option>
-                <option value="25.55" selected>B2 — editable planning rate $25.55/month</option>
-                <option value="69.35">S1 — editable planning rate $69.35/month</option>
-                <option value="62.05">P0v3 — editable planning rate $62.05/month</option>
-                <option value="124.10">P1v3 — editable planning rate $124.10/month</option>
-                <option value="custom">Custom monthly rate</option>
+                <option value="B1">B1 — $0.018/hour</option>
+                <option value="B2" selected>B2 — $0.035/hour (current baseline)</option>
+                <option value="S1">S1 — $0.095/hour</option>
+                <option value="P0v3">P0v3 — $0.085/hour</option>
+                <option value="P1v3">P1v3 — $0.170/hour</option>
+                <option value="custom">Custom SKU/region/rate</option>
               </select>
             </label>
-            <label>Custom Web App rate ($/instance/month)<input id="customAppRate" type="number" min="0" step=".01" value="25.55" disabled></label>
+            <label>Custom Web App rate ($/instance/hour)<input id="customAppRate" type="number" min="0" step=".0001" value=".035" disabled></label>
             <label>Web App instances<input id="appInstances" type="number" min="0" step="1" value="1"></label>
             <label>Standby/secondary region ($/month)<input id="standbyCost" type="number" min="0" step=".01" value="0"></label>
           </div>
@@ -79,18 +88,23 @@
             <label>Modeled retention when bounded (days)<input id="modeledRetentionDays" type="number" min="1" step="1" value="365"></label>
             <label>Configured minimum immutability (days)<input id="immutabilityDays" type="number" min="1" step="1" value="365"></label>
             <label>Existing retained history (GiB)<input id="existingHistoryGib" type="number" min="0" step=".1" value="1"></label>
-            <label>Compressed immutable data per run (GiB)<input id="runSizeGib" type="number" min="0" step=".001" value=".160"></label>
-            <label>Replication<select id="historyReplication"><option value=".0184">LRS</option><option value=".023">ZRS</option><option value=".0368">GRS</option><option value=".046">GZRS</option><option value="custom">Custom</option></select></label>
-            <label>History capacity rate ($/GiB-month)<input id="historyCapacityRate" type="number" min="0" step=".0001" value=".0184"></label>
+            <label>Published bundle per run (GiB; planning until imported)<input id="runSizeGib" type="number" min="0" step="any" value=".160"></label>
+            <label>Additional checkpoint/artifact data per run (GiB allowance)<input id="checkpointGib" type="number" min="0" step="any" value="0"></label>
+            <label>Additional failed/retried evidence growth (GiB/month allowance)<input id="failedRunGib" type="number" min="0" step="any" value="0"></label>
+            <label>Replication<select id="historyReplication"><option value="LRS">LRS</option><option value="ZRS">ZRS</option><option value="GRS">GRS</option><option value="GZRS">GZRS</option><option value="custom">Custom</option></select></label>
+            <label>History capacity rate ($/GiB-month)<input id="historyCapacityRate" type="number" min="0" step=".0001" value=".018"></label>
             <label>Soft-deleted retained data (GiB)<input id="softDeletedGib" type="number" min="0" step=".1" value="0"></label>
-            <label>Write/create operations per run<input id="writesPerRun" type="number" min="0" step="1" value="937"></label>
-            <label>Other reads/list operations per month<input id="historyReadsMonth" type="number" min="0" step="100" value="5000"></label>
-            <label>Write price per 10,000 operations ($)<input id="writeRate" type="number" min="0" step=".001" value=".05"></label>
-            <label>Read/list price per 10,000 operations ($)<input id="readRate" type="number" min="0" step=".001" value=".004"></label>
+            <label>Additional write transactions per run (allowance)<input id="extraWritesPerRun" type="number" min="0" step="1" value="0"></label>
+            <label>Additional read transactions per run (allowance)<input id="extraReadsPerRun" type="number" min="0" step="1" value="0"></label>
+            <label>Other reads per month (viewer/baseline/allowance)<input id="historyReadsMonth" type="number" min="0" step="1" value="5000"></label>
+            <label>List/create-container operations per month (allowance)<input id="historyListsMonth" type="number" min="0" step="1" value="100"></label>
+            <label>Write price per 10,000 operations ($)<input id="writeRate" type="number" min="0" step=".001" value=".065"></label>
+            <label>Read price per 10,000 operations ($)<input id="readRate" type="number" min="0" step=".001" value=".005"></label>
+            <label>List/create-container allowance per 10,000 operations ($)<input id="listRate" type="number" min="0" step=".001" value=".065"></label>
             <label>Workflow events per month<input id="workflowEvents" type="number" min="0" step="100" value="1000"></label>
             <label>Average workflow event size (KiB)<input id="workflowEventKib" type="number" min="0" step=".1" value="2"></label>
           </div>
-          <span class="hint">Includes raw pages, curated datasets, recommendation lifecycle events, compact run history, manifests, retained SLA policy, current-pointer writes, and append-only recommendation workflow events. The two lifecycle files add two writes per run and a conservatively modeled 0.001 GiB; replace the run-size input with measured bundle size after the first upgraded run. The bounded option changes estimates only; it does not configure deletion.</span>
+          <span class="hint">Published-object floor: one write per published file plus run manifest/current pointer, and two verification reads per file (manifest + file). Add HTTP checkpoints, processing artifacts, retries, baseline/viewer downloads, block/chunk transactions, and list/create-container operations separately; file count is not total billable transactions. Zero overhead allowances are unmeasured, not evidence of zero cost. The bounded option is hypothetical only: it never configures deletion or guarantees Azure immutability permits it.</span>
         </section>
 
         <section class="panel">
@@ -109,18 +123,18 @@
           <div class="fields">
             <label>Telemetry ingestion per collection (GiB)<input id="logsPerCollectionGib" type="number" min="0" step=".001" value=".01"></label>
             <label>Other telemetry per month (GiB)<input id="otherLogsGib" type="number" min="0" step=".1" value=".5"></label>
-            <label>Included ingestion per month (GiB)<input id="freeLogsGib" type="number" min="0" step=".1" value="5"></label>
+            <label>Available shared ingestion credit (GiB/month)<input id="freeLogsGib" type="number" min="0" step=".1" value="0"></label>
             <label>Ingestion rate ($/GiB)<input id="logIngestionRate" type="number" min="0" step=".01" value="2.76"></label>
             <label>Chargeable retained telemetry (GiB-month)<input id="chargeableLogRetentionGib" type="number" min="0" step=".1" value="0"></label>
             <label>Retention rate ($/GiB-month)<input id="logRetentionRate" type="number" min="0" step=".01" value=".12"></label>
           </div>
-          <span class="hint">Terraform uses workspace-based Application Insights, Log Analytics PerGB2018, 30-day retention, diagnostics, traces, requests, exceptions, and Function metrics. The reporting upgrade adds only two short version messages per collection; existing progress telemetry remains the dominant run-specific log volume. Refresh rates for Central US before purchase.</span>
+          <span class="hint">Includes collector heartbeats, row/substep progress, Durable activity diagnostics, traces, requests, and exceptions. Terraform currently routes Function diagnostics to Log Analytics, not Web App startup logs. If Web App diagnostics are enabled, include their measured volume under other telemetry. The paid Analytics ingestion tier is $2.76/GB; the public first-5-GB credit is shared and may already be consumed, so no project credit is assumed. Do not select the API's $0 free-tier meter as the paid rate.</span>
         </section>
 
         <section class="panel">
           <h2>Network, licensing, support, and optional architecture</h2>
           <div class="fields">
-            <label>Internet egress (GiB/month)<input id="egressGib" type="number" min="0" step=".1" value="1"></label>
+            <label>Billable internet egress after shared credits (GiB/month)<input id="egressGib" type="number" min="0" step=".1" value="1"></label>
             <label>Egress rate ($/GiB)<input id="egressRate" type="number" min="0" step=".01" value=".087"></label>
             <label>Front Door/CDN/WAF ($/month)<input id="frontDoorCost" type="number" min="0" step=".01" value="0"></label>
             <label>Private endpoints/DNS/NAT ($/month)<input id="networkCost" type="number" min="0" step=".01" value="0"></label>
@@ -146,6 +160,8 @@
 
       <aside class="panel summary">
         <h2>Monthly run-rate estimate</h2>
+        <div id="calculationError" class="notice warning" role="alert" hidden></div>
+        <div id="capacityStatus" class="notice warning" role="status">End-to-end run duration is not measured; scheduling headroom is unknown.</div>
         <div class="total"><span>Monthly run-rate at end of planning horizon, with contingency</span><strong id="monthlyTotal">$0.00</strong></div>
         <div class="total" style="margin-top:10px"><span>Estimated first-year total, including storage growth</span><strong id="annualTotal">$0.00</strong></div>
         <ul class="breakdown">
@@ -161,49 +177,85 @@
         </ul>
         <div class="metric-grid">
           <div class="metric"><span>Monthly collections</span><strong id="monthlyCollections">0</strong></div>
-          <div class="metric"><span>Monthly GB-seconds</span><strong id="monthlyGbSeconds">0</strong></div>
+          <div class="metric"><span>Collector occupied hours/month</span><strong id="monthlyOccupiedHours">Not measured</strong></div>
+          <div class="metric"><span>Average finding rows/device</span><strong id="findingDensity">0</strong></div>
           <div class="metric"><span>New history/month</span><strong id="monthlyHistoryGrowth">0 GiB</strong></div>
           <div class="metric"><span>History at horizon</span><strong id="historyAtHorizon">0 GiB</strong></div>
           <div class="metric"><span>Monthly history writes</span><strong id="monthlyHistoryWrites">0</strong></div>
+          <div class="metric"><span>Monthly history reads</span><strong id="monthlyHistoryReads">0</strong></div>
           <div class="metric"><span>Telemetry ingestion</span><strong id="monthlyLogs">0 GiB</strong></div>
         </div>
         <div class="recommendation">
-          <strong>Current deployed profile</strong><br>
-          4 GB Flex Consumption, every 12 hours, one B2 Web App, two StorageV2 accounts, LRS immutable hot history, 30-day Log Analytics retention, and no Front Door/private networking.
+          <strong>Current Terraform baseline</strong><br>
+          One fixed Always On B2 collector plus a separate B2 Web App, one daily 05:00 UTC collection, two StorageV2 accounts, LRS append-only HNS history, 30-day Log Analytics retention, and no Front Door/private networking. At 730 hours the two B2 plans alone total $51.10/month before other costs and contingency. Imported profiles/scenarios may differ.
         </div>
+        <span class="hint">Published bundle bytes default to an unmeasured 0.160 GiB planning allowance. Checkpoint/failed-run overhead, runtime transactions, telemetry and egress also need measurement. First-year capacity uses average monthly accumulated storage; the top total is the run-rate at the horizon, not the average monthly bill.</span>
       </aside>
     </div>
   </main>
-  <footer>Last updated 2026-10-09. Currency: USD. Default rates model Central US public retail assumptions and must be refreshed before purchase in the official Azure Pricing Calculator.</footer>
+  <footer>Updated 2026-11-03. USD, Central US. Linux App Service, first-tier Hot HNS capacity/read/write and Analytics Logs rates were checked against the <a href="https://prices.azure.com/api/retail/prices" target="_blank" rel="noopener noreferrer">Azure Retail Prices API</a> on 2026-11-03. B2 Linux meter: e348d2df-93d8-45c5-a957-916f825c4d2b ($0.035/hour); do not use the Windows B2 rate. List/other operations, runtime blended transactions, egress and optional services remain editable planning allowances. Regional/offer/tier differences and shared credits must be confirmed in the <a href="https://azure.microsoft.com/pricing/calculator/" target="_blank" rel="noopener noreferrer">Azure Pricing Calculator</a>. Files are processed locally; no pricing or customer data is uploaded.</footer>
   <script>
-    const ids=["functionMemory","collectionMinutes","collectionsPerDay","daysPerMonth","executionsPerCollection","freeExecutions","executionMillionRate","freeGbSeconds","executionRate","alwaysReadyCost","appServiceTier","customAppRate","appInstances","standbyCost","horizonMonths","retentionModel","modeledRetentionDays","immutabilityDays","existingHistoryGib","runSizeGib","historyReplication","historyCapacityRate","softDeletedGib","writesPerRun","historyReadsMonth","writeRate","readRate","workflowEvents","workflowEventKib","runtimeStorageGib","runtimeCapacityRate","runtimeOperations","runtimeOperationRate","logsPerCollectionGib","otherLogsGib","freeLogsGib","logIngestionRate","chargeableLogRetentionGib","logRetentionRate","egressGib","egressRate","frontDoorCost","networkCost","licenseCost","supportCost","otherCost","contingencyPercent"];
-    const value=id=>Math.max(0,Number(document.getElementById(id).value)||0);
+    const appRates={B1:.018,B2:.035,S1:.095,P0v3:.085,P1v3:.170};
+    const historyRates={
+      LRS:{capacity:.018,write:.065,read:.005},
+      ZRS:{capacity:.023,write:.081,read:.005},
+      GRS:{capacity:.037,write:.130,read:.005},
+      GZRS:{capacity:.042,write:.294,read:.005}
+    };
+    const ids=[...document.querySelectorAll('input[type="number"]')].map(element=>element.id);
+    const resultIds=["functionCost","webAppCost","historyCapacityCost","historyOperationsCost","runtimeStorageCost","monitoringCost","networkOptionalCost","licenseSupportCost","contingencyResult","monthlyTotal","annualTotal"];
+    const metricIds=["monthlyCollections","monthlyOccupiedHours","findingDensity","monthlyHistoryGrowth","historyAtHorizon","monthlyHistoryWrites","monthlyHistoryReads","monthlyLogs"];
+    function value(id){
+      const element=document.getElementById(id),raw=element.value.trim();
+      if(id==="collectionMinutes"&&raw==="")return null;
+      const next=Number(raw);
+      if(raw===""||!Number.isFinite(next)||next<Number(element.min||0)||(element.max&&next>Number(element.max))||(element.step==="1"&&!Number.isSafeInteger(next))){
+        throw new RangeError(`Enter a valid value for ${id.replace(/([a-z])([A-Z])/g,"$1 $2")}.`);
+      }
+      return next;
+    }
     const money=amount=>amount.toLocaleString("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2});
     const number=amount=>Math.round(amount).toLocaleString("en-US");
     const gib=amount=>`${amount.toLocaleString("en-US",{maximumFractionDigits:1})} GiB`;
     const setValue=(id,next)=>{if(next!==undefined&&next!==null&&next!=="")document.getElementById(id).value=next;};
 
     function calculate(){
-      const days=value("daysPerMonth"),collections=value("collectionsPerDay")*days;
-      const gbSeconds=value("functionMemory")*value("collectionMinutes")*60*collections;
-      const billableGbSeconds=Math.max(0,gbSeconds-value("freeGbSeconds"));
-      const executions=collections*value("executionsPerCollection");
-      const billableExecutions=Math.max(0,executions-value("freeExecutions"));
-      const functionCost=billableGbSeconds*value("executionRate")+(billableExecutions/1000000)*value("executionMillionRate")+value("alwaysReadyCost");
-
-      const tier=document.getElementById("appServiceTier"),custom=tier.value==="custom";
+      const custom=document.getElementById("appServiceTier").value==="custom";
       document.getElementById("customAppRate").disabled=!custom;
-      const appRate=custom?value("customAppRate"):Number(tier.value);
-      const webAppCost=appRate*value("appInstances")+value("standbyCost");
+      const errorBox=document.getElementById("calculationError");
+      try{
+        ids.forEach(id=>{if(id!=="customAppRate"||custom)value(id);});
+        errorBox.hidden=true;
+        return calculateValid(custom);
+      }catch(error){
+        if(!(error instanceof RangeError))throw error;
+        errorBox.textContent=error.message;
+        errorBox.hidden=false;
+        [...resultIds,...metricIds].forEach(id=>document.getElementById(id).textContent="Unavailable");
+        document.getElementById("capacityStatus").textContent="Correct the invalid input before using this estimate.";
+        return null;
+      }
+    }
 
-      const monthlyHistoryGrowth=value("runSizeGib")*collections;
+    function calculateValid(custom){
+      const days=value("daysPerMonth"),collections=value("collectionsPerDay")*days;
+      const functionCost=value("collectorHourlyRate")*value("billingHours");
+      const tier=document.getElementById("appServiceTier").value;
+      const appRate=custom?value("customAppRate"):appRates[tier];
+      if(appRate===undefined)throw new RangeError("Choose a supported Web App SKU or enter a custom hourly rate.");
+      const webAppCost=appRate*value("billingHours")*value("appInstances")+value("standbyCost");
+
+      const monthlyHistoryGrowth=(value("runSizeGib")+value("checkpointGib"))*collections+value("failedRunGib");
       const workflowGib=value("workflowEvents")*value("workflowEventKib")/1048576;
-      const growthMonths=month=>document.getElementById("retentionModel").value==="bounded"?Math.min(month,value("modeledRetentionDays")/30.4375):month;
+      const bounded=document.getElementById("retentionModel").value==="bounded";
+      const cap=value("modeledRetentionDays")/days;
+      const growthMonths=month=>bounded?Math.min(month,cap):month;
       const historyAt=month=>value("existingHistoryGib")+(monthlyHistoryGrowth+workflowGib)*growthMonths(month)+value("softDeletedGib");
       const historyAtHorizon=historyAt(value("horizonMonths"));
       const historyCapacityCost=historyAtHorizon*value("historyCapacityRate");
-      const historyWrites=collections*value("writesPerRun")+value("workflowEvents");
-      const historyOperationsCost=historyWrites/10000*value("writeRate")+value("historyReadsMonth")/10000*value("readRate");
+      const historyWrites=collections*(value("publishedFiles")+2+value("extraWritesPerRun"))+value("workflowEvents");
+      const historyReads=collections*(2*value("publishedFiles")+value("extraReadsPerRun"))+value("historyReadsMonth");
+      const historyOperationsCost=historyWrites/10000*value("writeRate")+historyReads/10000*value("readRate")+value("historyListsMonth")/10000*value("listRate");
       const runtimeStorageCost=value("runtimeStorageGib")*value("runtimeCapacityRate")+value("runtimeOperations")/10000*value("runtimeOperationRate");
 
       const logs=collections*value("logsPerCollectionGib")+value("otherLogsGib");
@@ -213,63 +265,138 @@
       const subtotal=functionCost+webAppCost+historyCapacityCost+historyOperationsCost+runtimeStorageCost+monitoringCost+networkOptionalCost+licenseSupportCost;
       const contingency=subtotal*value("contingencyPercent")/100;
       const fixedMonthly=subtotal-historyCapacityCost;
+      const growthIntegral=month=>{
+        if(!bounded)return month*month/2;
+        const growing=Math.min(month,cap);
+        return growing*growing/2+cap*Math.max(0,month-cap);
+      };
       const annualTotal=Array.from({length:12},(_,index)=>{
-        const monthlySubtotal=fixedMonthly+historyAt(index+1)*value("historyCapacityRate");
+        const averageHistory=value("existingHistoryGib")+value("softDeletedGib")+(monthlyHistoryGrowth+workflowGib)*(growthIntegral(index+1)-growthIntegral(index));
+        const monthlySubtotal=fixedMonthly+averageHistory*value("historyCapacityRate");
         return monthlySubtotal*(1+value("contingencyPercent")/100);
       }).reduce((sum,amount)=>sum+amount,0);
 
       const results={functionCost,webAppCost,historyCapacityCost,historyOperationsCost,runtimeStorageCost,monitoringCost,networkOptionalCost,licenseSupportCost,contingencyResult:contingency,monthlyTotal:subtotal+contingency,annualTotal};
       Object.entries(results).forEach(([id,amount])=>document.getElementById(id).textContent=money(amount));
       document.getElementById("monthlyCollections").textContent=number(collections);
-      document.getElementById("monthlyGbSeconds").textContent=number(gbSeconds);
+      const minutes=value("collectionMinutes"),occupiedHours=minutes===null?null:minutes/60*collections;
+      document.getElementById("monthlyOccupiedHours").textContent=occupiedHours===null?"Not measured":occupiedHours.toLocaleString("en-US",{maximumFractionDigits:1});
+      document.getElementById("findingDensity").textContent=value("deviceCount")?(value("findingCount")/value("deviceCount")).toLocaleString("en-US",{maximumFractionDigits:1}):"Unknown";
+      const capacityMessage=occupiedHours===null?"End-to-end duration is not measured; scheduling headroom is unknown.":occupiedHours>days*24?"Planned run time exceeds available calendar hours on the single collector. This completion frequency is not demonstrated.":`Planned collector occupancy: ${(occupiedHours/(days*24)*100).toFixed(1)}% of calendar hours. This is not a measured runtime forecast.`;
+      document.getElementById("capacityStatus").textContent=capacityMessage+(bounded?" Bounded retention is a hypothetical cost scenario, not the deployed append-only policy.":"");
       document.getElementById("monthlyHistoryGrowth").textContent=gib(monthlyHistoryGrowth);
       document.getElementById("historyAtHorizon").textContent=gib(historyAtHorizon);
       document.getElementById("monthlyHistoryWrites").textContent=number(historyWrites);
+      document.getElementById("monthlyHistoryReads").textContent=number(historyReads);
       document.getElementById("monthlyLogs").textContent=gib(logs);
+      return {...results,collections,monthlyHistoryGrowth,historyAtHorizon,historyWrites,historyReads,occupiedHours};
     }
 
     function collectionsFromSchedule(schedule){
       const fields=String(schedule||"").trim().split(/\s+/);
-      if(fields.length!==6)return null;
-      if(/^\*\/\d+$/.test(fields[2]))return 24/Number(fields[2].slice(2));
-      if(/^\d+$/.test(fields[2]))return 1;
-      if(fields[2]==="*")return 24;
-      const hours=fields[2].split(",").filter(value=>/^\d+$/.test(value));
-      return hours.length||null;
+      if(fields.length!==6||fields[0]!=="0"||fields.slice(3).some(field=>field!=="*"))return null;
+      function slots(field,count){
+        if(field==="*")return count;
+        if(/^\*\/[1-9]\d*$/.test(field))return Math.ceil(count/Number(field.slice(2)));
+        const parts=field.split(",");
+        if(!parts.every(part=>/^\d+$/.test(part)&&Number(part)<count))return null;
+        return new Set(parts.map(Number)).size;
+      }
+      const minutes=slots(fields[1],60),hours=slots(fields[2],24);
+      return minutes===null||hours===null?null:minutes*hours;
     }
 
-    document.getElementById("historyReplication").addEventListener("change",event=>{
-      if(event.target.value!=="custom")setValue("historyCapacityRate",event.target.value);
+    function applyHistoryRates(replication){
+      const rates=historyRates[replication];
+      if(!rates)return;
+      setValue("historyCapacityRate",rates.capacity);
+      setValue("writeRate",rates.write);
+      setValue("readRate",rates.read);
+      setValue("listRate",rates.write);
+    }
+
+    function loadProfile(profile){
+      if(!profile||typeof profile!=="object"||Array.isArray(profile))throw new TypeError("Expected a Terraform values JSON object.");
+      const schedule=profile.collection_schedule??"0 0 5 * * *";
+      if(typeof schedule!=="string")throw new TypeError("collection_schedule must be a string.");
+      const sku=profile.web_app_sku_name??"B2";
+      if(typeof sku!=="string")throw new TypeError("web_app_sku_name must be a string.");
+      const replication=String(profile.history_storage_replication_type??"LRS").toUpperCase();
+      const immutability=profile.history_immutability_days??365;
+      if(!Number.isSafeInteger(immutability)||immutability<1)throw new RangeError("history_immutability_days must be a positive integer.");
+      const collections=collectionsFromSchedule(schedule);
+      const messages=[`Collector: fixed Dedicated B2, not Flex`,schedule,`Web App ${sku}; ${profile.web_app_worker_processes??1} process(es), not additional billed instances`];
+      setValue("immutabilityDays",immutability);
+      document.getElementById("collectionsPerDay").value=collections===null?"":String(collections);
+      if(collections===null)messages.push("Schedule cannot be reduced to a daily count; enter planned completed collections/day manually");
+      document.getElementById("appServiceTier").value=Object.hasOwn(appRates,sku)?sku:"custom";
+      if(!Object.hasOwn(appRates,sku)){
+        document.getElementById("customAppRate").value="";
+        messages.push("Unlisted SKU: enter its verified custom hourly rate");
+      }
+      document.getElementById("historyReplication").value=Object.hasOwn(historyRates,replication)?replication:"custom";
+      if(Object.hasOwn(historyRates,replication))applyHistoryRates(replication);
+      else{
+        ["historyCapacityRate","writeRate","readRate","listRate"].forEach(id=>document.getElementById(id).value="");
+        messages.push("Unlisted replication: enter verified storage rates");
+      }
+      const region=profile.location??"not supplied",webRegion=profile.web_app_location||region;
+      messages.push(`Collector region ${region}; Web App region ${webRegion}`);
+      if([region,webRegion].some(name=>String(name).toLowerCase().replace(/\s/g,"")!=="centralus")){
+        messages.push("RATE WARNING: built-in rates are Central US only; verify collector, Web App, storage and monitoring rates for the actual regions");
+      }
+      if(profile.function_instance_memory_in_mb!==undefined)messages.push("Legacy function_instance_memory_in_mb ignored: it does not resize Dedicated B2");
+      messages.push("Stage flags do not prove deployed resources; instance counts remain scenario inputs. Profile import does not fetch prices");
       calculate();
-    });
-    document.getElementById("tfvarsFile").addEventListener("change",event=>{
+      return messages.join(" · ");
+    }
+
+    function loadManifest(manifest){
+      if(!manifest||typeof manifest!=="object"||manifest.complete!==true||!Array.isArray(manifest.files)||!manifest.files.length){
+        throw new TypeError("Select a complete run manifest.json containing its files, not /api/status or an incomplete run.");
+      }
+      let bytes=0;
+      const counts={};
+      for(const file of manifest.files){
+        if(!file||!Number.isSafeInteger(file.sizeBytes)||file.sizeBytes<0)throw new RangeError("Every manifest file must have a nonnegative integer sizeBytes.");
+        bytes+=file.sizeBytes;
+        if(!Number.isSafeInteger(bytes))throw new RangeError("Manifest byte total exceeds the supported exact integer range.");
+        if(["devices","findings","vulnerabilities"].includes(file.dataset)){
+          if(!Number.isSafeInteger(file.rowCount)||file.rowCount<0||counts[file.dataset]!==undefined)throw new RangeError("Manifest dataset counts must be nonnegative integers with no duplicate datasets.");
+          counts[file.dataset]=file.rowCount;
+        }
+      }
+      setValue("deviceCount",counts.devices??0);
+      setValue("findingCount",counts.findings??0);
+      setValue("cveCount",counts.vulnerabilities??0);
+      setValue("publishedFiles",manifest.files.length);
+      setValue("runSizeGib",bytes/1073741824);
+      calculate();
+      return `Measured ${manifest.files.length.toLocaleString("en-US")} published files, ${bytes.toLocaleString("en-US")} bytes (${gib(bytes/1073741824)}). Missing dataset counts are unknown, not inherited from the reference. Checkpoint/artifact/failed-run bytes and extra transactions are not included; existing overhead allowances are unchanged.`;
+    }
+
+    function readLocalFile(inputId,statusId,apply){
+      document.getElementById(inputId).addEventListener("change",event=>{
       const file=event.target.files[0];
       if(!file)return;
       const reader=new FileReader();
       reader.onload=()=>{
         try{
-          const profile=JSON.parse(reader.result),messages=[];
-          setValue("functionMemory",Number(profile.function_instance_memory_in_mb||0)/1024);
-          setValue("immutabilityDays",profile.history_immutability_days);
-          const collections=collectionsFromSchedule(profile.collection_schedule);
-          if(collections)setValue("collectionsPerDay",collections);
-          const replication=String(profile.history_storage_replication_type||"").toUpperCase();
-          const replicationOption=[...document.getElementById("historyReplication").options].find(option=>option.textContent===replication);
-          if(replicationOption){document.getElementById("historyReplication").value=replicationOption.value;setValue("historyCapacityRate",replicationOption.value);}
-          const sku=String(profile.web_app_sku_name||"");
-          const tierOption=[...document.getElementById("appServiceTier").options].find(option=>option.textContent.startsWith(`${sku} `));
-          if(tierOption)document.getElementById("appServiceTier").value=tierOption.value;
-          messages.push(`Region ${profile.location||"not set"}`,`${profile.function_instance_memory_in_mb||"?"} MiB Function`,profile.collection_schedule||"schedule not set",`${replication||"?"} history`,`${sku||"?"} Web App`);
-          messages.push(`APP_MODE=${profile.app_mode||"?"}`,`immutability ${profile.history_immutability_days??"?"} days`,`soft delete ${profile.storage_soft_delete_days??"?"} days`);
-          messages.push(`tracking ${profile.dashboard_recommendation_tracking_enabled?"enabled":"disabled"}`,profile.collector_management_group_id?`management group ${profile.collector_management_group_id}`:`${(profile.collector_subscription_reader_ids||[]).length} compatibility subscription Reader scope(s)`);
-          document.getElementById("profileStatus").textContent=`Loaded ${file.name}: ${messages.join(" · ")}. Stage flags are helper defaults overridden by tfplan; choose instance counts for the deployed stage. Naming, tags, identities, RBAC, auth registration, containers, cache, and feature switches have no separate meter.`;
-          calculate();
+          const message=apply(JSON.parse(reader.result));
+          document.getElementById(statusId).textContent=`Loaded ${file.name}: ${message}`;
         }catch(error){
-          document.getElementById("profileStatus").textContent=`Could not read ${file.name}: ${error.message}`;
+          if(!(error instanceof SyntaxError||error instanceof TypeError||error instanceof RangeError))throw error;
+          document.getElementById(statusId).textContent=`Could not read ${file.name}: ${error.message}`;
         }
       };
+      reader.onerror=()=>{document.getElementById(statusId).textContent=`Could not read ${file.name}: browser file read failed.`;};
       reader.readAsText(file);
-    });
+      });
+    }
+    readLocalFile("tfvarsFile","profileStatus",loadProfile);
+    readLocalFile("manifestFile","manifestStatus",loadManifest);
+    document.getElementById("historyReplication").addEventListener("change",event=>{applyHistoryRates(event.target.value);calculate();});
+    ["appServiceTier","retentionModel"].forEach(id=>document.getElementById(id).addEventListener("change",calculate));
     document.getElementById("clearProfile").addEventListener("click",()=>{document.getElementById("tfvarsFile").value="";document.getElementById("profileStatus").textContent="No file loaded. Values stay in this browser and are never uploaded.";});
     ids.forEach(id=>document.getElementById(id).addEventListener("input",calculate));
     calculate();

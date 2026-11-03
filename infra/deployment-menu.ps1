@@ -5,7 +5,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
-$DeploymentMenuVersion = "2026.10.23.2"
+$DeploymentMenuVersion = "2026.11.03.1"
 $RequiredAzureCliExtensions = @("log-analytics")
 
 function Test-PythonCommand {
@@ -302,6 +302,7 @@ Operations and diagnostics
   10) Pull sanitized Function logs (choose days)
   11) Return to deployment menu
   12) Download legacy manual diagnostics (new runs: use progress/log export)
+  13) Export latest published snapshot (verified local ZIP; read-only)
 "@
         switch (Read-Host "Select an option") {
             "1" { Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only; Pause-Menu }
@@ -316,7 +317,8 @@ Operations and diagnostics
             "10" { Invoke-FunctionLogsForDays -Export; Pause-Menu }
             "11" { return }
             "12" { Invoke-OperationsCli download-collection-diagnostics; Pause-Menu }
-            default { Write-Host "Select a number from 1 through 12." }
+            "13" { Invoke-OperationsCli export-latest-snapshot; Pause-Menu }
+            default { Write-Host "Select a number from 1 through 13." }
         }
     }
 }

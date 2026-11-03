@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DEPLOYMENT_MENU_VERSION="2026.10.23.2"
+DEPLOYMENT_MENU_VERSION="2026.11.03.1"
 
 resolve_python() {
   if [[ -n "${PYTHON:-}" ]]; then
@@ -184,6 +184,7 @@ Operations and diagnostics
   10) Pull sanitized Function logs (choose days)
   11) Return to deployment menu
   12) Download legacy manual diagnostics (new runs: use progress/log export)
+  13) Export latest published snapshot (verified local ZIP; read-only)
 EOF
     printf 'Select an option: '
     read -r operations_choice
@@ -200,7 +201,8 @@ EOF
       10) function_logs_for_days export; pause_menu ;;
       11) return ;;
       12) run_cli download-collection-diagnostics; pause_menu ;;
-      *) printf 'Select a number from 1 through 12.\n' ;;
+      13) run_cli export-latest-snapshot; pause_menu ;;
+      *) printf 'Select a number from 1 through 13.\n' ;;
     esac
   done
 }

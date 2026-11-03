@@ -119,6 +119,7 @@ def test_deployment_menus_wrap_the_same_operations():
             'run_cli export-function-logs --days "$days"',
             "Invoke-OperationsCli export-function-logs --days $days",
         ),
+        ("run_cli export-latest-snapshot", "Invoke-OperationsCli export-latest-snapshot"),
     )
 
     for shell_call, powershell_call in equivalent_calls:
@@ -142,6 +143,7 @@ def test_deployment_menus_expose_matching_operations_submenu():
         "10) Pull sanitized Function logs (choose days)",
         "11) Return to deployment menu",
         "12) Download legacy manual diagnostics (new runs: use progress/log export)",
+        "13) Export latest published snapshot (verified local ZIP; read-only)",
     )
 
     for option in options:
@@ -169,13 +171,14 @@ def test_bash_custom_log_days_default_validation_and_return_order():
     ])
     result = subprocess.run(
         ["bash", "-c", script],
-        input="9\n0\n-1\nabc\n\n10\n3\n11\n",
+        input="9\n0\n-1\nabc\n\n10\n3\n13\n11\n",
         text=True, capture_output=True, timeout=15,
     )
     assert result.returncode == 0, result.stderr
     assert "CALL: check-function-logs --days 2 --limit 25" in result.stdout
     assert "CALL: export-function-logs --days 3" in result.stdout
-    assert result.stdout.count("CALL:") == 2
+    assert "CALL: export-latest-snapshot" in result.stdout
+    assert result.stdout.count("CALL:") == 3
     assert result.stdout.count("Enter a positive whole number of days.") == 3
 
 
@@ -192,7 +195,7 @@ $helper = $ast.Find({{ param($node) $node -is [System.Management.Automation.Lang
 Set-Item -Path function:Invoke-FunctionLogsForDays -Value ($helper.Body.GetScriptBlock())
 $menu = $ast.Find({{ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-OperationsMenu' }}, $true)
 $script:Choices = [System.Collections.Generic.Queue[string]]::new()
-'9', '0', '-1', 'abc', '', '10', '3', '11' | ForEach-Object {{ $script:Choices.Enqueue($_) }}
+'9', '0', '-1', 'abc', '', '10', '3', '13', '11' | ForEach-Object {{ $script:Choices.Enqueue($_) }}
 function Read-Host {{ param($Prompt) $script:Choices.Dequeue() }}
 function Pause-Menu {{}}
 function Invoke-OperationsCli {{ param([Parameter(ValueFromRemainingArguments)][string[]]$CliArguments) Write-Output ('CALL: ' + ($CliArguments -join ' ')) }}
@@ -205,7 +208,8 @@ function Invoke-OperationsCli {{ param([Parameter(ValueFromRemainingArguments)][
     assert result.returncode == 0, result.stderr
     assert "CALL: check-function-logs --days 2 --limit 25" in result.stdout
     assert "CALL: export-function-logs --days 3" in result.stdout
-    assert result.stdout.count("CALL:") == 2
+    assert "CALL: export-latest-snapshot" in result.stdout
+    assert result.stdout.count("CALL:") == 3
     assert result.stdout.count("Enter a positive whole number of days.") == 3
 
 
@@ -304,9 +308,9 @@ def test_powershell_menu_preserves_python_executable_as_one_value():
 def test_deployment_menus_show_version_and_revision_in_title():
     shell, powershell = menu_sources()
 
-    assert 'DEPLOYMENT_MENU_VERSION="2026.10.23.2"' in shell
+    assert 'DEPLOYMENT_MENU_VERSION="2026.11.03.1"' in shell
     assert 'Vulnerability View deployment menu %s (revision %s)' in shell
-    assert '$DeploymentMenuVersion = "2026.10.23.2"' in powershell
+    assert '$DeploymentMenuVersion = "2026.11.03.1"' in powershell
     assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
 

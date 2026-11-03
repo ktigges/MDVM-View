@@ -1,6 +1,6 @@
 # Publishing and Azure cost options
 
-> **Last modified:** 2026-10-12
+> **Last modified:** 2026-11-03
 > **Purpose:** Compare Web App hosting, security, scale, availability, and Azure cost options.
 
 > **Collector hosting update:** Current Terraform uses a separate Dedicated B2
@@ -600,22 +600,47 @@ Do not reuse the collector's contributor identity for the Web App.
 
 - Keep static dashboard assets in the Web App package.
 - Start with `DASHBOARD_CACHE_SECONDS=300` unless publication must appear in
-  less than five minutes.
+  less than five minutes. This controls manifest freshness, not index expiry;
+  replacement preparation adds time before a new run is served.
 - Check the small current manifest instead of downloading every dataset for
   every request.
 - FastAPI gzip-compresses responses of at least 1 KiB when the client advertises
   gzip support.
-- Give immutable run-versioned responses long cache lifetimes.
+- Reuse snapshot-pinned application caches. Query APIs use `no-store`; static
+  assets require revalidation so deployments do not leave stale UI code.
 - Do not add Azure Cache for Redis initially.
 - Scale on sustained CPU, memory, response latency, or HTTP queue length.
-- Test with the real approximately 28,000-finding bundle and the configurable
-  2,500-endpoint synthetic inventory before scaling up.
+- Test with a representative customer snapshot, retained lifecycle events,
+  concurrent users, and two-snapshot replacement before scaling up. The
+  [two-million-finding engine benchmark](../README.md#dashboard-flow) is a
+  scale reference, not a guarantee of hosted performance.
 
-Each App Service instance has its own in-memory cache. More instances improve
-availability and throughput but also multiply initial bundle reads and fixed
-compute cost.
+Each Uvicorn process on each App Service instance owns its temporary SQLite
+indexes, downloaded inputs, bounded memory caches, and query executors.
+The default is one process. More processes/instances can increase throughput
+but multiply downloads, index preparation, memory, disk use, and compute.
+Each process enforces its own 8 GiB/two-snapshot local retention budget;
+that budget is not shared across workers.
+
+Cold preparation runs before application traffic is accepted. A restarted
+process uses a new temporary directory and rebuilds indexes, even if stale
+files from a previous process remain on the host. Always On does not prevent
+all restarts. Terraform allows up to 30 minutes for container startup; investigate
+failures rather than treating that allowance as an expected startup duration.
+
+During ordinary operation, the old ready snapshot stays served while a new
+run is prepared. Ensure sufficient disk for both snapshots and SQLite scratch
+work. Do not equate the benchmark's process RSS with total App Service memory,
+or its retained index size with the Azure history export size.
+
+See [Web App runtime](application-flow.md#7-web-app-startup-indexing-memory-and-caches)
+for startup, memory budgets, cache invalidation, and diagnostics.
 
 ### Measured 2,500-endpoint synthetic baseline
+
+The figures in this subsection describe the earlier full-dataset delivery
+path. They are retained for comparison, not acceptance measurements for the
+current server-paged dashboard.
 
 The deterministic six-month generator completed in about 0.13 seconds on the
 development host and produced 2,500 distinct devices and 2,500 findings. The
@@ -631,12 +656,12 @@ it loaded and verified the current bundle; the next process-cache hit took
 about 0.87 seconds. Treat these as development-host measurements, not an Azure
 App Service latency guarantee.
 
-Compression substantially reduces network transfer, but it does not remove
-browser JSON parsing or client-side filtering cost. A cold Web App process must
-also download and verify the complete current bundle before serving it; warm
-requests reuse that process-local cache for `DASHBOARD_CACHE_SECONDS`. Reassess
-lazy loading or server-side pagination if measured browser startup, memory, or
-filter latency is unacceptable with the combined bundle.
+The current dashboard replaces full browser findings downloads with
+server-side streaming indexes and bounded view/page responses. It prepares
+default views before serving traffic, retains immutable indexes for the
+process lifetime subject to local eviction, and loads the CVE description
+catalog on demand. Gzip reduces transfer; the indexing/paging changes address
+the full-dataset parsing and filtering costs of the earlier path.
 
 ## Calculator worksheet
 

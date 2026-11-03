@@ -1,6 +1,6 @@
 # Application flow: from collection job to dashboard
 
-> **Last modified:** 2026-10-12
+> **Last modified:** 2026-11-03
 > **Purpose:** Explain, in one straight line, what the application calls, what it collects, which files it writes, what the dashboard loads, and why the flow works this way.
 
 ## The short version
@@ -10,10 +10,11 @@ There are two separate runtime paths:
 1. **The collector job** calls Defender, Microsoft Graph, and Azure Resource
    Manager. It keeps the original response pages, builds smaller reporting
    datasets, compresses both forms, and publishes one completed immutable run.
-2. **The Web App** reads the completed run. It loads the datasets needed to
-   build the dashboard, but it does not load the CVE-detail catalog into the
-   browser during startup. CVE descriptions and detailed evidence are requested
-   only when a user opens a specific CVE.
+2. **The Web App** reads the completed run, streams verified curated datasets
+   to local disk, builds SQLite indexes, and prepares all nine default views
+   before accepting traffic. The browser receives aggregates and bounded table
+   pages, not complete findings or lifecycle-event datasets. CVE descriptions
+   are indexed on the server when a CVE detail is first requested.
 
 ```mermaid
 flowchart LR
@@ -30,8 +31,10 @@ flowchart LR
     I --> J[Upload immutable run]
     J --> K[Replace current/manifest.json last]
     K --> L[Web App reads current manifest]
-    L --> M[Load startup dashboard datasets]
-    L --> N[Load CVE catalog only after a CVE request]
+    L --> M[Stream verified curated files to local disk]
+    M --> N[Build indexes and prepare nine default views]
+    N --> O[Serve bounded snapshot-pinned browser results]
+    O --> P[Index CVE catalog only after a CVE detail request]
 ```
 
 ## 1. What starts a collection
@@ -224,22 +227,27 @@ does not read raw pages.
 curated/YYYY/MM/DD/<run-id>/*.json.gz
 ```
 
-| File | What it contains | Loaded when the dashboard opens? |
+The table describes server-side use. None of these complete datasets is
+downloaded into the browser by normal dashboard startup. Preparing all default
+views includes Reporting, so its lifecycle-event indexes are built before the
+server becomes ready, not deferred until the first visitor opens Reporting.
+
+| File | What it contains | Server-side use |
 |---|---|---:|
-| `findings.json.gz` | One current device/CVE/product/version finding instance, including lifecycle, priority, ownership, exploit, and SLA fields | Yes, required |
-| `finding-events.json.gz` | New, pending, fixed, returned, and reopened finding transitions retained across runs | Yes, optional history |
-| `recommendation-events.json.gz` | Recommendation baseline, activation, inactivity, and reopening events | Yes, optional history |
-| `run-history.json.gz` | Compact run-to-run metrics for findings, machines, CVEs, recommendations, and SLA outcomes | Yes, optional history |
-| `devices.json.gz` | Normalized Defender device inventory, including devices with no current finding row | Yes, required |
-| `vulnerabilities.json.gz` | CVE descriptions and detailed CVE evidence for CVEs referenced by collected findings | **No; requested when CVE detail is opened** |
-| `recommendations.json.gz` | Normalized Defender recommendations and remediation guidance | Yes, required |
-| `recommendation-machines.json.gz` | Recommendation-to-device relationships, with locally derived and API-derived sources | Yes, optional |
-| `remediation-activities.json.gz` | Optional Defender remediation-task evidence when the experimental route is enabled | Only when the feature is enabled |
-| `daily-summary.json.gz` | Daily new, fixed, reopened, remaining, exploit, SLA, assignment, pending, and median-time-to-fix measures | Yes, required |
-| `collection-runs.json.gz` | Per-endpoint run status, row count, duration, mode, freshness, and error text | Yes, required |
-| `reconciliation.json.gz` | Monthly previous/new/fixed/reopened/current control totals used to explain lifecycle reconciliation | No; available through evidence/data-browser tooling |
-| `secure-scores.json.gz` | Normalized Secure Score observations | Yes, optional |
-| `subscriptions.json.gz` | Subscriptions visible in the configured Azure scope, including subscriptions with no current findings | Yes, optional |
+| `findings.json.gz` | One current device/CVE/product/version finding instance, including lifecycle, priority, ownership, exploit, and SLA fields | Required for prepared views |
+| `finding-events.json.gz` | New, pending, fixed, returned, and reopened finding transitions retained across runs | Optional history indexed for Reporting preparation |
+| `recommendation-events.json.gz` | Recommendation baseline, activation, inactivity, and reopening events | Optional history indexed for Reporting preparation |
+| `run-history.json.gz` | Compact run-to-run metrics for findings, machines, CVEs, recommendations, and SLA outcomes | Optional input to current metrics and history comparisons |
+| `devices.json.gz` | Normalized Defender device inventory, including devices with no current finding row | Indexed for Endpoint assets preparation and machine detail |
+| `vulnerabilities.json.gz` | CVE descriptions and detailed CVE evidence for CVEs referenced by collected findings | On first CVE detail request, not default-view preparation |
+| `recommendations.json.gz` | Normalized Defender recommendations and remediation guidance | Optional query input; absence is reported in notices |
+| `recommendation-machines.json.gz` | Recommendation-to-device relationships, with locally derived and API-derived sources | Optional input to prepared views |
+| `remediation-activities.json.gz` | Optional Defender remediation-task evidence when the experimental route is enabled | Available to evidence/compatibility tooling; not a default query dependency |
+| `daily-summary.json.gz` | Daily new, fixed, reopened, remaining, exploit, SLA, assignment, pending, and median-time-to-fix measures | Retained output available to evidence/compatibility tooling; server-paged views calculate from indexed evidence |
+| `collection-runs.json.gz` | Per-endpoint run status, row count, duration, mode, freshness, and error text | Optional input to freshness and run comparisons |
+| `reconciliation.json.gz` | Monthly previous/new/fixed/reopened/current control totals used to explain lifecycle reconciliation | Available through evidence/compatibility tooling |
+| `secure-scores.json.gz` | Normalized Secure Score observations | Optional input to prepared views |
+| `subscriptions.json.gz` | Subscriptions visible in the configured Azure scope, including subscriptions with no current findings | Optional input to prepared views and subscription filters |
 
 ### Run control files
 
@@ -279,82 +287,209 @@ This order is deliberate. If collection, compression, validation, or upload
 fails, the Web App continues to use the previous complete run. Users do not see
 half of one run mixed with half of another run.
 
-## 7. What happens when the Web App loads
+## 7. Web App startup, indexing, memory, and caches
 
-The Web App and the browser have separate jobs.
+### Startup happens on the server, not per visitor
 
-### Web App server
+FastAPI's lifespan startup prepares the dashboard before Uvicorn accepts
+application traffic. In hosted Azure mode the Web App uses its managed
+identity, not the browser user's credentials or a developer's `az login`.
 
-The Web App server uses its managed identity to read Storage. On the first data
-request, or after its manifest cache expires, it:
+1. Read the current manifest and reject incomplete or unsupported data.
+2. Identify the immutable snapshot from its source and manifest, and load the
+   SLA policy retained with that snapshot.
+3. Create a process-owned temporary cache directory for the snapshot.
+4. Download the curated files needed by the default views in chunks. Verify
+   compressed byte counts and SHA-256 before making each downloaded file
+   available; a failed download is not treated as an empty successful dataset.
+5. Stream gzip JSON rows into disk-backed SQLite indexes. Do not construct
+   Python lists containing all findings or lifecycle events.
+6. Prepare Summary, Vulnerabilities, Recommendations, Prioritize, Endpoint
+   assets, Remediate (SLA), Reporting, Executive Snapshot, and How to use.
+   Preparation shares the browser's defaults from `dashboard/config.js`.
+7. Mark the snapshot ready, start the background refresh watcher, and complete
+   application startup.
 
-1. Downloads `current/manifest.json`.
-2. Confirms that the manifest is marked complete.
-3. Compares the run ID with the run ID already cached.
-4. Clears cached datasets if the current run changed.
-5. Locates only the requested curated file in the manifest.
-6. Downloads that compressed file.
-7. Verifies its compressed size and SHA-256.
-8. Decompresses and parses the JSON.
-9. Caches the parsed dataset for the active run.
+Initial preparation failure is logged and fails startup; there is no ready
+older snapshot in a newly started process. During this startup window,
+application health and diagnostics routes cannot be relied on to respond:
+use App Service startup/container logs. Terraform allows up to 1,800 seconds
+for container startup. This is a startup allowance, not a query timeout or a
+performance target. Always On reduces idle unloading, but does not prevent
+deployments, platform maintenance, crashes, or other restarts.
 
-The configured hosted cache is normally 300 seconds. Cache expiration does not
-force every dataset to download again. The next request refreshes the manifest;
-datasets remain cached when the run ID is unchanged.
+### When indexing happens
 
-### Browser
+| Event | Download/index/preparation behavior |
+|---|---|
+| First server process startup | Build the initial snapshot and prepare default views before serving traffic |
+| Another user opens the dashboard | Reuse that process's ready snapshot; no per-user full index build |
+| Browser refresh or return to a default view | Reuse server indexes and matching prepared results |
+| New filter, search, table page, or detail | Query existing indexes; lazily index an additional dataset if needed |
+| New published run | Build separate indexes and default results for the replacement snapshot |
+| Process restart, redeployment that restarts the process, or new scale-out instance | Create a new temporary cache and prepare again |
 
-The browser first loads the static presentation layer: HTML, CSS, JavaScript,
-navigation, empty cards, tables, charts, and loading indicators.
+The current cache is a `TemporaryDirectory` owned by the process and removed
+on normal shutdown. Leftover files after an abnormal exit are not discovered
+or reused by a new process. There is no implemented restart-persistent index
+cache. Reuse means reuse across requests within the same running process.
 
-It then requests:
+### New snapshots and browser consistency
 
-- Runtime health and feature flags
-- Authentication status
-- The retained SLA policy
-- Each startup dataset shown as **Yes** in the table above
+The watcher checks for replacements at `max(1, DASHBOARD_CACHE_SECONDS)`
+seconds. The manifest itself is cached for `DASHBOARD_CACHE_SECONDS`
+(Terraform default 300 seconds; application/local default 30 seconds).
+These settings govern metadata freshness, not the lifetime of an immutable
+dataset index. Expiration does not force the same dataset to download again.
 
-Those dataset requests run independently. Required datasets determine whether
-the dashboard is usable. Optional datasets can fail without hiding otherwise
-valid current data. As each dataset arrives, the browser rebuilds its indexes
-and rerenders the views that can now be completed.
+When a different snapshot is detected:
 
-The browser is not continuously downloading every stored file. It requests the
-published datasets needed for the dashboard and the server serves each dataset
-from its active-run cache after the first verified download.
+1. Protect the current ready snapshot while preparing the replacement.
+2. Download/index the replacement and prepare all default views.
+3. Select the replacement for new browser sessions only after preparation
+   succeeds. Detection plus preparation takes time; the latest storage
+   pointer is not proof that the Web App is already serving that run.
+4. Continue serving the previous ready snapshot if replacement preparation
+   fails, with an explicit notice and server log.
+
+Browser requests include a `snapshotId`. Queries, details, exports, and the
+retained SLA policy stay pinned to that snapshot; an existing session does
+not silently switch when the pointer changes. A browser session does not
+reserve its snapshot indefinitely: if the local cache evicts it, the server
+returns HTTP 409 and the UI requires reload rather than combining two runs.
+Recommendation workflow writes additionally reject an outdated snapshot.
+
+### How the Web App controls memory
+
+The index separates typed analytical facts, compressed literal-search text,
+and losslessly compressed original JSON evidence. Counts, filtering, grouping,
+and standard SLA calculations use indexed facts rather than repeatedly
+decompressing full original records. Detail pages, exports, and arbitrary
+custom-field grouping read original evidence as needed, preserving existing
+semantics rather than substituting approximate calculations. Search computes
+matching row IDs once per query and shares them across that query's widgets.
+
+SQLite uses file-backed temporary storage and an approximately 8 MiB page
+cache setting per connection. Multiple concurrent connections, Python
+objects, response copies, decompression, SQLite work, and the OS filesystem
+cache add overhead. None of the following cache limits is a hard cap on
+total process or App Service memory.
+
+| Cache or work queue | Scope and implemented bound |
+|---|---|
+| Prepared default-view results | Per snapshot/query engine: nine entries, 20 MiB serialized budget, 2 MiB maximum per prepared result; separate from ordinary query eviction |
+| Other complete view results | Per snapshot/query engine: up to eight entries and 16 MiB serialized budget |
+| Shared filter/header results | Per snapshot/query engine: up to eight entries and 8 MiB serialized budget |
+| Grouped report records | Per snapshot/query engine: up to eight groups, 16 MiB total accounting budget, 2 MiB per group; oversized groups use paged SQL instead |
+| Report total counts | Per snapshot/query engine: up to 32 count entries |
+| Asynchronous query jobs | Per process: at most 16 jobs across workspace and report executors, 2 MiB per completed response; completed jobs expire after five minutes when the queue is accessed |
+| Browser view/page responses | Per page session: up to 16 entries, estimated 8 MiB total and 2 MiB per entry; not a total browser-heap limit |
+| Recommendation workflow reads | Per process: reused for up to five seconds; a successful write invalidates the read cache |
+
+Tracking-enabled browser response entries are reused for at most five seconds.
+Snapshot selection, tracking refresh/actions, and explicit retries invalidate
+browser response caches. With tracking disabled, unchanged snapshot-pinned
+responses can be reused until eviction or invalidation.
+
+### Local disk and worker scaling
+
+Each process retains at most two local snapshots within an 8 GiB total
+snapshot-directory budget. The directories include downloaded gzip inputs,
+SQLite indexes, and local index auxiliary files. SQLite scratch space may
+need additional free disk. Free-space checks reserve at least 128 MiB and
+perform additional admission checks during download/indexing.
+
+Only local snapshots without an active acquisition are eligible for eviction.
+The served ready snapshot is protected during replacement preparation.
+If the replacement cannot fit alongside protected data, preparation fails
+explicitly and the old ready snapshot remains selected. Do not assume the
+two-snapshot limit guarantees that any two customer snapshots will fit.
+
+The deployment default is one Uvicorn process. Additional processes or
+App Service instances each prepare their own indexes, response caches, and
+job executors. More workers multiply memory/disk/download work; the 8 GiB
+budget is per process, not a shared global allowance. Increasing worker count
+is not a free throughput improvement.
+
+All of this is disposable Web App caching, not Azure evidence retention.
+Evicting local cache directories never deletes retained raw, curated, run,
+policy, or workflow history in Azure Storage. The collector does not need
+to rerun merely because a Web App cache was lost.
+
+### Browser loading and background queries
+
+After server startup, the browser loads HTML/CSS/JavaScript and runtime/auth
+metadata, then selects the ready snapshot through
+`GET /api/dashboard/snapshot`. This returns the snapshot identity, time,
+retained policy, and notices, not the finding dataset.
+
+Views, filters, pages, and drill-downs use `POST /api/dashboard/query`.
+The server returns aggregates and table pages (normally 100 rows, maximum
+200 per table page). Matching prepared results return directly. An uncached
+asynchronous request returns HTTP 202 with a stable logical job and a
+two-second retry interval; the browser polls short requests until it completes.
+Two workspace-query threads and one separate report thread prevent a heavy
+Reporting/Executive Snapshot query from occupying every workspace execution
+slot. These are threads within each Uvicorn process, not three additional
+server processes.
+
+Search input is debounced by 250 ms. Superseded browser requests are aborted
+or their responses ignored using request sequence checks. This prevents
+stale results from overwriting newer filters; it does not guarantee that an
+already-running server computation is cancelled.
+
+CSV exports use `POST /api/dashboard/export` and stream rows from the pinned
+server index. The browser does not assemble a complete export in memory.
+Normal dashboard navigation does not call the complete-dataset compatibility
+routes under `/api/data/`. Those routes still parse/cache complete datasets
+and can consume significantly more memory; do not use a full findings
+download as a proxy for normal dashboard performance.
+
+### Diagnostics and performance expectations
+
+After startup, authenticated `GET /api/diagnostics` reports:
+
+- `dashboardQueries.mode` (`server-paged`), `maxRetainedSnapshots`, and
+  `maxLocalBytes`.
+- `retainedSnapshots[]`: snapshot/run IDs, local bytes, and active queries.
+- `dashboardQueries.preparation`: status, ready/preparing snapshot IDs,
+  preparation duration after success, and replacement error notices.
+
+The `durationSeconds` value measures default-view preparation after snapshot
+selection, including dataset downloads and indexing triggered by those views.
+It excludes earlier manifest/policy loading and process initialization, so it
+is not a complete startup stopwatch. Legacy
+`cachedDatasets` diagnostics describe the compatibility data-store cache,
+not the disk-backed query indexes. Inspect the snapshot diagnostics and
+server logs together. The diagnostics endpoint is not a full memory profiler.
+
+Use the [documented two-million-finding benchmark](../README.md#dashboard-flow)
+and [Web App troubleshooting](troubleshooting.md#8-web-app-and-browser).
+The benchmark figures in the README identify their measured version and
+scope: local engine timings exclude Azure download, HTTP, rendering, and
+concurrent users. Cold indexing and all default preparation took about
+221 seconds from already-local inputs in the all-detected fixture. This
+is not a fixed startup duration for customer hardware/data. Warm view reads
+are much cheaper, but uncached filters can still take seconds.
 
 ## 8. What happens when a user opens a CVE
 
-The initial `findings` data already includes the CVE ID and the operating fields
-needed for counts, severity, exploit flags, prioritization, machine impact,
-recommendation grouping, lifecycle, and SLA reporting.
+Indexed findings already contain the CVE IDs and operating fields needed for
+counts, severity, exploit flags, priority, machine impact, and SLA reporting.
+Neither the browser's startup nor the default-view preparation downloads the
+CVE description catalog into browser memory.
 
-The browser does **not** load `vulnerabilities.json.gz` during startup.
+1. The browser submits a snapshot-pinned `detail` query with a CVE selection
+   to `POST /api/dashboard/query`.
+2. If not indexed yet, the server downloads the snapshot's
+   `vulnerabilities.json.gz`, verifies it, and streams it into the local index.
+3. The server returns the selected CVE record and bounded related tables.
+4. Later CVE requests reuse that snapshot's local index. A new snapshot or
+   process has its own catalog/index and may incur preparation again.
 
-When a user opens a specific CVE:
-
-1. The browser requests:
-
-   ```text
-   /api/data/cve-details/<CVE-ID>.json
-   ```
-
-2. The Web App maps that request to the curated `vulnerabilities` dataset.
-3. On the first CVE request for the active run, the server downloads
-   `vulnerabilities.json.gz`, verifies it, decompresses it, and caches the
-   referenced-CVE catalog.
-4. The server selects the requested CVE row and returns only that row to the
-   browser.
-5. Later CVE requests use the server cache until the run changes or the
-   process cache is lost.
-
-That distinction matters:
-
-- The **browser** receives only the requested CVE detail.
-- The **server** downloads the compact referenced-CVE catalog on the first CVE
-  request, not during dashboard startup.
-- The original full Defender vulnerability pages remain in raw history and
-  are never sent to the browser.
+The legacy `/api/data/cve-details/<CVE-ID>.json` route remains available, but
+is not the normal server-paged drill-down path. Raw Defender pages remain
+historical evidence and are not used by normal dashboard queries.
 
 ## 9. One normal week
 
@@ -399,9 +534,11 @@ not change what the dashboard expects.
 | Gzip compression | Reduce Storage use and data transfer for large JSON responses and datasets. |
 | Immutable run folders | Make every published snapshot explainable and replayable. |
 | Current pointer published last | Prevent partial runs from becoming visible. |
-| Independent startup requests | Let completed dashboard sections render without waiting for every optional source. |
+| Prepare default views before serving | Avoid making the first visitor build every default screen. |
+| Disk-backed analytical indexes | Bound in-memory data handling while retaining original detailed evidence. |
+| Snapshot-pinned bounded queries | Avoid full browser dataset downloads and mixing runs. |
 | Lazy CVE detail | Keep the CVE catalog out of the browser's initial load while preserving detailed descriptions when requested. |
-| Server cache by run ID | Avoid downloading and decompressing the same dataset for every browser request. |
+| Per-process snapshot caches | Reuse indexes and bounded results across requests; rebuild after process restart. |
 
 ## Source-of-truth implementation
 
@@ -416,7 +553,15 @@ not change what the dashboard expects.
   [`storage_writer.py`](../src/vulnerability_view/storage_writer.py)
 - Lifecycle summaries:
   [`summary_builder.py`](../src/vulnerability_view/summary_builder.py)
-- Server cache and CVE-detail routing:
+- Server routes, lifecycle, and exports:
   [`dashboard_server.py`](../src/vulnerability_view/dashboard_server.py)
-- Browser startup and lazy CVE request:
+- Snapshot disk retention and streaming:
+  [`dashboard_snapshots.py`](../src/vulnerability_view/dashboard_snapshots.py)
+- Startup and replacement preparation:
+  [`dashboard_preparation.py`](../src/vulnerability_view/dashboard_preparation.py)
+- SQLite indexes, analytical queries, and bounded result caches:
+  [`dashboard_queries.py`](../src/vulnerability_view/dashboard_queries.py)
+- Background query/report jobs:
+  [`dashboard_jobs.py`](../src/vulnerability_view/dashboard_jobs.py)
+- Browser snapshot selection, bounded requests, and response cache:
   [`app.js`](../dashboard/app.js)

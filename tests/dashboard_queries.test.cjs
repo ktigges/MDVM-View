@@ -10,7 +10,7 @@ const snapshotId = "a".repeat(64);
 const snapshot = {snapshotId, runId:"run-1", snapshotTimeUtc:"2026-10-24T00:00:00Z", source:"local", slaPolicy:null};
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function fixture({snapshotStatus=200, notices=[]}={}) {
+function fixture({snapshotStatus=200, notices=[], now=null}={}) {
   const elements = new Map(), nodes = [], requests = [], timers = new Map();
   let timerId = 0;
   function node(id="") {
@@ -78,7 +78,7 @@ function fixture({snapshotStatus=200, notices=[]}={}) {
   };
   const response = (payload,status=200) => ({ok:status>=200&&status<300,status,json:async()=>payload});
   const context = vm.createContext({
-    document,console,AbortController,Set,Map,Date,Number,URL:{createObjectURL:()=>"blob:test",revokeObjectURL(){}},
+    document,console,AbortController,Set,Map,Date:now?class extends Date{static now(){return now();}}:Date,Number,URL:{createObjectURL:()=>"blob:test",revokeObjectURL(){}},
     window:{VULNERABILITY_VIEW_CONFIG:{},addEventListener(){},scrollTo(){},innerHeight:900},
     history:{},location:{pathname:"/",search:"",hash:"",reload(){context.reloaded=true;},assign(){}},
     localStorage:{getItem:()=>null,setItem(){}},matchMedia:()=>({matches:false}),
@@ -117,6 +117,61 @@ test("initial load pins metadata and requests only the summary, never full datas
   assert.equal(app.elements.get("newFindingCount").textContent,"15");
   assert.equal(app.elements.get("newCveCount").textContent,"5");
   assert.equal(app.elements.get("loadingNotice").hidden,true);
+});
+
+test("report progress is indeterminate and its elapsed clock does not issue extra requests",async()=>{
+  let now=1000;
+  const app=fixture({now:()=>now});await tick();
+  const notice=app.elements.get("loadingNotice");
+  assert.match(notice.innerHTML,/role="progressbar"/);
+  assert.match(notice.innerHTML,/Waiting for server response/);
+  assert.match(notice.innerHTML,/Completion percentage and remaining time are not reported/);
+  assert.doesNotMatch(notice.innerHTML,/aria-valuenow|aria-valuemax/);
+  assert.equal(app.elements.get("reportProgressElapsed").textContent,"Elapsed 0:00");
+  now+=61000;
+  app.flushTimers();await tick();
+  assert.equal(app.elements.get("reportProgressElapsed").textContent,"Elapsed 1:01");
+  assert.equal(app.query().length,1);
+  app.query()[0].resolve({snapshotId,status:"preparing",retryAfterSeconds:2},202);await tick();
+  assert.match(notice.innerHTML,/Server preparation pending · 1 status check/);
+  assert.equal(app.elements.get("reportProgressElapsed").textContent,"Elapsed 1:01");
+  now+=9000;
+  app.flushTimers();await tick();
+  assert.equal(app.elements.get("reportProgressElapsed").textContent,"Elapsed 1:10");
+  assert.equal(app.query().length,2);
+  assert.equal(app.query()[1].options.body,app.query()[0].options.body);
+  app.query()[1].resolve({snapshotId,status:"preparing",retryAfterSeconds:2},202);await tick();
+  assert.match(notice.innerHTML,/Server preparation pending · 2 status checks/);
+  app.flushTimers();await tick();
+  app.query().at(-1).resolve(app.payload());await tick();
+  assert.equal(notice.hidden,true);
+  assert.equal(app.run("dashboardVisualProgress.timer"),null);
+  now+=60000;
+  app.flushTimers();await tick();
+  assert.equal(app.query().length,3);
+  assert.equal(app.elements.get("reportProgressElapsed").textContent,"Elapsed 1:10");
+});
+
+test("changing report views resets visual progress without retaining a cancelled poll",async()=>{
+  let now=1000;
+  const app=fixture({now:()=>now});await tick();
+  now+=4000;
+  app.query()[0].resolve({snapshotId,status:"preparing",retryAfterSeconds:2},202);await tick();
+  assert.match(app.elements.get("loadingNotice").innerHTML,/1 status check/);
+  app.run('activateView("trend")');await tick();
+  assert.equal(app.elements.get("reportProgressElapsed").textContent,"Elapsed 0:00");
+  assert.match(app.elements.get("loadingNotice").innerHTML,/Waiting for server response/);
+  assert.equal(app.run("dashboardVisualProgress.checks"),0);
+  app.flushTimers();await tick();
+  assert.equal(app.query().length,2);
+  app.query().at(-1).resolve(app.payload());await tick();
+  assert.equal(app.run("dashboardVisualProgress.timer"),null);
+});
+
+test("report progress respects reduced motion and marks elapsed updates as non-announcing",()=>{
+  const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
+  assert.match(css,/@media\(prefers-reduced-motion:reduce\)\{\.report-progress-indicator\{animation:none/);
+  assert.match(html,/id="reportProgressElapsed" aria-live="off"/);
 });
 
 test("missing CVE metadata shows unavailable details and unknown scores without hiding findings",async()=>{
@@ -270,7 +325,9 @@ test("snapshot conflicts expose an explicit reload affordance and never silently
   assert.equal(app.elements.get("dashboardQueryStatus").hidden,false);
   assert.match(app.elements.get("dashboardQueryMessage").textContent,/New snapshot available/);
   assert.equal(app.elements.get("reloadDashboardSnapshot").hidden,false);
+  assert.equal(app.run("dashboardVisualProgress.timer"),null);
   app.run('activateView("priority")');
+  assert.equal(app.run("dashboardVisualProgress.timer"),null);
   assert.equal(app.query().length,1);
   assert.equal(app.requests.filter(request=>request.url==="/api/dashboard/snapshot").length,1);
   app.elements.get("reloadDashboardSnapshot").click();
@@ -282,6 +339,7 @@ test("network and validation failures are visible, retryable and do not reveal s
   app.query()[0].reject(new Error("network offline"));await tick();
   assert.match(app.elements.get("dashboardQueryMessage").textContent,/network offline/);
   assert.equal(app.elements.get("loadingNotice").hidden,true);
+  assert.equal(app.run("dashboardVisualProgress.timer"),null);
   assert.equal(app.elements.get("retryDashboardQuery").hidden,false);
   app.elements.get("retryDashboardQuery").click();
   app.query().at(-1).resolve({detail:"Invalid date range"},422);await tick();
@@ -292,6 +350,7 @@ test("snapshot metadata failures are visible and retry metadata without requesti
   const app=fixture({snapshotStatus:503});await tick();
   assert.equal(app.query().length,0);
   assert.match(app.elements.get("dashboardQueryMessage").textContent,/Snapshot unavailable/);
+  assert.equal(app.run("dashboardVisualProgress.timer"),null);
   app.elements.get("retryDashboardQuery").click();await tick();
   assert.equal(app.requests.filter(request=>request.url==="/api/dashboard/snapshot").length,2);
 });
@@ -490,6 +549,7 @@ test("a preparation failure is visible and retry starts a new logical request",a
   app.query().at(-1).resolve({detail:"Snapshot preparation failed; retry later."},503);await tick();
   assert.match(app.elements.get("dashboardQueryMessage").textContent,/preparation failed/);
   assert.equal(app.elements.get("loadingNotice").hidden,true);
+  assert.equal(app.run("dashboardVisualProgress.timer"),null);
   assert.equal(app.elements.get("retryDashboardQuery").hidden,false);
   app.elements.get("retryDashboardQuery").click();
   assert.notEqual(app.query().at(-1).payload.requestId,firstId);

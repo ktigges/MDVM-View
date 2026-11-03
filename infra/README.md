@@ -38,6 +38,12 @@ The Operations and diagnostics submenu includes a `FULL`-confirmed complete
 vulnerability baseline and recommendation-relationship reconciliation. Normal
 scheduled collection uses deltas between weekly full vulnerability baselines.
 
+Select **7 → 13** to export the latest published snapshot as a verified local
+ZIP, without starting a collection, deploying code, or changing Azure Storage.
+The signed-in Azure CLI identity needs blob-read access to both history and
+current-pointer containers. See [snapshot export](../docs/operations-and-configuration.md#export-the-latest-published-snapshot-for-analysis)
+for contents, local output location, and sensitive-data handling.
+
 Dashboard large-data changes use the existing **Deploy and verify Web App
 code** operation; no Function deployment or collection is needed. The dashboard
 loads summary metrics first, then requests snapshot-pinned server-side table

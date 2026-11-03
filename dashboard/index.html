@@ -45,7 +45,12 @@
 
   <div id="loadingNotice" class="loading-notice" role="status" aria-live="polite">
     <span class="loading-spinner" aria-hidden="true"></span>
-    <div><strong>Loading dashboard summary</strong><span>Pinning the current snapshot; detail is queried only when requested.</span></div>
+    <div class="loading-notice-content">
+      <strong>Loading dashboard summary</strong><span>Pinning the current snapshot; detail is queried only when requested.</span>
+      <div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="Pinning the current snapshot; completion percentage unavailable"><span class="report-progress-indicator"></span></div>
+      <div class="report-progress-meta"><span id="reportProgressPhase">Pinning the current snapshot</span><span id="reportProgressElapsed" aria-live="off">Elapsed 0:00</span></div>
+      <small>Completion percentage and remaining time are not reported by the server.</small>
+    </div>
   </div>
   <section id="dashboardQueryStatus" class="dashboard-query-status" role="alert" hidden>
     <span id="dashboardQueryMessage"></span>

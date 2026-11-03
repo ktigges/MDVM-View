@@ -1,6 +1,6 @@
 # Documentation
 
-> **Last modified:** 2026-10-12
+> **Last modified:** 2026-11-03
 > **Purpose:** Provide one ordered entry point for installation, operations, troubleshooting, application logic, and deep reference material.
 
 Return to the [project README](../README.md) for the product overview and
@@ -77,6 +77,7 @@ Local work is intentionally separated from hosted deployment. Start with the
 | Find a command | [Command reference](command-reference.md) |
 | Find a setting | [Configuration reference](configuration-reference.md) |
 | Understand what a job calls and what files it creates | [Application flow](application-flow.md) |
+| Understand Web App startup, memory, indexes, caches, and snapshot replacement | [Web App runtime](application-flow.md#7-web-app-startup-indexing-memory-and-caches) |
 | Understand fixed/reopened logic | [Dashboard and collection logic](../LOGIC.md#6-finding-completion-and-reopening) |
 | Understand SLA clocks | [Dashboard and collection logic](../LOGIC.md#5-sla-targeting) |
 | Understand retention and purge behavior | [Data structure and retention](data/) |

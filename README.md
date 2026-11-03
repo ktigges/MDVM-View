@@ -427,6 +427,9 @@ Other views and detail pivots load only when opened. Filtering, counting, CVE
 grouping, and paging run against a local SQLite index on the Web App, rather
 than sending complete findings and event histories to the browser. Counts
 describe the entire matching scope, not just the displayed page.
+For the complete server startup sequence, new-snapshot handoff, memory/cache
+limits, local disk use, browser requests, and diagnostics, see
+[Web App startup, indexing, memory, and caches](docs/application-flow.md#7-web-app-startup-indexing-memory-and-caches).
 In machine and vulnerability detail, **distinct active CVEs** counts unique CVEs
 on detected findings only (`Open`, `Reopened`, or `DetectionReturned`).
 **Active finding instances** counts those detected rows; multiple software or
@@ -492,8 +495,9 @@ are retained per worker; each cached result is limited to 2 MiB.
 Each Web App worker retains at most two local snapshot caches, subject to an
 8 GiB total local-disk budget. Cold indexes take time to build; subsequent
 requests reuse them. Replacing the Web App container can discard this disposable
-cache, not Azure history; worker restarts reuse indexes only when that local
-cache survives. Local disk exhaustion is reported as an error; it does not
+cache, not Azure history. The current snapshot cache is a process-owned temporary
+directory, removed on normal shutdown; a new process does not discover or reuse
+old indexes and must prepare again. Local disk exhaustion is reported as an error; it does not
 trigger deletion of retained Storage data. Allow enough local disk for the
 compressed inputs and SQLite indexes.
 SQLite query scratch space requires additional free disk beyond retained indexes.

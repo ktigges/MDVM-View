@@ -116,12 +116,12 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `web_app_service_plan_name` | Required | Linux App Service plan name |
 | `web_app_identity_name` | Required | User-assigned identity used by the dashboard |
 | `web_app_sku_name` | `B2` | App Service plan SKU; hosted deployments start with B2 |
-| `web_app_worker_processes` | `1`; from 1 through 4 | Uvicorn worker processes; the default single process keeps one verified-bundle cache |
+| `web_app_worker_processes` | `1`; from 1 through 4 | Uvicorn processes; each independently prepares snapshots and owns memory caches, query threads, and an 8 GiB local snapshot-cache budget |
 | `dashboard_entra_application_name` | `DVM Viewer` | App registration and Enterprise Application display name |
 | `dashboard_data_browser_enabled` | `false` | Enables Data Evidence UI/API and assigns `Data.Evidence.Reader` to the access group |
 | `dashboard_recommendation_tracking_enabled` | `false` | Enables shared dashboard-local work-status UI/API |
 | `dashboard_recommendation_tracking_container` | `dvm-workflow` | Append-only workflow-event container |
-| `dashboard_cache_seconds` | `300`; zero or greater | Per-process cache lifetime for verified current Azure datasets |
+| `dashboard_cache_seconds` | `300`; zero or greater | Current-manifest cache duration; replacement watcher checks at least once per `max(1, value)` seconds, then prepares a new snapshot before selecting it |
 | `tags` | Application/environment/managed-by map | Tags merged onto Azure resources |
 
 For **Tenant Root Group**, set `collector_management_group_id` to the Microsoft
@@ -196,7 +196,7 @@ These can be environment variables or keys in
 | `COLLECTION_SCHEDULE` | `collectionSchedule` | `0 0 5 * * *` | UTC Functions timer schedule |
 | `DASHBOARD_DATA_SOURCE` | `dashboardDataSource` | `local` | `local` reads `dashboard/data`; `azure` reads current manifest and curated blobs |
 | `DASHBOARD_STATIC_DIR` | `dashboardStaticDir` | Empty | Override path for dashboard static assets |
-| `DASHBOARD_CACHE_SECONDS` | `dashboardCacheSeconds` | `30`; zero or greater | Verified dataset cache duration |
+| `DASHBOARD_CACHE_SECONDS` | `dashboardCacheSeconds` | `30`; zero or greater | Current-manifest cache duration and background snapshot-check interval (minimum one second); unchanged immutable indexes do not expire on this timer |
 | `DASHBOARD_AUTH_ENABLED` | `dashboardAuthEnabled` | `false` | Requires App Service Easy Auth identity when enabled |
 | `DASHBOARD_DATA_BROWSER_ENABLED` | `dashboardDataBrowserEnabled` | `false` | Enables read-only Data Evidence surface |
 | `DASHBOARD_DATA_BROWSER_ROLE` | `dashboardDataBrowserRole` | Empty | Optional Easy Auth role required by Data Evidence |
@@ -281,6 +281,15 @@ collection publishes the updated policy.
 ## 8. Dashboard presentation
 
 File: `dashboard/config.js`
+
+While a report view is loading, its banner shows an indeterminate progress bar,
+elapsed request time, and the number of server preparation-status responses.
+These are visual indicators, not a completion percentage or an estimated finish
+time: the current query API reports `preparing` without work-unit totals. The
+elapsed clock resets for a new view/filter request and stops on completion,
+failure, or snapshot expiry. Reduced-motion preferences disable the animation.
+Report computation, query payloads, polling intervals, caching, and timeouts are
+unchanged.
 
 | Setting | Effect |
 |---|---|
