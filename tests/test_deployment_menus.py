@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -19,6 +20,21 @@ POWERSHELL_GITHUB_WORKFLOW = Path("infra/github-workflow-menu.ps1")
 
 def menu_sources() -> tuple[str, str]:
     return SHELL_MENU.read_text(encoding="utf-8"), POWERSHELL_MENU.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("path", (
+    SHELL_MENU, POWERSHELL_MENU, SHELL_GITHUB_WORKFLOW, POWERSHELL_GITHUB_WORKFLOW,
+))
+def test_menu_exit_or_return_is_always_last(path):
+    source = path.read_text(encoding="utf-8")
+    menus = re.findall(r"(?:^  \d+\) .+\n)+", source, re.MULTILINE)
+    assert menus
+    for menu in menus:
+        options = menu.splitlines()
+        numbers = [int(option.strip().split(")", 1)[0]) for option in options]
+        assert numbers == list(range(1, len(options) + 1))
+        exits = [option for option in options if re.search(r"\) (?:Exit|Return\b)", option)]
+        assert exits == [options[-1]]
 
 
 def test_legacy_webapp_deployment_defers_runtime_tracking_until_explicit_restart():
@@ -120,6 +136,7 @@ def test_deployment_menus_wrap_the_same_operations():
             "Invoke-OperationsCli export-function-logs --days $days",
         ),
         ("run_cli export-latest-snapshot", "Invoke-OperationsCli export-latest-snapshot"),
+        ("run_cli check-webapp-startup-logs", "Invoke-OperationsCli check-webapp-startup-logs"),
     )
 
     for shell_call, powershell_call in equivalent_calls:
@@ -141,9 +158,10 @@ def test_deployment_menus_expose_matching_operations_submenu():
         "8) Force full vulnerability and relationship reconciliation",
         "9) Show Function execution, host, and deployment logs (choose days)",
         "10) Pull sanitized Function logs (choose days)",
-        "11) Return to deployment menu",
-        "12) Download legacy manual diagnostics (new runs: use progress/log export)",
-        "13) Export latest published snapshot (verified local ZIP; read-only)",
+        "11) Download legacy manual diagnostics (new runs: use progress/log export)",
+        "12) Export latest published snapshot (verified local ZIP; read-only)",
+        "13) Show Web App startup logs (latest retained container log)",
+        "14) Return to deployment menu",
     )
 
     for option in options:
@@ -171,14 +189,16 @@ def test_bash_custom_log_days_default_validation_and_return_order():
     ])
     result = subprocess.run(
         ["bash", "-c", script],
-        input="9\n0\n-1\nabc\n\n10\n3\n13\n11\n",
+        input="9\n0\n-1\nabc\n\n10\n3\n11\n12\n13\n14\n",
         text=True, capture_output=True, timeout=15,
     )
     assert result.returncode == 0, result.stderr
     assert "CALL: check-function-logs --days 2 --limit 25" in result.stdout
     assert "CALL: export-function-logs --days 3" in result.stdout
     assert "CALL: export-latest-snapshot" in result.stdout
-    assert result.stdout.count("CALL:") == 3
+    assert "CALL: download-collection-diagnostics" in result.stdout
+    assert "CALL: check-webapp-startup-logs" in result.stdout
+    assert result.stdout.count("CALL:") == 5
     assert result.stdout.count("Enter a positive whole number of days.") == 3
 
 
@@ -195,7 +215,7 @@ $helper = $ast.Find({{ param($node) $node -is [System.Management.Automation.Lang
 Set-Item -Path function:Invoke-FunctionLogsForDays -Value ($helper.Body.GetScriptBlock())
 $menu = $ast.Find({{ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-OperationsMenu' }}, $true)
 $script:Choices = [System.Collections.Generic.Queue[string]]::new()
-'9', '0', '-1', 'abc', '', '10', '3', '13', '11' | ForEach-Object {{ $script:Choices.Enqueue($_) }}
+'9', '0', '-1', 'abc', '', '10', '3', '11', '12', '13', '14' | ForEach-Object {{ $script:Choices.Enqueue($_) }}
 function Read-Host {{ param($Prompt) $script:Choices.Dequeue() }}
 function Pause-Menu {{}}
 function Invoke-OperationsCli {{ param([Parameter(ValueFromRemainingArguments)][string[]]$CliArguments) Write-Output ('CALL: ' + ($CliArguments -join ' ')) }}
@@ -209,7 +229,9 @@ function Invoke-OperationsCli {{ param([Parameter(ValueFromRemainingArguments)][
     assert "CALL: check-function-logs --days 2 --limit 25" in result.stdout
     assert "CALL: export-function-logs --days 3" in result.stdout
     assert "CALL: export-latest-snapshot" in result.stdout
-    assert result.stdout.count("CALL:") == 3
+    assert "CALL: download-collection-diagnostics" in result.stdout
+    assert "CALL: check-webapp-startup-logs" in result.stdout
+    assert result.stdout.count("CALL:") == 5
     assert result.stdout.count("Enter a positive whole number of days.") == 3
 
 
@@ -308,9 +330,9 @@ def test_powershell_menu_preserves_python_executable_as_one_value():
 def test_deployment_menus_show_version_and_revision_in_title():
     shell, powershell = menu_sources()
 
-    assert 'DEPLOYMENT_MENU_VERSION="2026.11.03.1"' in shell
+    assert 'DEPLOYMENT_MENU_VERSION="2026.11.03.3"' in shell
     assert 'Vulnerability View deployment menu %s (revision %s)' in shell
-    assert '$DeploymentMenuVersion = "2026.11.03.1"' in powershell
+    assert '$DeploymentMenuVersion = "2026.11.03.3"' in powershell
     assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
 

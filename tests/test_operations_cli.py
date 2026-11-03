@@ -14,6 +14,60 @@ import pytest
 from vulnerability_view import operations_cli
 
 
+def test_webapp_startup_logs_use_configured_target_and_bounded_commands(monkeypatch, capsys):
+    outputs = {"resource_group_name": "rg-test", "web_app_name": "app-test"}
+    monkeypatch.setattr(operations_cli, "_tf_output", outputs.__getitem__)
+    calls = []
+
+    def fake_az(*arguments, **kwargs):
+        calls.append((arguments, kwargs))
+        return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(operations_cli, "_az", fake_az)
+    assert operations_cli.main(["check-webapp-startup-logs"]) == 0
+    assert calls == [
+        (("webapp", "log", "startup", "show", "--help"), {"capture": True, "check": False, "timeout": 30}),
+        (("webapp", "log", "startup", "show", "--resource-group", "rg-test", "--name", "app-test"), {"timeout": 120}),
+    ]
+    output = capsys.readouterr().out
+    assert "app-test" in output
+    assert "not a live stream" in output
+    assert "unredacted" in output
+
+
+def test_webapp_startup_logs_explain_unsupported_cli(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: "test")
+    calls = []
+
+    def fake_az(*arguments, **kwargs):
+        calls.append(arguments)
+        return subprocess.CompletedProcess(arguments, 2, stdout="", stderr="startup is not recognized")
+
+    monkeypatch.setattr(operations_cli, "_az", fake_az)
+    assert operations_cli.main(["check-webapp-startup-logs"]) == 1
+    assert len(calls) == 1
+    error = capsys.readouterr().err
+    assert "az upgrade" in error
+    assert "startup is not recognized" in error
+
+
+@pytest.mark.parametrize("failure", [
+    subprocess.CalledProcessError(1, ["az", "webapp", "log", "startup", "show"]),
+    subprocess.TimeoutExpired(["az", "webapp", "log", "startup", "show"], 120),
+])
+def test_webapp_startup_logs_surface_errors(monkeypatch, capsys, failure):
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: "test")
+
+    def fake_az(*arguments, **kwargs):
+        if "--help" in arguments:
+            return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+        raise failure
+
+    monkeypatch.setattr(operations_cli, "_az", fake_az)
+    assert operations_cli.main(["check-webapp-startup-logs"]) == 1
+    assert "Operation failed:" in capsys.readouterr().err
+
+
 def test_values_missing_file_explains_initial_configuration(monkeypatch, tmp_path):
     missing = tmp_path / "main.tfvars.json"
     monkeypatch.setattr(operations_cli, "TF_DIR", tmp_path)

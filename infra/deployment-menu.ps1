@@ -5,7 +5,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
-$DeploymentMenuVersion = "2026.11.03.1"
+$DeploymentMenuVersion = "2026.11.03.3"
 $RequiredAzureCliExtensions = @("log-analytics")
 
 function Test-PythonCommand {
@@ -300,9 +300,10 @@ Operations and diagnostics
   8) Force full vulnerability and relationship reconciliation
   9) Show Function execution, host, and deployment logs (choose days)
   10) Pull sanitized Function logs (choose days)
-  11) Return to deployment menu
-  12) Download legacy manual diagnostics (new runs: use progress/log export)
-  13) Export latest published snapshot (verified local ZIP; read-only)
+  11) Download legacy manual diagnostics (new runs: use progress/log export)
+  12) Export latest published snapshot (verified local ZIP; read-only)
+  13) Show Web App startup logs (latest retained container log)
+  14) Return to deployment menu
 "@
         switch (Read-Host "Select an option") {
             "1" { Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only; Pause-Menu }
@@ -315,10 +316,11 @@ Operations and diagnostics
             "8" { Invoke-LiveCollection -Full; Pause-Menu }
             "9" { Invoke-FunctionLogsForDays; Pause-Menu }
             "10" { Invoke-FunctionLogsForDays -Export; Pause-Menu }
-            "11" { return }
-            "12" { Invoke-OperationsCli download-collection-diagnostics; Pause-Menu }
-            "13" { Invoke-OperationsCli export-latest-snapshot; Pause-Menu }
-            default { Write-Host "Select a number from 1 through 13." }
+            "11" { Invoke-OperationsCli download-collection-diagnostics; Pause-Menu }
+            "12" { Invoke-OperationsCli export-latest-snapshot; Pause-Menu }
+            "13" { Invoke-OperationsCli check-webapp-startup-logs; Pause-Menu }
+            "14" { return }
+            default { Write-Host "Select a number from 1 through 14." }
         }
     }
 }

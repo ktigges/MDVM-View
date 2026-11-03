@@ -521,7 +521,7 @@ The collector's existing Storage Blob Data Contributor access permits these writ
 The signed-in operator needs blob read access and network access to that account
 to download them; Log Analytics is not required.
 
-Use deployment menu **7 → 12** to download evidence for the newest local manual
+Use deployment menu **7 → 11** to download evidence for the newest local manual
 receipt. To select a particular invocation or download from another workstation:
 
 ```bash
@@ -645,11 +645,21 @@ email addresses, IP addresses, URLs, and configured resource identifiers are
 redacted before either file is written.
 
 The PowerShell and Bash deployment menus provide operations choices **9**
-(show Function logs) and **10** (export sanitized Function logs), with **11**
+(show Function logs) and **10** (export sanitized Function logs), with **14**
 (return to the deployment menu) last. Both log choices ask for a positive whole
 number of lookback days; pressing Enter selects **2 days (48 hours)**. Enter
 `7` when the last collection or deployment is older than the fixed 24/72-hour
 shortcuts. Invalid day counts are explained and prompted again.
+
+Operations choice **13** shows the latest retained Web App container startup
+log (platform lifecycle events and container stdout/stderr), preferring failures
+on the latest date. The equivalent read-only command is
+`python -m vulnerability_view.operations_cli check-webapp-startup-logs`.
+This is not a live stream and does not change logging settings or restart the
+app. It requires an Azure CLI version with the preview
+`az webapp log startup show` command; an unsupported CLI reports an upgrade
+instruction. Logs are unredacted and should be reviewed before sharing.
+
 The cross-platform CLI accepts `--days` or `--hours`, but not both; omitting
 both retains its existing 24-hour default. The cross-platform CLI's detailed display
 uses the same telemetry query as the export, without message-prefix or

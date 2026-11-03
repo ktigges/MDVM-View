@@ -37,9 +37,31 @@ CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
 Each successful invocation creates a new immutable run and advances only the
 current manifest pointer after validation.
 
-### Export the latest published snapshot for analysis
+### Inspect Web App startup logs
 
 In either deployment menu select **7 → 13** (Operations and diagnostics →
+Show Web App startup logs). **14** returns to the deployment menu.
+
+```bash
+python -m vulnerability_view.operations_cli check-webapp-startup-logs
+```
+
+This read-only command uses the Terraform resource group and Web App outputs.
+It shows the latest retained Linux container startup log, preferring a failure
+log when one exists on the latest date. Logs include platform lifecycle events
+and container stdout/stderr, which can help diagnose startup exceptions, port
+timeouts, and HTTP 502/503 responses before the dashboard is ready.
+It is a finite read, not a live stream, and does not restart the app, enable
+logging, or change Azure Storage. It requires an Azure CLI version supporting
+the preview `az webapp log startup show` command; run `az upgrade` if unavailable.
+The signed-in Azure CLI identity needs access to the target Web App's logs.
+An older retained failure does not prove the app is currently failing: check
+the log timestamp. Missing logs or access failures are reported by Azure CLI,
+not treated as proof of health. Logs are **unredacted**; review before sharing.
+
+### Export the latest published snapshot for analysis
+
+In either deployment menu select **7 → 12** (Operations and diagnostics →
 Export latest published snapshot), or run:
 
 ```powershell

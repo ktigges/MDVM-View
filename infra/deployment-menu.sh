@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DEPLOYMENT_MENU_VERSION="2026.11.03.1"
+DEPLOYMENT_MENU_VERSION="2026.11.03.3"
 
 resolve_python() {
   if [[ -n "${PYTHON:-}" ]]; then
@@ -182,9 +182,10 @@ Operations and diagnostics
   8) Force full vulnerability and relationship reconciliation
   9) Show Function execution, host, and deployment logs (choose days)
   10) Pull sanitized Function logs (choose days)
-  11) Return to deployment menu
-  12) Download legacy manual diagnostics (new runs: use progress/log export)
-  13) Export latest published snapshot (verified local ZIP; read-only)
+  11) Download legacy manual diagnostics (new runs: use progress/log export)
+  12) Export latest published snapshot (verified local ZIP; read-only)
+  13) Show Web App startup logs (latest retained container log)
+  14) Return to deployment menu
 EOF
     printf 'Select an option: '
     read -r operations_choice
@@ -199,10 +200,11 @@ EOF
       8) invoke_collection full; pause_menu ;;
       9) function_logs_for_days show; pause_menu ;;
       10) function_logs_for_days export; pause_menu ;;
-      11) return ;;
-      12) run_cli download-collection-diagnostics; pause_menu ;;
-      13) run_cli export-latest-snapshot; pause_menu ;;
-      *) printf 'Select a number from 1 through 13.\n' ;;
+      11) run_cli download-collection-diagnostics; pause_menu ;;
+      12) run_cli export-latest-snapshot; pause_menu ;;
+      13) run_cli check-webapp-startup-logs; pause_menu ;;
+      14) return ;;
+      *) printf 'Select a number from 1 through 14.\n' ;;
     esac
   done
 }
