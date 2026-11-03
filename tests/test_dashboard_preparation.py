@@ -166,7 +166,7 @@ def test_custom_dates_are_part_of_cache_key():
         assert _cache_filters({mode: "custom", start: "2026-10-01"})[start] == "2026-10-01"
 
 
-def test_real_lifespan_prepares_every_default_view_before_serving(tmp_path, monkeypatch):
+def test_real_lifespan_prepares_every_default_view_before_serving(tmp_path, monkeypatch, capsys):
     data = tmp_path / "dashboard/data"
     data.mkdir(parents=True)
     for name, rows in datasets().items():
@@ -208,3 +208,10 @@ def test_real_lifespan_prepares_every_default_view_before_serving(tmp_path, monk
                 assert result["snapshotTimeUtc"] == SNAPSHOT
 
     asyncio.run(verify())
+    logs = capsys.readouterr().err
+    assert "stage=snapshot-metadata event=start" in logs
+    assert "stage=load-rows:findings event=start" in logs
+    assert "stage=build-indexes:findings:rows=" in logs
+    for index, view in enumerate(PREPARED_VIEWS, 1):
+        assert f"stage=view:{view}:{index}/{len(PREPARED_VIEWS)} event=complete" in logs
+    assert "outcome=ready" in logs

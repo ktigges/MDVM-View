@@ -10,6 +10,7 @@ import pytest
 from vulnerability_view import dashboard_snapshots, storage_writer
 from vulnerability_view.config import Settings
 from vulnerability_view.dashboard_snapshots import DashboardCacheFull, DashboardSnapshots, SnapshotExpired
+from vulnerability_view.dashboard_startup import startup_diagnostics
 from vulnerability_view.dataset_io import DatasetFormatError, iter_json_rows
 from vulnerability_view.storage_writer import download_manifest_dataset_file
 
@@ -28,7 +29,7 @@ def manifest_for(run_id, **datasets):
     }
 
 
-def fake_blob_service(monkeypatch, content):
+def fake_blob_service(monkeypatch, content, options=None):
     calls = []
 
     class Download:
@@ -40,7 +41,9 @@ def fake_blob_service(monkeypatch, content):
             pytest.fail("Large dashboard downloads must stream, not readall()")
 
     class Blob:
-        def download_blob(self):
+        def download_blob(self, **kwargs):
+            if options is not None:
+                options.update(kwargs)
             return Download()
 
     class Container:
@@ -75,6 +78,23 @@ def test_dataset_download_streams_and_verifies_before_exposing_file(monkeypatch,
     assert destination.read_bytes() == content
     assert calls == ["runs/run-a/findings.json.gz"]
     assert not list(destination.parent.glob("*.part"))
+
+
+def test_dataset_download_reports_progress_and_preserves_retry_hook(monkeypatch, tmp_path):
+    content = gzip.compress(b'[{"FindingKey":"a"}]')
+    manifest = manifest_for("run-a", findings=content)
+    options, progress = {}, []
+    fake_blob_service(monkeypatch, content, options)
+    retry_hook = lambda **kwargs: None
+    destination = tmp_path / "findings.json.gz"
+    download_manifest_dataset_file(
+        "account", "history", "findings", object(), manifest, destination,
+        retry_hook=retry_hook, progress=progress.append,
+    )
+    assert options == {"retry_hook": retry_hook}
+    assert progress[-1] == len(content)
+    assert progress == sorted(set(progress))
+    assert destination.read_bytes() == content
 
 
 @pytest.mark.parametrize("failure", ["hash", "short", "long"])
@@ -153,6 +173,28 @@ def test_current_snapshot_can_be_hydrated_by_another_server_worker(monkeypatch, 
     finally:
         first.close()
         second.close()
+
+
+def test_azure_startup_logs_metadata_policy_and_streaming_download(monkeypatch, tmp_path, capsys):
+    content = gzip.compress(b'[{"FindingKey":"a"}]')
+    options = {}
+    fake_blob_service(monkeypatch, content, options)
+    snapshots = azure_snapshots(monkeypatch, tmp_path, [manifest_for("run-a", findings=content)])
+    try:
+        with startup_diagnostics():
+            snapshot = snapshots.current()
+            with snapshots.acquire(snapshot.id):
+                assert list(snapshot.engine.rows("findings")) == [{"FindingKey": "a"}]
+        assert callable(options["retry_hook"])
+        logs = capsys.readouterr().err
+        assert "stage=manifest-read event=complete" in logs
+        assert "stage=policy-read event=complete" in logs
+        assert "stage=download:findings:bytes=" in logs
+        assert f"downloadedBytes={len(content)}" in logs
+        assert "FindingKey" not in logs
+        assert "account.blob" not in logs
+    finally:
+        snapshots.close()
 
 
 def test_cache_evicts_only_idle_snapshot_and_expiry_is_explicit(monkeypatch, tmp_path):

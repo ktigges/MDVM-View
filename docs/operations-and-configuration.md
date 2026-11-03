@@ -59,6 +59,44 @@ An older retained failure does not prove the app is currently failing: check
 the log timestamp. Missing logs or access failures are reported by Azure CLI,
 not treated as proof of health. Logs are **unredacted**; review before sharing.
 
+#### Reading application startup progress
+
+After deploying the updated **Web App code** (deployment menu **4**), console
+lines prefixed `[dashboard-startup]` are emitted at INFO independently of
+Uvicorn's application-logger defaults. No Terraform apply, new collection,
+Azure SDK HTTP logging, or customer data export is needed. Each line includes
+UTC time and process ID.
+
+The app logs start/completion timings for manifest and policy reads,
+recommendation-tracking reads, dataset downloads, row loading, SQLite index
+building, and each of the nine default views. A heartbeat every **30 seconds**
+reports the active stage, stage/total elapsed time, rows loaded or bytes
+downloaded where applicable, and resource readings. Logging stops after initial
+preparation; normal browsing and periodic refreshes do not produce heartbeats.
+The startup gate, queries, cache behavior, and Storage retry settings are unchanged.
+
+| Reading | Interpretation |
+|---|---|
+| Increasing `rows` / `downloadedBytes` | Measurable work is advancing, even if the stage has not completed. |
+| `processCpuPercent` | CPU used by this process during the last interval; 100 means one CPU core, not 100% of the App Service plan. High CPU during index/view preparation indicates computation, not proof of a hang. |
+| `rssMiB` | Current process resident memory, where Linux exposes it. |
+| `memoryMiB` / `memoryLimitMiB` | Exposed process-cgroup memory usage/limit, including more than Python heap. Near-limit usage suggests pressure; it does not prove an OOM kill. Parent/plan/shared-worker limits can still apply. |
+| Positive `cpuThrottledSecondsDelta` | The exposed CPU cgroup was throttled during the interval. This is separate from Storage HTTP throttling. |
+| Positive `oomKillsDelta` | The exposed memory cgroup recorded an OOM kill during the interval. |
+| `storageRetry` with `httpStatus=429` or `503` | A pinned dataset download encountered a retryable service response. A 503 may indicate service unavailability, not necessarily throttling. Only existing SDK retries are observed; retries are not added. |
+| Low CPU, unchanged progress, increasing `stageSeconds` | Consistent with waiting on network, identity, disk, locks, or another dependency; not enough by itself to identify which. Use the stage name and platform metrics. |
+| `event=failed` / `outcome=failed` | Preparation failed, not ready. The stage failure includes exception type and available HTTP status/OS error number. |
+| `outcome=ready` | Initial preparation finished; Uvicorn should then report application startup complete. |
+
+Unavailable/unsupported counters are printed as `unavailable`, never as zero.
+Heartbeat scheduling can be delayed by CPU starvation or native code holding
+the interpreter. The app cannot log its own abrupt OOM termination; use platform
+termination logs and App Service metrics if heartbeats stop or process IDs change.
+Storage retry lines cover pinned dataset downloads, not every identity,
+manifest, policy, or tracking request. Stage diagnostics contain no record
+contents, request URLs, or tokens; existing exception/platform logs can still
+contain sensitive information.
+
 ### Export the latest published snapshot for analysis
 
 In either deployment menu select **7 → 12** (Operations and diagnostics →
