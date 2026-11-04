@@ -31,7 +31,7 @@ def test_create_run_bundle_preserves_curated_data_policy_and_checksums(tmp_path:
     manifest = json.loads((bundle / "manifest.json").read_text())
     assert manifest["complete"] is True
     assert manifest["runId"] == "live-20250102T030405Z"
-    assert len(manifest["files"]) == len(DATASET_FILES) + 2
+    assert len(manifest["files"]) == len(DATASET_FILES) + 4
     assert all(file["sha256"] for file in manifest["files"])
 
 

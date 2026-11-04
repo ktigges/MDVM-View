@@ -1,3 +1,4 @@
+import json
 import time
 from threading import Event
 
@@ -6,6 +7,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 from vulnerability_view.dashboard_jobs import DashboardQueryJobs
+from vulnerability_view.dashboard_startup import startup_rows, startup_stage
 
 
 def completed(jobs, key, execute):
@@ -53,6 +55,30 @@ def test_query_errors_keep_their_status_and_are_not_success_payloads():
         assert response.status_code == 409
         assert response.body == b'{"detail":"Reload the dashboard"}'
     finally:
+        jobs.close()
+
+
+def test_pending_job_exposes_real_index_progress():
+    jobs = DashboardQueryJobs()
+    entered, release = Event(), Event()
+
+    def execute():
+        with startup_stage("load-rows:finding-events"):
+            startup_rows(12000)
+            entered.set()
+            assert release.wait(5)
+        return JSONResponse({"ready": True})
+
+    try:
+        jobs.poll("query", "snapshot", execute)
+        assert entered.wait(5)
+        response = jobs.poll("query", "snapshot", execute)
+        progress = json.loads(response.body)["progress"]
+        assert progress["stage"] == "load-rows:finding-events"
+        assert progress["rows"] == 12000
+        assert progress["elapsedSeconds"] >= 0
+    finally:
+        release.set()
         jobs.close()
 
 

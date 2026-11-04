@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+from test_dashboard_query_api import ready_snapshot
 
 from vulnerability_view import dashboard_server
 from vulnerability_view.config import Settings
@@ -500,6 +501,7 @@ def test_data_browser_lists_and_pages_curated_rows(tmp_path: Path):
     }])
     write_json(tmp_path / "dashboard/data/secure-scores.json", [])
     app = create_app(Settings(dashboard_data_browser_enabled=True), project_root=tmp_path)
+    ready_snapshot(app)
 
     catalog_status, catalog_body = asgi_get(app, "/api/data-browser/catalog")
     rows_status, rows_body = asgi_get(app, "/api/data-browser/findings?limit=1&query=High")
@@ -554,6 +556,7 @@ def test_data_browser_accepts_configured_app_role(monkeypatch, tmp_path: Path):
         project_root=tmp_path,
     )
     header = (b"x-ms-client-principal", encoded_principal().encode())
+    ready_snapshot(app)
 
     status, _ = asgi_get(app, "/api/data-browser/catalog", [header])
     page_status, page_body = asgi_get(app, "/data-evidence", [header])
@@ -754,6 +757,7 @@ def test_recommendation_tracking_api_allows_dashboard_user_and_records_action(mo
         project_root=tmp_path,
         recommendation_tracking_store=tracking_store,
     )
+    ready_snapshot(app)
     body = json.dumps({"recommendationId": "rec-1", "status": "InProgress"}).encode()
     headers = [
         (b"x-ms-client-principal", encoded_principal(["Dashboard.Viewer"]).encode()),
@@ -811,6 +815,7 @@ def test_recommendation_tracking_uses_unknown_actor_for_local_preview(tmp_path: 
         project_root=tmp_path,
         recommendation_tracking_store=tracking_store,
     )
+    ready_snapshot(app)
 
     status, body = asgi_get(app, "/api/recommendation-tracking")
 

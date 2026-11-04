@@ -10,7 +10,7 @@ const snapshotId = "a".repeat(64);
 const snapshot = {snapshotId, runId:"run-1", snapshotTimeUtc:"2026-10-24T00:00:00Z", source:"local", slaPolicy:null};
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function fixture({snapshotStatus=200, notices=[], now=null}={}) {
+function fixture({snapshotStatus=200, notices=[], now=null, preparation=null}={}) {
   const elements = new Map(), nodes = [], requests = [], timers = new Map();
   let timerId = 0;
   function node(id="") {
@@ -87,7 +87,8 @@ function fixture({snapshotStatus=200, notices=[], now=null}={}) {
     fetch(url,options={}){
       const request={url,options,payload:options.body?JSON.parse(options.body):null};
       requests.push(request);
-      if(url==="/api/dashboard/snapshot")return Promise.resolve(response({...snapshot,notices},snapshotStatus));
+      if(url==="/api/dashboard/snapshot")return Promise.resolve(response(preparation?{status:"preparing",preparation,retryAfterSeconds:2}:{...snapshot,notices},snapshotStatus));
+      if(url==="/api/dashboard/status")return Promise.resolve(response(preparation||{status:"ready"}));
       if(url==="/api/health")return Promise.resolve(response({}));
       if(url==="/api/auth")return Promise.resolve(response({enabled:false}));
       if(url.startsWith("/api/branding/logo"))return Promise.resolve(response({},404));
@@ -99,6 +100,8 @@ function fixture({snapshotStatus=200, notices=[], now=null}={}) {
     context,elements,requests,selectors,pageButtons,response,
     run:code=>vm.runInContext(code,context),
     query:()=>requests.filter(request=>request.url==="/api/dashboard/query"),
+    setSnapshotReady(){snapshotStatus=200;preparation=null;},
+    setPreparation(value){preparation=value;},
     flushTimers(){const callbacks=[...timers.values()];timers.clear();callbacks.forEach(callback=>callback());},
     payload(overrides={}){return {snapshotId,snapshotTimeUtc:snapshot.snapshotTimeUtc,cards:{},texts:{},tables:{},donuts:{},slaGraphs:{},activity:{newFindings:15,newCves:5},scope:{detected:300,pending:5,recommendations:8},...overrides};}
   };
@@ -117,6 +120,116 @@ test("initial load pins metadata and requests only the summary, never full datas
   assert.equal(app.elements.get("newFindingCount").textContent,"15");
   assert.equal(app.elements.get("newCveCount").textContent,"5");
   assert.equal(app.elements.get("loadingNotice").hidden,true);
+});
+
+test("startup polls index preparation without rendering partial findings",async()=>{
+  const app=fixture({
+    snapshotStatus:202,
+    preparation:{status:"preparing",datasetRows:{findings:1837575},progress:{stage:"load-rows:findings",rows:204000,elapsedSeconds:60}},
+  });
+  await tick();
+  assert.equal(app.query().length,0);
+  assert.match(app.elements.get("loadingNotice").innerHTML,/Rebuilding findings index/);
+  assert.match(app.elements.get("loadingNotice").innerHTML,/204,000 \/ 1,837,575 rows/);
+  assert.match(app.elements.get("loadingNotice").innerHTML,/Partial findings are not shown/);
+  app.setSnapshotReady();
+  app.flushTimers();await tick();
+  assert.equal(app.query().length,1);
+  assert.equal(app.query()[0].payload.view,"executive");
+  app.query()[0].resolve(app.payload());await tick();
+  assert.equal(app.elements.get("loadingNotice").hidden,true);
+});
+
+test("index restore and preparation errors remain visible while retrying",async()=>{
+  const app=fixture({snapshotStatus:202,preparation:{
+    status:"error",error:"Snapshot preparation failed. Retrying automatically.",
+    progress:{stage:"restore-query-index",processedBytes:10485760,elapsedSeconds:12},
+  }});
+  await tick();
+  assert.match(app.elements.get("loadingNotice").innerHTML,/retry scheduled/);
+  assert.match(app.elements.get("loadingNotice").innerHTML,/Restoring published data index/);
+  assert.match(app.elements.get("loadingNotice").innerHTML,/10.0 MiB/);
+  assert.equal(app.query().length,0);
+});
+
+test("replacement status preserves the pinned results and exposes preparation stats",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload({texts:{filterCount:"complete results"}}));await tick();
+  app.setPreparation({status:"preparing",readySnapshotId:snapshotId,progress:{stage:"validate-query-index",elapsedSeconds:4}});
+  app.flushTimers();await tick();
+  const notice=app.elements.get("dashboardPreparationStatus");
+  assert.equal(notice.hidden,false);
+  assert.match(notice.textContent,/Serving the previous complete snapshot/);
+  assert.match(notice.textContent,/Validating published data index/);
+  assert.equal(app.run("dashboardQuery.snapshot.snapshotId"),snapshotId);
+  assert.equal(app.elements.get("filterCount").textContent,"complete results");
+  assert.equal(app.query().length,1);
+});
+
+test("cold report polling displays the actual per-query index stage",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve({
+    snapshotId,status:"preparing",retryAfterSeconds:2,
+    progress:{stage:"load-rows:finding-events",rows:12000,elapsedSeconds:8},
+  },202);await tick();
+  assert.match(app.elements.get("loadingNotice").innerHTML,/Rebuilding finding-events index/);
+  assert.match(app.elements.get("loadingNotice").innerHTML,/12,000 rows/);
+});
+
+test("Summary query phases use visible view names and do not block navigation",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve({
+    snapshotId,status:"preparing",retryAfterSeconds:2,
+    progress:{stage:"query:executive:recommendation-details",elapsedSeconds:15},
+  },202);await tick();
+  assert.match(app.elements.get("loadingNotice").innerHTML,/Preparing Summary: recommendation evidence/);
+  app.run('activateView("recommendations")');await tick();
+  assert.equal(app.query().at(-1).payload.view,"recommendations");
+  app.query().at(-1).resolve(app.payload());await tick();
+  assert.equal(app.elements.get("loadingNotice").hidden,true);
+});
+
+test("per-index status lists complete, active and waiting steps without pretending to know percent",async()=>{
+  const progress={
+    stage:"build-index:findings:2/3:findings_Severity",stageSeconds:29,elapsedSeconds:700,
+    indexPlan:{dataset:"findings",steps:["findings_FindingKey","findings_Severity","findings_priority","ANALYZE"],completedSteps:1,totalSteps:4},
+  };
+  const app=fixture({snapshotStatus:202,preparation:{status:"preparing",progress}});
+  await tick();
+  const markup=app.elements.get("loadingNotice").innerHTML;
+  assert.match(markup,/Building findings index 2\/3: findings_Severity/);
+  assert.match(markup,/1 \/ 4 index preparation steps complete/);
+  assert.match(markup,/29s in current stage/);
+  assert.match(markup,/<details[^>]+data-index-plan/);
+  assert.match(markup,/findings_FindingKey — complete/);
+  assert.match(markup,/findings_Severity — in progress/);
+  assert.match(markup,/findings_priority — waiting/);
+  assert.match(markup,/ANALYZE — waiting/);
+  assert.doesNotMatch(markup,/aria-valuenow|aria-valuemax/);
+});
+
+test("a failed index remains named in preparation status and its plan is escaped",async()=>{
+  const app=fixture({snapshotStatus:202,preparation:{status:"error",error:"Retry scheduled.",progress:{
+    stage:"failed",failure:{stage:"build-index:findings:1/1:<bad>",indexPlan:{
+      dataset:"findings",steps:["<bad>","ANALYZE"],completedSteps:0,totalSteps:2,
+    }},
+  }}});
+  await tick();
+  const markup=app.elements.get("loadingNotice").innerHTML;
+  assert.match(markup,/Building findings index 1\/1: &lt;bad&gt;/);
+  assert.match(markup,/&lt;bad&gt; — failed/);
+  assert.match(markup,/ANALYZE — waiting/);
+  assert.ok(!markup.includes("<bad>"));
+});
+
+test("a completed replacement invites reload without mixing snapshots",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.setPreparation({status:"ready",readySnapshotId:"b".repeat(64)});
+  app.flushTimers();await tick();
+  assert.match(app.elements.get("dashboardPreparationStatus").textContent,/newer complete snapshot is ready/);
+  assert.equal(app.run("dashboardQuery.snapshot.snapshotId"),snapshotId);
+  assert.equal(app.query().length,1);
 });
 
 test("report progress is indeterminate and its elapsed clock does not issue extra requests",async()=>{

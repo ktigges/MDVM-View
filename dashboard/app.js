@@ -958,8 +958,16 @@ function updateDashboardProgressElapsed(){
   if(elapsed)elapsed.textContent=`Elapsed ${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;
 }
 
-function showDashboardVisualProgress(title,message,phase){
-  $("loadingNotice").innerHTML=`<span class="loading-spinner" aria-hidden="true"></span><div class="loading-notice-content"><strong>${esc(title)}</strong><span>${esc(message)}</span><div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="${esc(phase)}; completion percentage unavailable"><span class="report-progress-indicator"></span></div><div class="report-progress-meta"><span id="reportProgressPhase">${esc(phase)}</span><span id="reportProgressElapsed" aria-live="off"></span></div><small>Completion percentage and remaining time are not reported by the server.</small></div>`;
+function dashboardIndexPlanMarkup(progress,expanded=false){
+  const plan=progress?.indexPlan||progress?.failure?.indexPlan;
+  if(!Array.isArray(plan?.steps))return "";
+  const completed=Number(plan.completedSteps)||0;
+  return `<details class="index-progress-plan" data-index-plan${expanded?" open":""}><summary>${completed} of ${plan.steps.length} index preparation steps complete</summary><ol>${plan.steps.map((name,index)=>`<li>${esc(name)} — ${index<completed?"complete":index===completed?(progress.failure?"failed":"in progress"):"waiting"}</li>`).join("")}</ol></details>`;
+}
+
+function showDashboardVisualProgress(title,message,phase,progress=null){
+  const expanded=$("loadingNotice").querySelector("[data-index-plan]")?.open;
+  $("loadingNotice").innerHTML=`<span class="loading-spinner" aria-hidden="true"></span><div class="loading-notice-content"><strong>${esc(title)}</strong><span>${esc(message)}</span><div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="${esc(phase)}; completion percentage unavailable"><span class="report-progress-indicator"></span></div><div class="report-progress-meta"><span id="reportProgressPhase">${esc(phase)}</span><span id="reportProgressElapsed" aria-live="off"></span></div>${dashboardIndexPlanMarkup(progress,expanded)}<small>Completion percentage and remaining time are not reported by the server.</small></div>`;
   updateDashboardProgressElapsed();
 }
 
@@ -1086,7 +1094,78 @@ async function dashboardResponse(response,isCurrent=()=>true){
   return payload;
 }
 
+function dashboardPreparationText(status){
+  const progress=status.progress||{},stage=String(progress.failure?.stage||progress.stage||"waiting-for-data");
+  const views={executive:"Summary",overview:"Vulnerabilities",recommendations:"Recommendations",priority:"Prioritize",workstations:"Endpoint assets",sla:"Remediate",trend:"Trends",executiveSnapshot:"Executive snapshot",help:"Help"};
+  const phases={header:"activity and filter metadata","scope-counts":"finding counts","recommendation-matching":"recommendation matching","recommendation-impact":"recommendation impact totals","recommendation-ranking":"recommendation ranking","recommendation-details":"recommendation evidence","summary":"summary metrics and run comparison",sla:"SLA metrics"};
+  let action=stage;
+  if(stage.startsWith("load-rows:"))action=`Rebuilding ${stage.split(":")[1]} index`;
+  else if(stage.startsWith("build-index:")){
+    const [,dataset,position,name]=stage.split(":");
+    action=`Building ${dataset} index ${position}: ${name}`;
+  }
+  else if(stage.startsWith("analyze-indexes:"))action=`Analyzing ${stage.split(":")[1]} query indexes`;
+  else if(stage.startsWith("build-evidence:"))action=`Preparing ${stage.split(":")[1]} evidence: ${stage.split(":")[2]}`;
+  else if(stage.startsWith("build-indexes:"))action=`Building ${stage.split(":")[1]} query indexes`;
+  else if(stage.startsWith("download-query-index"))action="Downloading published data index";
+  else if(stage==="restore-query-index")action="Restoring published data index";
+  else if(stage==="validate-query-index")action="Validating published data index";
+  else if(stage.startsWith("download:"))action=`Downloading ${stage.split(":")[1]} data`;
+  else if(stage==="prepare-workspace-indexes")action="Preparing shared workspace indexes";
+  else if(stage.startsWith("query:")){
+    const [,view,phase]=stage.split(":");
+    action=`Preparing ${views[view]||view}: ${phases[phase]||phase}`;
+  }
+  else if(stage.startsWith("view:"))action=`Preparing ${views[stage.split(":")[1]]||stage.split(":")[1]} view`;
+  else if(stage==="querying-index")action="Querying data indexes";
+  else if(stage==="waiting-for-query-worker")action="Waiting for an available query worker";
+  const stats=[];
+  const plan=progress.indexPlan||progress.failure?.indexPlan;
+  if(plan)stats.push(`${plan.completedSteps} / ${plan.totalSteps} index preparation steps complete`);
+  if(Number.isFinite(progress.rows)){
+    const dataset=stage.split(":")[1]?.replace(/-([a-z])/g,(_,letter)=>letter.toUpperCase());
+    const total=status.datasetRows?.[dataset];
+    stats.push(Number.isFinite(total)?`${fmt(progress.rows)} / ${fmt(total)} rows processed`:`${fmt(progress.rows)} rows processed`);
+  }
+  if(Number.isFinite(progress.processedBytes))stats.push(`${(progress.processedBytes/1024/1024).toFixed(1)} MiB processed`);
+  if(Number.isFinite(progress.elapsedSeconds))stats.push(`${Math.round(progress.elapsedSeconds)}s elapsed`);
+  if(Number.isFinite(progress.stageSeconds))stats.push(`${Math.round(progress.stageSeconds)}s in current stage`);
+  return [status.error,action,...stats].filter(Boolean).join(" · ");
+}
+
+let dashboardPreparationTimer=null;
+let dashboardPreparationGeneration=0;
+function pollDashboardPreparation(){
+  clearTimeout(dashboardPreparationTimer);
+  const generation=++dashboardPreparationGeneration;
+  const poll=async()=>{
+    try{
+      const response=await apiFetch("/api/dashboard/status",{cache:"no-store"});
+      if(!response.ok)throw new Error(`Preparation status unavailable (${response.status}).`);
+      const status=await response.json();
+      if(generation!==dashboardPreparationGeneration)return;
+      const notice=$("dashboardPreparationStatus");
+      const expanded=notice.querySelector("[data-index-plan]")?.open;
+      const newer=status.readySnapshotId&&status.readySnapshotId!==dashboardQuery.snapshot?.snapshotId;
+      notice.hidden=status.status==="ready"&&!newer;
+      notice.textContent=notice.hidden?"":status.status==="ready"
+        ?"A newer complete snapshot is ready. Reload to select it; this page remains pinned to its original snapshot."
+        :`${status.readySnapshotId?"Serving the previous complete snapshot. ":""}${dashboardPreparationText(status)}`;
+      if(!notice.hidden&&status.status!=="ready")notice.insertAdjacentHTML("beforeend",dashboardIndexPlanMarkup(status.progress,expanded));
+    }catch(error){
+      if(generation!==dashboardPreparationGeneration)return;
+      $("dashboardPreparationStatus").hidden=false;
+      $("dashboardPreparationStatus").textContent=error.message||"Preparation status unavailable; retrying automatically.";
+    }finally{
+      if(generation===dashboardPreparationGeneration)dashboardPreparationTimer=setTimeout(poll,15000);
+    }
+  };
+  dashboardPreparationTimer=setTimeout(poll,15000);
+}
+
 async function startSnapshotDashboard(){
+  clearTimeout(dashboardPreparationTimer);
+  dashboardPreparationGeneration++;
   invalidateDashboardChannel(dashboardQuery.main);
   invalidateDashboardChannel(dashboardQuery.detail);
   dashboardQuery.expired=false;
@@ -1099,11 +1178,24 @@ async function startSnapshotDashboard(){
   const channel=dashboardQuery.main,sequence=channel.sequence;
   channel.controller=new AbortController();
   try{
-    const response=await apiFetch("/api/dashboard/snapshot",{signal:channel.controller.signal,cache:"no-store"});
-    if(sequence!==channel.sequence)return;
-    if(!response.ok)throw new Error(`Snapshot unavailable (${response.status}).`);
-    const snapshot=await response.json();
-    if(sequence!==channel.sequence)return;
+    let snapshot;
+    for(;;){
+      const response=await apiFetch("/api/dashboard/snapshot",{signal:channel.controller.signal,cache:"no-store"});
+      if(sequence!==channel.sequence)return;
+      if(!response.ok)throw new Error(`Snapshot unavailable (${response.status}).`);
+      snapshot=await response.json();
+      if(sequence!==channel.sequence)return;
+      if(response.status!==202)break;
+      if(snapshot.status!=="preparing")throw new Error("Invalid snapshot preparation status.");
+      const status=snapshot.preparation||{};
+      showDashboardVisualProgress(
+        status.status==="error"?"Data preparation failed; retry scheduled":"Preparing dashboard data indexes",
+        "Complete results will appear automatically. Partial findings are not shown.",
+        dashboardPreparationText(status),
+        status.progress,
+      );
+      await waitForDashboardPoll(2000,channel.controller.signal);
+    }
     if(!snapshot.snapshotId)throw new Error("Snapshot response is missing its identifier.");
     dashboardQuery.snapshot=snapshot;
     state.snapshotTimeMs=Date.parse(snapshot.snapshotTimeUtc);
@@ -1120,6 +1212,7 @@ async function startSnapshotDashboard(){
     renderSlaPolicySummary();
     if(!state.slaPolicy)$("slaPolicySummary").textContent="SLA policy is unavailable for this pinned snapshot.";
     render();
+    pollDashboardPreparation();
     if(state.recommendationTrackingEnabled)void refreshRecommendationTracking();
   }catch(error){
     if(sequence!==channel.sequence||error.name==="AbortError")return;
@@ -1188,7 +1281,7 @@ async function postDashboardQuery(request,{signal,isCurrent=()=>true,onPreparing
     if(response.status!==202)return payload;
     if(payload.status!=="preparing")throw new Error("The server returned an invalid query-preparation response.");
     const retryAfterSeconds=Number(payload.retryAfterSeconds);
-    onPreparing();
+    onPreparing(payload.progress);
     await waitForDashboardPoll((Number.isFinite(retryAfterSeconds)&&retryAfterSeconds>0?retryAfterSeconds:2)*1000,signal);
   }
 }
@@ -1204,11 +1297,11 @@ async function queryDashboardView(view=state.activeView,tableId=null,page=0){
   try{
     const key=dashboardResponseKey(request),cached=dashboardQuery.responses.get(key);
     const reusable=cached&&(!state.recommendationTrackingEnabled||Date.now()-cached.time<5000);
-    const payload=reusable?cached.payload:await postDashboardQuery(request,{signal:channel.controller.signal,isCurrent:()=>sequence===channel.sequence&&!dashboardQuery.expired,onPreparing:()=>{
+    const payload=reusable?cached.payload:await postDashboardQuery(request,{signal:channel.controller.signal,isCurrent:()=>sequence===channel.sequence&&!dashboardQuery.expired,onPreparing:progress=>{
       if(detail)$("pivotSummary").textContent="Preparing exact snapshot detail. This can take several minutes for a cold snapshot; this panel will update automatically.";
       else{
         const checks=++dashboardVisualProgress.checks;
-        showDashboardVisualProgress("Preparing exact snapshot results","The server has accepted this report for preparation; this view updates automatically when results are ready.",`Server preparation pending · ${checks} status check${checks===1?"":"s"}`);
+        showDashboardVisualProgress("Preparing exact snapshot results","The server has accepted this report for preparation; this view updates automatically when results are ready.",progress?dashboardPreparationText({progress}):`Server preparation pending · ${checks} status check${checks===1?"":"s"}`,progress);
       }
     }});
     if(sequence!==channel.sequence||dashboardQuery.expired)return;

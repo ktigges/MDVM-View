@@ -1,14 +1,156 @@
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
+import json
+import math
+import random
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from vulnerability_view.dashboard_queries import DashboardQueryEngine
+from vulnerability_view import dashboard_queries
 
 
 SNAPSHOT = "2026-10-24T12:00:00Z"
+
+
+def test_compact_evidence_blocks_share_identifiers_and_preserve_sql_types(tmp_path):
+    values = [None, "", 0, "0", 1, 1.0, True, False, "Case", "case", "MÜNCHEN", ["x"], {"x": 1}]
+    data = datasets(0)
+    data["findings"] = [
+        finding(index, DeviceId=value, DeviceName=value, RecommendationId=value)
+        for index, value in enumerate(values * 40)
+    ]
+    e = engine(tmp_path, data)
+    e._ensure("findings")
+    assert list(e.iter_dataset("findings")) == data["findings"]
+    with e._connect() as db:
+        assert db.execute("PRAGMA page_size").fetchone()[0] == dashboard_queries.QUERY_INDEX_PAGE_BYTES
+        assert db.execute("PRAGMA max_page_count").fetchone()[0] * db.execute("PRAGMA page_size").fetchone()[0] == 7 * 1024**3
+        assert db.execute("SELECT count(*) FROM findings_payloads").fetchone()[0] == math.ceil(len(data["findings"]) / 256)
+        assert db.execute("SELECT count(*) FROM shared_values").fetchone()[0] <= len(values)
+        assert db.execute("SELECT count(*) FROM sqlite_master WHERE name='findings_searches'").fetchone()[0] == 0
+        actual = db.execute("SELECT DeviceId,typeof(DeviceId) FROM findings ORDER BY _rowid").fetchall()
+        for row, original in zip(actual, data["findings"], strict=True):
+            expected = db.execute(
+                "SELECT json_extract(?,'$.DeviceId'),typeof(json_extract(?,'$.DeviceId'))",
+                (json.dumps(original), json.dumps(original)),
+            ).fetchone()
+            assert tuple(row) == tuple(expected)
+
+
+def test_compact_covering_analytics_preserve_empty_identifier_counts(tmp_path, monkeypatch):
+    data = datasets(0)
+    data["findings"] = [
+        finding(index, DeviceId=device, RecommendationId=recommendation)
+        for index, (device, recommendation) in enumerate(((None, None), ("", ""), ("device", "rec"), ("device", "rec")))
+    ]
+    e = engine(tmp_path, data)
+    e.query({"view": "overview"})
+    def header():
+        out = {key: {} for key in ("activity", "facets", "metadata", "texts")}
+        with e._connect() as db:
+            e._header(db, out, {"origin": "Live"})
+        return out
+    broad = header()
+    monkeypatch.setattr(e, "_broad_analytics", lambda *args, **kwargs: False)
+    assert header() == broad
+
+
+def test_index_capacity_error_reports_database_budget_and_free_disk(tmp_path, monkeypatch):
+    monkeypatch.setattr(dashboard_queries, "QUERY_INDEX_MAX_BYTES", 512 * 1024)
+    e = engine(tmp_path, datasets(2000))
+    with pytest.raises(dashboard_queries.DashboardIndexCapacityError, match="database limit=.*filesystem free="):
+        e._ensure("findings")
+
+
+def test_shared_identifier_lookups_use_fact_indexes_instead_of_scanning(tmp_path):
+    data = datasets(5000)
+    for index, row in enumerate(data["findings"]):
+        row["RecommendationId"] = f"recommendation-{index % 250}"
+    e = engine(tmp_path, data)
+    e._ensure("findings")
+    with e._connect() as db:
+        plan = " ".join(row["detail"] for row in db.execute(
+            "EXPLAIN QUERY PLAN SELECT count(*) FROM findings WHERE RecommendationId=?",
+            ("recommendation-249",),
+        ))
+        assert "SEARCH v_RecommendationId USING COVERING INDEX shared_values_lookup" in plan
+        assert "SEARCH f USING" in plan
+        assert "SCAN f" not in plan
+
+
+def test_set_based_remediation_matches_correlated_reference_with_nullable_and_typed_keys(tmp_path):
+    rng = random.Random(37)
+    data = datasets(0)
+    identifiers = [None, "", "one", "two", 1, 1.0, "1"]
+    dates = [None, "2026-10-12T00:00:00Z", "2026-10-20T12:00:00Z", "2026-10-24T11:00:00Z"]
+    data["findings"] = [
+        finding(
+            index, DeviceId=rng.choice(identifiers), RecommendationId=rng.choice(identifiers),
+            RecommendationName=rng.choice(identifiers),
+            FirstSeenUtc=rng.choice(dates), FixedUtc=rng.choice(dates), ReopenedUtc=rng.choice(dates),
+        )
+        for index in range(160)
+    ]
+    e = engine(tmp_path, data)
+    e._ensure("findings")
+    with e._connect() as db:
+        e._view(db, "report_scope", "SELECT * FROM findings", [])
+        for start in ("2026-10-10", "2026-10-19", "2026-10-24"):
+            for end in ("2026-10-20", "2026-10-24"):
+                begin = dashboard_queries._timestamp(start + "T00:00:00Z")
+                finish = dashboard_queries._timestamp(end + "T23:59:59.999Z")
+                cleared = f"""
+                  SELECT DISTINCT coalesce(RecommendationId,RecommendationName,'') rec,DeviceId
+                  FROM report_scope f WHERE _fixed BETWEEN {begin} AND {finish} AND coalesce(DeviceId,'')<>''
+                  AND NOT EXISTS(SELECT 1 FROM report_scope o WHERE o.DeviceId=f.DeviceId
+                    AND coalesce(o.RecommendationId,o.RecommendationName,'')=coalesce(f.RecommendationId,f.RecommendationName,'')
+                    AND {e._open_at(finish)})
+                """
+                assets = db.execute(f"SELECT count(DISTINCT DeviceId) FROM ({cleared})").fetchone()[0]
+                findings = db.execute(f"""
+                  SELECT count(*) FROM report_scope f WHERE _fixed BETWEEN {begin} AND {finish}
+                  AND EXISTS(SELECT 1 FROM ({cleared}) c WHERE c.DeviceId=f.DeviceId
+                    AND c.rec=coalesce(f.RecommendationId,f.RecommendationName,''))
+                """).fetchone()[0]
+                result = e._remediation_outcome(db, start, end)
+                assert result["AssetsRemediated"] == assets
+                assert result["FindingsResolved"] == findings
+
+
+def test_recommendation_domain_union_has_no_payload_columns_or_decoder_operations(tmp_path):
+    data = datasets(20)
+    data["findings"][0]["AssetClass"] = "AzureCloud"
+    e = engine(tmp_path, data)
+    e.prepare_workspace_indexes()
+    with e._connect() as db:
+        e._match_recommendations(db, {})
+        assert [row["name"] for row in db.execute("PRAGMA table_info(rec_all_evidence)")] == [
+            "RecommendationId", "AssetClass",
+        ]
+        sql = """SELECT DISTINCT CASE WHEN AssetClass='AzureCloud' THEN 'Cloud' ELSE 'Devices' END
+          FROM rec_all_evidence WHERE RecommendationId=?"""
+        bytecode = list(db.execute("EXPLAIN " + sql, ("rec-0",)))
+        assert not any(row["p4"] and "payload_" in str(row["p4"]) for row in bytecode)
+
+        def unexpected(*args):
+            raise AssertionError("Domain lookup must not decode compressed evidence")
+
+        db.create_function("payload_json", 2, unexpected)
+        db.create_function("payload_search", 2, unexpected)
+        assert {row[0] for row in db.execute(sql, ("rec-0",))} == {"Cloud", "Devices"}
+
+
+def test_recommendation_search_fallback_still_searches_finding_evidence(tmp_path):
+    data = datasets(20)
+    data["findings"][0]["ProductName"] = "Unique finding evidence text"
+    e = engine(tmp_path, data)
+    e.prepare_workspace_indexes()
+    with e._connect() as db:
+        e._match_recommendations(db, {"search": "unique finding evidence text"})
+        assert [row[0] for row in db.execute("SELECT RecommendationId FROM matched_recommendations")] == ["rec-0"]
 
 
 def finding(index=0, **changes):
@@ -244,16 +386,21 @@ def test_analytical_scans_do_not_read_json_or_search_payloads(tmp_path):
         opened = {row["p2"] for row in db.execute("EXPLAIN " + sql) if row["opcode"] == "OpenRead"}
         roots = dict(db.execute("""
             SELECT name,rootpage FROM sqlite_master
-            WHERE tbl_name='findings_facts' OR name IN ('findings_payloads','findings_searches')
+            WHERE tbl_name='findings_facts' OR name IN ('findings_payloads','shared_values')
         """))
         fact_roots = {root for name, root in roots.items() if name not in ("findings_payloads", "findings_searches")}
         assert opened and opened <= fact_roots
-        assert not {roots["findings_payloads"], roots["findings_searches"]} & opened
+        assert roots["findings_payloads"] not in opened
+        assert not any(row["opcode"] == "Function" and "payload_" in str(row["p4"]) for row in db.execute("EXPLAIN " + sql))
         db.execute(sql).fetchone()
         payload_plan = " ".join(row["detail"] for row in db.execute(
             "EXPLAIN QUERY PLAN SELECT data FROM findings WHERE _rowid=1"
         ))
-        assert "CORRELATED SCALAR SUBQUERY" in payload_plan
+        assert "CORRELATED SCALAR SUBQUERY" not in payload_plan
+        assert any(
+            row["opcode"] == "Function" and "payload_json" in str(row["p4"])
+            for row in db.execute("EXPLAIN SELECT data FROM findings WHERE _rowid=1")
+        )
 
 
 def test_cve_mode_cannot_bypass_other_prepared_views(tmp_path, monkeypatch):

@@ -2,12 +2,78 @@ import logging
 import subprocess
 import sys
 import threading
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
 from azure.core.exceptions import HttpResponseError
 
 from vulnerability_view import dashboard_startup as diagnostics
+from test_dashboard_queries import engine
+
+
+@pytest.mark.parametrize("dataset,indexes", [("findings", 21), ("finding-events", 3)])
+def test_each_sqlite_index_and_analyze_exposes_the_real_order_and_plan(tmp_path, monkeypatch, capsys, dataset, indexes):
+    query = engine(tmp_path)
+    original = query._connect
+    monitor = diagnostics.StartupDiagnostics()
+    observed, committed = [], []
+
+    @contextmanager
+    def connect(filters=None):
+        with original(filters) as db:
+            def trace(sql):
+                if sql.startswith(("CREATE INDEX", "ANALYZE")):
+                    observed.append((sql, monitor.snapshot()))
+                elif sql == "COMMIT" and monitor.stage.startswith("build-index:"):
+                    committed.append(monitor.stage)
+            db.set_trace_callback(trace)
+            yield db
+
+    monkeypatch.setattr(query, "_connect", connect)
+    with diagnostics.startup_diagnostics(monitor):
+        query.dataset_info(dataset)
+    assert len(observed) == indexes + 1
+    assert committed == []
+    for position, (sql, progress) in enumerate(observed):
+        plan = progress["indexPlan"]
+        assert plan["dataset"] == dataset
+        assert plan["totalSteps"] == indexes + 1
+        assert plan["completedSteps"] == position
+        if position < indexes:
+            assert progress["stage"].startswith(f"build-index:{dataset}:{position + 1}/{indexes}:")
+            assert plan["steps"][position] in sql
+        else:
+            assert progress["stage"] == f"analyze-indexes:{dataset}"
+            assert sql.startswith("ANALYZE")
+            assert plan["steps"][position] == "ANALYZE"
+    assert monitor.snapshot()["indexPlan"] is None
+    output = capsys.readouterr().err
+    assert f"index-plan dataset={dataset} totalSteps={indexes + 1}" in output
+    assert f"build-index:{dataset}:1/{indexes}:" in output
+    assert f"stage=analyze-indexes:{dataset} event=complete" in output
+
+
+def test_index_plan_heartbeat_and_failure_keep_exact_unfinished_step(capsys):
+    monitor = diagnostics.StartupDiagnostics()
+    with pytest.raises(OSError):
+        with diagnostics.startup_diagnostics(monitor):
+            with diagnostics.startup_index_plan("findings", ["first", "second", "ANALYZE"]) as completed:
+                with diagnostics.startup_stage("build-index:findings:1/2:first"):
+                    pass
+                completed()
+                with diagnostics.startup_stage("build-index:findings:2/2:second"):
+                    monitor.heartbeat()
+                    raise OSError("SENSITIVE")
+    failure = monitor.snapshot()["failure"]
+    assert failure["stage"] == "build-index:findings:2/2:second"
+    assert failure["indexPlan"]["completedSteps"] == 1
+    assert failure["indexPlan"]["steps"] == ["first", "second", "ANALYZE"]
+    assert monitor.index_plan is None
+    output = capsys.readouterr().err
+    assert "indexSteps=1/3 currentIndexStep=second" in output
+    assert "event=failed" in output
+    assert "SENSITIVE" not in output
 
 
 def test_console_output_is_visible_under_default_uvicorn_logging():

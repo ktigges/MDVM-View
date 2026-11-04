@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import resource
 import sys
 import tempfile
 import time
@@ -16,7 +15,103 @@ from vulnerability_view.dashboard_snapshots import MAX_CACHE_BYTES
 from vulnerability_view.dataset_io import JsonRows
 
 
+SNAPSHOT_TIME = "2026-10-24T00:59:46Z"
+
+
+def generate_data(
+    source: Path, rows: int, events: int, mixed_lifecycle: bool = False, *,
+    devices: int = 2000, cves: int = 13217, recommendations: int = 20,
+    run_id: str = "benchmark",
+) -> None:
+    """Write shared, streamed synthetic fixtures for query and server benchmarks."""
+    snapshot_time = SNAPSHOT_TIME
+    source.mkdir(parents=True, exist_ok=True)
+    datasets = {
+        "devices": [
+            {"DeviceId": f"device-{index}", "DeviceName": f"host-{index}",
+             "AssetClass": "TraditionalIT", "DataOrigin": "Live", "OwnerTeam": "Endpoints",
+             "OnboardingStatus": "Onboarded", "HealthStatus": "Active",
+             "LastSeenUtc": snapshot_time, "SnapshotTimeUtc": snapshot_time}
+            for index in range(devices)
+        ],
+        "recommendations": [
+            {"RecommendationId": f"rec-{index}", "RecommendationName": f"Update software {index}",
+             "ProductName": f"software-{index}", "RemediationType": "Update",
+             "SeverityScore": 8.8, "DataOrigin": "Live", "Status": "Active"}
+            for index in range(recommendations)
+        ],
+        "collection-runs": [{
+            "CollectionRunId": run_id, "SnapshotTimeUtc": snapshot_time,
+            "DataOrigin": "Live", "Endpoint": "machine_vulnerabilities", "Status": "Success",
+        }],
+    }
+    names = [
+        "findings", "devices", "recommendations", "collection-runs", "finding-events",
+        "recommendation-events", "run-history", "recommendation-machines", "daily-summary",
+        "secure-scores", "subscriptions", "remediation-activities", "vulnerabilities",
+    ]
+    snapshot = datetime.fromisoformat(snapshot_time.replace("Z", "+00:00"))
+
+    def lifecycle(index):
+        if not mixed_lifecycle:
+            return {}
+        first = snapshot - timedelta(days=5 + index % 90)
+        status = ("Fixed", "PendingVerification", "Reopened", "Open")[index % 4]
+        absence = snapshot
+        due = first + timedelta(days=30)
+        fixed = absence if status == "Fixed" else snapshot - timedelta(days=3) if status == "Reopened" else None
+        iso = lambda value: value.isoformat().replace("+00:00", "Z") if value else None
+        return {
+            "FindingStatus": status, "FirstSeenUtc": iso(first), "FirstObservedUtc": iso(first),
+            "FixedUtc": iso(fixed), "EffectiveRemediationUtc": iso(absence) if status in ("Fixed", "PendingVerification") else None,
+            "ReopenedUtc": iso(snapshot - timedelta(days=2)) if status == "Reopened" else None,
+            "SlaDueUtc": iso(due),
+            "SlaStatus": ("FixedWithinSla" if absence <= due else "FixedOutsideSla") if status in ("Fixed", "PendingVerification")
+                else ("OpenWithinSla" if snapshot <= due else "OpenOutsideSla"),
+        }
+
+    for name in names:
+        records = (
+            {
+                "FindingKey": f"finding-{index:09d}", "DeviceId": f"device-{index % devices}",
+                "DeviceName": f"host-{index % devices}", "CveId": f"CVE-2026-{index % cves:05d}",
+                "RecommendationId": f"rec-{index % recommendations}", "RecommendationName": f"Update software {index % recommendations}",
+                "SoftwareName": f"software-{index % recommendations}", "SoftwareVersion": "123.4",
+                "OSPlatform": "Windows11", "AssetClass": "TraditionalIT", "DataOrigin": "Live",
+                "OwnerTeam": "Endpoints", "SubscriptionId": "", "FindingStatus": "Open",
+                "Severity": ["Critical", "High", "Medium", "Low"][index % 4],
+                "PriorityScore": index % 100, "CvssScore": 8.8, "SlaStatus": "OpenWithinSla",
+                "SlaDueUtc": "2026-11-24T00:59:46Z", "FirstSeenUtc": "2026-10-23T00:59:46Z",
+                "FirstObservedUtc": "2026-10-23T00:59:46Z", "LastSeenUtc": snapshot_time,
+                "LastObservedUtc": snapshot_time, "SnapshotTimeUtc": snapshot_time,
+                "CollectionRunId": run_id, "KnownExploit": False,
+                "PublicExploitAvailable": mixed_lifecycle and index % 41 == 0,
+                **lifecycle(index),
+            }
+            for index in range(rows)
+        ) if name == "findings" else datasets.get(name, [])
+        if name == "finding-events":
+            records = (
+                {
+                    "EventId": f"event-{index}", "FindingKey": f"finding-{index % rows:09d}",
+                    "EventType": ("Fixed", "PendingVerification", "Reopened", "New")[index % 4] if mixed_lifecycle else "New",
+                    "PreviousStatus": "", "FindingStatus": "Open",
+                    "EventTimeUtc": snapshot_time, "EffectiveTimeUtc": "2026-10-23T00:59:46Z",
+                    "DeviceId": f"device-{index % devices}", "DeviceName": f"host-{index % devices}",
+                    "CveId": f"CVE-2026-{index % cves:05d}", "RecommendationId": f"rec-{index % recommendations}",
+                    "Severity": ["Critical", "High", "Medium", "Low"][index % 4],
+                    "AssetClass": "TraditionalIT", "SubscriptionId": "", "OwnerTeam": "Endpoints",
+                    "DataOrigin": "Live", "SnapshotTimeUtc": snapshot_time, "CollectionRunId": run_id,
+                    "SlaStatus": "OpenWithinSla", "SlaDueUtc": "2026-11-24T00:59:46Z",
+                }
+                for index in range(events)
+            )
+        write_json_rows(source / f"{name}.json.gz", records)
+
+
 def main():
+    import resource
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--rows", type=int, default=2_000_000)
     parser.add_argument("--events", type=int, default=0)
@@ -29,94 +124,13 @@ def main():
     args = parser.parse_args()
     if args.rows < (4 if args.mixed_lifecycle else 1) or args.events < 0:
         parser.error("rows must be positive (at least four with mixed lifecycle), and events cannot be negative")
-    snapshot_time = "2026-10-24T00:59:46Z"
+    snapshot_time = SNAPSHOT_TIME
     work_root = Path("output/dashboard-benchmarks")
     work_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="run-", dir=work_root) as directory:
         root = Path(directory)
         source = root / "source"
-        source.mkdir(exist_ok=True)
-        datasets = {
-            "devices": [
-                {"DeviceId": f"device-{index}", "DeviceName": f"host-{index}",
-                 "AssetClass": "TraditionalIT", "DataOrigin": "Live", "OwnerTeam": "Endpoints",
-                 "OnboardingStatus": "Onboarded", "HealthStatus": "Active",
-                 "LastSeenUtc": snapshot_time, "SnapshotTimeUtc": snapshot_time}
-                for index in range(2000)
-            ],
-            "recommendations": [
-                {"RecommendationId": f"rec-{index}", "RecommendationName": f"Update software {index}",
-                 "ProductName": f"software-{index}", "RemediationType": "Update",
-                 "SeverityScore": 8.8, "DataOrigin": "Live", "Status": "Active"}
-                for index in range(20)
-            ],
-            "collection-runs": [{
-                "CollectionRunId": "benchmark", "SnapshotTimeUtc": snapshot_time,
-                "DataOrigin": "Live", "Endpoint": "machine_vulnerabilities", "Status": "Success",
-            }],
-        }
-        names = [
-            "findings", "devices", "recommendations", "collection-runs", "finding-events",
-            "recommendation-events", "run-history", "recommendation-machines", "daily-summary",
-            "secure-scores", "subscriptions", "remediation-activities", "vulnerabilities",
-        ]
-        snapshot = datetime.fromisoformat(snapshot_time.replace("Z", "+00:00"))
-
-        def lifecycle(index):
-            if not args.mixed_lifecycle:
-                return {}
-            first = snapshot - timedelta(days=5 + index % 90)
-            status = ("Fixed", "PendingVerification", "Reopened", "Open")[index % 4]
-            absence = snapshot
-            due = first + timedelta(days=30)
-            fixed = absence if status == "Fixed" else snapshot - timedelta(days=3) if status == "Reopened" else None
-            iso = lambda value: value.isoformat().replace("+00:00", "Z") if value else None
-            return {
-                "FindingStatus": status, "FirstSeenUtc": iso(first), "FirstObservedUtc": iso(first),
-                "FixedUtc": iso(fixed), "EffectiveRemediationUtc": iso(absence) if status in ("Fixed", "PendingVerification") else None,
-                "ReopenedUtc": iso(snapshot - timedelta(days=2)) if status == "Reopened" else None,
-                "SlaDueUtc": iso(due),
-                "SlaStatus": ("FixedWithinSla" if absence <= due else "FixedOutsideSla") if status in ("Fixed", "PendingVerification")
-                    else ("OpenWithinSla" if snapshot <= due else "OpenOutsideSla"),
-            }
-
-        for name in names:
-            rows = (
-                {
-                    "FindingKey": f"finding-{index:09d}", "DeviceId": f"device-{index % 2000}",
-                    "DeviceName": f"host-{index % 2000}", "CveId": f"CVE-2026-{index % 13217:05d}",
-                    "RecommendationId": f"rec-{index % 20}", "RecommendationName": f"Update software {index % 20}",
-                    "SoftwareName": f"software-{index % 20}", "SoftwareVersion": "123.4",
-                    "OSPlatform": "Windows11", "AssetClass": "TraditionalIT", "DataOrigin": "Live",
-                    "OwnerTeam": "Endpoints", "SubscriptionId": "", "FindingStatus": "Open",
-                    "Severity": ["Critical", "High", "Medium", "Low"][index % 4],
-                    "PriorityScore": index % 100, "CvssScore": 8.8, "SlaStatus": "OpenWithinSla",
-                    "SlaDueUtc": "2026-11-24T00:59:46Z", "FirstSeenUtc": "2026-10-23T00:59:46Z",
-                    "FirstObservedUtc": "2026-10-23T00:59:46Z", "LastSeenUtc": snapshot_time,
-                    "LastObservedUtc": snapshot_time, "SnapshotTimeUtc": snapshot_time,
-                    "CollectionRunId": "benchmark", "KnownExploit": False,
-                    "PublicExploitAvailable": args.mixed_lifecycle and index % 41 == 0,
-                    **lifecycle(index),
-                }
-                for index in range(args.rows)
-            ) if name == "findings" else datasets.get(name, [])
-            if name == "finding-events":
-                rows = (
-                    {
-                        "EventId": f"event-{index}", "FindingKey": f"finding-{index % args.rows:09d}",
-                        "EventType": ("Fixed", "PendingVerification", "Reopened", "New")[index % 4] if args.mixed_lifecycle else "New",
-                        "PreviousStatus": "", "FindingStatus": "Open",
-                        "EventTimeUtc": snapshot_time, "EffectiveTimeUtc": "2026-10-23T00:59:46Z",
-                        "DeviceId": f"device-{index % 2000}", "DeviceName": f"host-{index % 2000}",
-                        "CveId": f"CVE-2026-{index % 13217:05d}", "RecommendationId": f"rec-{index % 20}",
-                        "Severity": ["Critical", "High", "Medium", "Low"][index % 4],
-                        "AssetClass": "TraditionalIT", "SubscriptionId": "", "OwnerTeam": "Endpoints",
-                        "DataOrigin": "Live", "SnapshotTimeUtc": snapshot_time, "CollectionRunId": "benchmark",
-                        "SlaStatus": "OpenWithinSla", "SlaDueUtc": "2026-11-24T00:59:46Z",
-                    }
-                    for index in range(args.events)
-                )
-            write_json_rows(source / f"{name}.json.gz", rows)
+        generate_data(source, args.rows, args.events, args.mixed_lifecycle)
         engine = DashboardQueryEngine(
             root / "index", "benchmark", snapshot_time,
             lambda name: iter(JsonRows(source / f"{name}.json.gz", args.rows if name == "findings" else 0)),

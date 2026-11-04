@@ -17,6 +17,7 @@ from vulnerability_view import bounded_summary
 from vulnerability_view import live_collector
 from vulnerability_view.bounded_processing import Workspace, iter_json_rows, write_json_rows
 from vulnerability_view.config import Settings
+from vulnerability_view.dashboard_queries import QUERY_INDEX_PAGE_BYTES
 from vulnerability_view.dataprep_cli import _collection_run_rows, finalize_raw_snapshot, process_archived_run
 from vulnerability_view.defender_client import ENDPOINTS
 from vulnerability_view.live_collector import apply_vulnerability_delta, normalize_live, reconcile_live_findings, replay_raw_snapshot
@@ -53,6 +54,11 @@ def store(work):
         yield value
     finally:
         value.close()
+
+
+def test_processing_workspace_matches_query_page_geometry_without_increasing_cache(store):
+    assert store.connection.execute("PRAGMA page_size").fetchone()[0] == QUERY_INDEX_PAGE_BYTES
+    assert store.connection.execute("PRAGMA cache_size").fetchone()[0] == -4096
 
 
 def payloads(count=30):

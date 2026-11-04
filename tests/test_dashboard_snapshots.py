@@ -124,6 +124,9 @@ class FakeEngine:
         self.root = root
         self.rows = rows
 
+    def indexed_rows(self):
+        return {}
+
 
 def azure_snapshots(monkeypatch, tmp_path, pointer, **kwargs):
     monkeypatch.setattr(dashboard_snapshots, "DashboardQueryEngine", FakeEngine)

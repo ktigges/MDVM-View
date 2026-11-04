@@ -70,6 +70,9 @@ class Engine:
     def cached(self, payload):
         return None
 
+    def indexed_rows(self):
+        return {}
+
     def iter_export(self, payload):
         yield {"FindingKey": "a", "Severity": "High"}
         yield {"FindingKey": "b", "Severity": "Low"}
@@ -92,6 +95,7 @@ def app(monkeypatch, tmp_path):
         Settings(dashboard_data_source="local", dashboard_recommendation_tracking_enabled=False),
         project_root=tmp_path,
     )
+    select_snapshot(application)
     yield application
     application.state.dashboard_query_jobs.close()
     application.state.dashboard_snapshots.close()
@@ -136,7 +140,19 @@ def test_real_engine_and_async_api_agree_on_request_and_response_shape(tmp_path)
         application.state.dashboard_snapshots.close()
 
 
+def ready_snapshot(app):
+    # These API unit tests bypass ASGI lifespan; explicitly select a prepared fixture.
+    snapshot = app.state.dashboard_snapshots.current()
+    snapshot.prepared = True
+    preparation = app.state.dashboard_preparation
+    with preparation._lock:
+        preparation._ready_id = snapshot.id
+        preparation._status.update(status="ready", readySnapshotId=snapshot.id)
+    return snapshot
+
+
 def select_snapshot(app):
+    ready_snapshot(app)
     status, headers, body = request(app, "/api/dashboard/snapshot")
     assert status == 200
     assert headers[b"cache-control"] == b"no-store"
