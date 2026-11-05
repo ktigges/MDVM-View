@@ -9,6 +9,41 @@ from vulnerability_view.dashboard_control import QueryCancelled, QueryControl, q
 from vulnerability_view.dashboard_products import DashboardProducts
 
 
+def test_presentation_revision_invalidates_prepared_responses_not_indexes(tmp_path, monkeypatch):
+    e = engine(tmp_path)
+    request = {"view": "executive"}
+    before = e._completed_product_key(request)
+    index = e.path
+    monkeypatch.setattr(dashboard_queries, "PREPARED_RESPONSE_VERSION", dashboard_queries.PREPARED_RESPONSE_VERSION + 1)
+    assert e._completed_product_key(request) != before
+    assert e.path == index
+    assert e.reads == {}
+
+
+def test_restored_summary_refreshes_wording_without_rebuilding_read_model(tmp_path, monkeypatch):
+    e = engine(tmp_path, datasets(20))
+    e.read_model.prepare({})
+    original = e.read_model.document
+
+    def legacy_document(db, key):
+        result = original(db, key)
+        if key == "summary" and result is not None:
+            result["cards"]["executiveWorkload"][0][1:] = ["Detected findings", "Legacy context"]
+        return result
+
+    def no_rebuild(*args, **kwargs):
+        pytest.fail("A presentation-only change must reuse the prepared read model")
+
+    monkeypatch.setattr(e.read_model, "document", legacy_document)
+    monkeypatch.setattr(e.read_model, "prepare", no_rebuild)
+    monkeypatch.setattr(e, "_summary_metrics", no_rebuild)
+    result = e.query({"view": "executive"})
+    assert result["cards"]["executiveWorkload"][0] == [
+        20, "Active exposure instances", "20 distinct active CVEs across 12 affected devices",
+    ]
+    assert result["cards"]["executiveWorkload"][1][1] == "Pending exposure instances"
+
+
 def test_plan_probe_requires_existing_exact_aggregate_and_never_ingests(tmp_path):
     data = datasets(60)
     e = engine(tmp_path, data)

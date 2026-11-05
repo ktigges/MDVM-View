@@ -26,6 +26,10 @@ function fixture({snapshotStatus=200, notices=[], now=null, preparation=null, tr
       setAttribute(key,value){this[key]=value;},removeAttribute(key){delete this[key];},
       querySelectorAll(selector){
         if(selector.includes("table,"))return nodes.filter(item=>item.id.endsWith("Table")||item.id.endsWith("Cards"));
+        if(selector==="tbody tr"){
+          this.tableRows=[...this.innerHTML.matchAll(/<tr data-index="(\d+)"/g)].map(([,index])=>{const row=node();row.rowIndex=Number(index);return row;});
+          return this.tableRows;
+        }
         if(selector==="[data-query-page]"){
           this.pageButtons=[...this.innerHTML.matchAll(/data-query-page="(\d+)"([^>]*)/g)].map(([,page,attributes])=>{const button=node();button.dataset.queryPage=page;button.disabled=attributes.includes("disabled");return button;});
           return this.pageButtons;
@@ -39,7 +43,7 @@ function fixture({snapshotStatus=200, notices=[], now=null, preparation=null, tr
       querySelector(selector){if(selector==="[data-query-export]")return this.exportButton??=node();return null;},
       contains(){return false;},appendChild(child){this.children.push(child);},
       closest(){return {dataset:{index:this.rowIndex||0}};},
-      insertAdjacentHTML(_,markup){for(const [,id] of markup.matchAll(/\bid="([^"]+)"/g))node(id);},
+      insertAdjacentHTML(position,markup){this.innerHTML=position==="afterbegin"?markup+this.innerHTML:this.innerHTML+markup;},
       insertAdjacentElement(_,child){elements.set(child.id,child);},
       scrollIntoView(){},scrollTo(){},focus(){},click(){this.dispatch("click");},remove(){elements.delete(this.id);},
       getBoundingClientRect(){return {top:0};},showModal(){this.open=true;},close(){this.open=false;},
@@ -358,7 +362,7 @@ test("shared activity tiles put full-width labels before their counts",()=>{
 test("summary decision tiles put titles above million-record values",async()=>{
   const app=fixture();await tick();
   app.run('renderDecisionMetrics("executiveWorkload",[{value:1836170,label:"Detected findings",detail:"Current detections",target:"overview"}])');
-  assert.match(app.elements.get("executiveWorkload").innerHTML,/<span>Detected findings<\/span><strong>1,836,170<\/strong>/);
+  assert.match(app.elements.get("executiveWorkload").innerHTML,/<span>Active exposure instances<\/span><strong>1,836,170<\/strong>/);
 });
 
 test("report progress respects reduced motion and marks elapsed updates as non-announcing",()=>{
@@ -444,16 +448,67 @@ test("machine detail distinguishes active CVEs from pending evidence and labels 
   app.run('pivotToMachine({DeviceId:"machine-1",DeviceName:"example-ws11"})');
   app.query().at(-1).resolve(app.payload({
     detail:{type:"machine",id:"machine-1",record:{DeviceId:"machine-1",DeviceName:"example-ws11"}},
-    cards:{pivotCards:[[165,"Distinct active CVEs"],[185,"Active finding instances"],[150,"Pending findings"]]},
-    texts:{pivotSummary:"165 distinct active CVEs · 185 active finding instances · 150 pending evidence rows, excluded from active totals."},
+    cards:{pivotCards:[[165,"Distinct active CVEs"],[185,"Active finding instances"],[150,"Pending findings"],[150,"CVEs with pending evidence"],[1,"Workloads with detections"]]},
+    texts:{pivotSummary:"165 distinct active CVEs · 185 active exposure instances · 150 pending evidence rows, excluded from active totals."},
     tables:{pivotFindingTable:{columns:["FindingStatus","CveId"],items:[{FindingStatus:"PendingVerification",CveId:"CVE-PENDING"}],total:335,offset:0,limit:100,action:"finding",rowLabel:"evidence rows"}},
   }));await tick();
   assert.ok(app.elements.get("pivotCards").innerHTML.includes("Distinct active CVEs"));
-  assert.ok(app.elements.get("pivotCards").innerHTML.includes("Pending findings"));
+  const cards=app.elements.get("pivotCards").innerHTML;
+  assert.ok(cards.includes("Pending exposure instances"));
+  assert.ok(cards.includes("Active exposure instances"));
+  assert.equal((cards.match(/ title="/g)||[]).length,5);
+  assert.match(cards,/not a count of unique CVEs/);
+  assert.match(cards,/not yet confirmed fixed/);
+  assert.match(cards,/counts can overlap/);
+  assert.match(cards,/grouping combines multiple instances/);
+  const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
+  assert.ok(css.includes(".pivot-panel.fullscreen-mode #pivotCards{grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr))!important}"));
   assert.ok(app.elements.get("pivotFindingTable").innerHTML.includes("CVE-PENDING"));
   assert.match(app.elements.get("pivotSummary").textContent,/excluded from active totals/);
   assert.match(app.elements.get("pivotFindingTablePagination").innerHTML,/of 335 evidence rows/);
   assert.equal(app.run('headerLabel("DetectedCVEs")'),"Distinct active CVEs");
+});
+
+test("machine recommendations precede CVEs and metadata and navigate to each recommendation",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('pivotToMachine({DeviceId:"machine-1",DeviceName:"example-ws11"})');
+  app.query().at(-1).resolve(app.payload({
+    detail:{type:"machine",id:"machine-1",record:{DeviceId:"machine-1",DeviceName:"example-ws11"}},
+    cards:{pivotCards:[[2,"Related recommendations"]]},
+    tables:{
+      pivotCveTable:{columns:["CveId"],items:[],total:0,action:"cve"},
+      pivotRecommendationTable:{columns:["RecommendationName","OpenFindings"],items:[{RecommendationId:"rec-0",RecommendationName:"Update browser",OpenFindings:20},{RecommendationId:"rec-1",RecommendationName:"Update OS",OpenFindings:30}],total:2,offset:0,limit:100,action:"recommendation"},
+    },
+  }));await tick();
+  const detail=app.elements.get("pivotDetails").innerHTML;
+  assert.ok(detail.indexOf('id="pivotRecommendationTable"')<detail.indexOf('id="pivotCveTable"'));
+  assert.ok(detail.indexOf('id="pivotCveTable"')<detail.indexOf('class="server-record"'));
+  assert.match(detail,/Related recommendations/);
+  assert.match(app.elements.get("pivotCards").innerHTML,/One machine can have several recommendations/);
+  const table=app.elements.get("pivotRecommendationTable");
+  assert.match(table.innerHTML,/<th title="Source-reported/);
+  assert.match(table.innerHTML,/Update browser/);
+  table.tableRows[1].click();
+  assert.equal(app.query().at(-1).payload.selection.id,"rec-1");
+  assert.equal(app.query().at(-1).payload.selection.type,"recommendation");
+  assert.equal(app.elements.has("pivotHandoffNote"),false);
+});
+
+test("renamed active exposure card still opens detected evidence",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('globalThis.exposureCard=document.createElement("div");$("executiveWorkload").querySelectorAll=()=>[exposureCard];bindDashboardCardActions("executiveWorkload",[[10,"Active exposure instances"]]);exposureCard.click();');
+  assert.equal(app.query().at(-1).payload.view,"overview");
+  assert.equal(app.query().at(-1).payload.filters.exposureStatus,"DetectedOnly");
+});
+
+test("recommendation status styling is bold blue without hiding workflow controls",()=>{
+  const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
+  assert.match(css,/\.tracking-status\[class\],#recommendationTrackingStatus\{color:#145b91;font-weight:800\}/);
+  assert.match(html,/id="recommendationTrackingActions"/);
+  assert.match(html,/id="copyRecommendationReference"/);
+  assert.doesNotMatch(html,/Dashboard work status is stored against/);
 });
 
 test("search immediately hides old results, debounces and sequence-ignores superseded matches",async()=>{

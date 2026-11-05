@@ -256,7 +256,7 @@ def test_dashboard_exposes_shared_recommendation_work_status_filter():
     assert "Selected recommendation status:" in html
     assert 'id="recommendationCurrentStatus" class="recommendation-current-status" hidden' in html
     assert "Set dashboard status: In progress" in html
-    assert "stored against this recommendation ID" in html
+    assert "stored against this recommendation ID" not in html
     assert 'recommendationTrackingFilter:"All"' in javascript
     assert "TrackingUpdatedBy" in javascript
     assert "TrackingUserId" in javascript
@@ -465,7 +465,8 @@ def test_dashboard_supports_entity_pivots_for_recommendations_cves_and_machines(
     assert 'id="pivotContext"' in html
     assert "Close detail returns to" in javascript
     assert 'id="pivotRecommendationNav"' in html
-    assert 'id="pivotHandoffNote"' in html
+    assert "pivotHandoffNote" not in html + javascript
+    assert "Dashboard work status is stored against" not in html
     assert "loadCveDetail" in javascript
     assert "/api/data/cve-details/${encodeURIComponent(key)}.json" in javascript
     assert 'apiFetch("/api/dashboard/query"' in javascript

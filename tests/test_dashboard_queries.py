@@ -356,7 +356,7 @@ def test_machine_active_totals_exclude_pending_but_keep_all_evidence_and_distinc
         "pendingCves": 150, "evidenceRows": 335,
     }
     assert result["cards"]["pivotCards"][0] == [165, "Distinct active CVEs"]
-    assert result["cards"]["pivotCards"][1] == [185, "Active finding instances"]
+    assert result["cards"]["pivotCards"][1] == [185, "Active exposure instances"]
     assert "excluded from active totals" in result["texts"]["pivotSummary"]
     assert result["tables"]["pivotFindingTable"]["total"] == 335
     assert result["tables"]["pivotFindingTable"]["rowLabel"] == "evidence rows"
@@ -391,6 +391,41 @@ def test_machine_active_totals_exclude_pending_but_keep_all_evidence_and_distinc
     assert sum(row["OpenFindings"] for row in overview_export) == 185
     assert sum(row["PendingFindings"] for row in overview_export) == 150
     assert sum(row["EvidenceRows"] for row in overview_export) == 335
+
+
+def test_machine_related_recommendations_preserve_scope_counts_and_navigation(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="device-0", RecommendationId="rec-0"),
+        finding(1, DeviceId="device-0", RecommendationId="rec-0", SoftwareVersion="2"),
+        finding(2, DeviceId="device-0", RecommendationId="rec-1", FindingStatus="PendingVerification"),
+        finding(3, DeviceId="device-1", RecommendationId="rec-2"),
+    ]
+    e = engine(tmp_path, data)
+    request = {
+        "view": "detail", "selection": {"type": "machine", "id": "device-0"},
+        "filters": {"exposureStatus": "DetectedAndPending"}, "limit": 1,
+    }
+    result = e.query(request)
+    assert [2, "Related recommendations"] in result["cards"]["pivotCards"]
+    links = result["tables"]["pivotRecommendationTable"]
+    assert links["action"] == "recommendation"
+    assert links["total"] == 2
+    assert links["items"][0]["RecommendationId"] == "rec-0"
+    assert links["items"][0]["OpenFindings"] == 2
+    second = e.query({**request, "table": "pivotRecommendationTable", "page": 1})
+    row = second["tables"]["pivotRecommendationTable"]["items"][0]
+    assert row["RecommendationId"] == "rec-1"
+    assert row["PendingFindings"] == 1
+    exported = list(e.iter_export({**request, "table": "pivotRecommendationTable"}))
+    assert {row["RecommendationId"] for row in exported} == {"rec-0", "rec-1"}
+    active = e.query({**request, "filters": {"exposureStatus": "DetectedOnly"}})
+    assert [1, "Related recommendations"] in active["cards"]["pivotCards"]
+    assert active["tables"]["pivotRecommendationTable"]["total"] == 1
+    recommendation = e.query({"view": "detail", "selection": {"type": "recommendation", "id": "rec-0"}})
+    assert recommendation["detail"]["record"]["RecommendationId"] == "rec-0"
+    summary = e.query({"view": "executive"})["cards"]["executiveWorkload"][0]
+    assert summary == [3, "Active exposure instances", "3 distinct active CVEs across 2 affected devices"]
 
 
 def test_pending_only_device_has_no_active_vulnerability_or_severity_totals(tmp_path):

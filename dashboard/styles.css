@@ -324,3 +324,6 @@ main{width:100%;max-width:1600px!important;min-width:0;padding:22px clamp(16px,2
 #executiveSnapshot[aria-busy="true"] .executive-narrative{visibility:hidden}
 .server-record{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:16px 0;overflow-wrap:anywhere}
 .server-record small{display:block;color:var(--muted,#526d7d)}
+.metric-help,th[title],td[title]{cursor:help}
+.tracking-status[class],#recommendationTrackingStatus{color:#145b91;font-weight:800}
+.pivot-panel.fullscreen-mode #pivotCards{grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr))!important}
