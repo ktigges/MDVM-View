@@ -8,6 +8,7 @@
 !.env.example
 __pycache__/
 .pytest_cache/
+/.test-work/
 *.pyc
 .coverage
 htmlcov/

@@ -327,9 +327,11 @@ removes consumption-driven scale-in but does not guarantee uninterrupted runs.
 For an environment that already has the Function, Web App, Terraform state and
 a published dataset:
 
-1. Pull the published source with `git pull --ff-only`. Preserve the environment's
-   existing uncommitted settings and Terraform state; do not copy another
-   tenant's settings, data targets or state.
+1. After the release has been promoted from `main` to the customer branch
+   `latest`, update the customer's `latest` checkout with
+   `git pull --ff-only origin latest`. Preserve the environment's existing
+   uncommitted settings and Terraform state; do not copy another tenant's
+   settings, data targets or state.
 2. Refresh the local dependencies, even if the deployment menu already imports
    successfully:
 

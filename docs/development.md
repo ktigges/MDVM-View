@@ -73,6 +73,13 @@ compatibility, including Python 3.14 coroutine detection without deprecated
 `asyncio.iscoroutinefunction` calls. Do not patch installed framework files or
 suppress these warnings instead of updating the dependencies.
 
+Generated test databases and diagnostics under `.test-work/` are local-only and
+ignored by Git. Publishing stages nonignored worktree changes; never force-add
+this directory or use Git LFS for its disposable caches. If a rejected local
+commit already includes them, an ignore rule alone does not remove them from
+that commit's history: repair the unpublished commit while preserving the local
+files before retrying the push.
+
 ```bash
 .venv/bin/python -m pytest -q
 terraform -chdir=infra/terraform validate

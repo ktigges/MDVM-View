@@ -5,6 +5,24 @@ import pytest
 from vulnerability_view import github_workflow_cli
 
 
+def test_publish_staging_excludes_generated_test_workspace(monkeypatch, tmp_path):
+    ignore_rules = (github_workflow_cli.ROOT / ".gitignore").read_text()
+    (tmp_path / ".gitignore").write_text(ignore_rules)
+    cache = tmp_path / ".test-work" / "query-engine" / "customer-cache" / "history.sqlite3"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"generated local database")
+    (tmp_path / "release.py").write_text("VERSION = 'test'\n")
+    monkeypatch.setattr(github_workflow_cli, "ROOT", tmp_path)
+    github_workflow_cli._git("init", "--quiet")
+
+    github_workflow_cli._git("add", "-A")
+
+    assert set(github_workflow_cli._output("ls-files", "-z").split("\0")) == {
+        ".gitignore", "release.py", "",
+    }
+    assert cache.read_bytes() == b"generated local database"
+
+
 def test_parser_supports_publish_and_promote():
     args = github_workflow_cli.build_parser().parse_args([
         "publish-and-promote",
