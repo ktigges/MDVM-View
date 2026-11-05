@@ -521,18 +521,18 @@ Terraform outputs for the resource group and Function App.
 
 The command:
 
-1. Reads `function_version` from `main.tfvars.json`.
-2. Uses `FUNCTION_VERSION` as a one-command override when supplied.
-3. Falls back to the Git tag/commit when no configured version exists.
-4. Creates temporary build metadata with version, UTC time, and Git commit.
-5. Packages `function_app.py`, `host.json`, dependencies, `src/`, the SLA policy,
-   and build metadata.
-6. Removes the legacy `AzureWebJobsStorage` setting that would override the
-   managed-identity host-storage configuration.
-7. Restarts the Function and waits for configuration/RBAC propagation.
-8. Uploads the ZIP using Azure Function remote build.
-9. Sets `COLLECTOR_VERSION` only after successful package deployment.
-10. Synchronizes Function triggers through Azure Resource Manager.
+1. Reads the release from tracked `function-version.json`, not the legacy
+   `function_version` Terraform value or a `FUNCTION_VERSION` override.
+2. Creates temporary build metadata with version, UTC time, and Git commit.
+3. Packages `function_app.py`, `function-version.json`, `host.json`,
+   dependencies, `src/`, the SLA policy, and build metadata.
+4. Removes the legacy `AzureWebJobsStorage` setting that would override the
+   managed-identity host-storage configuration, plus stale host logging overrides.
+5. Restarts the Function and waits for configuration/RBAC propagation.
+6. Uploads the ZIP using Azure Function remote build.
+7. Sets `COLLECTOR_VERSION` only after successful package deployment.
+8. Waits for the Python worker to index the required functions.
+9. Synchronizes Function triggers through Azure Resource Manager.
 
 The command does not invoke a collection. A scheduled run occurs only when its
 timer is due; a manual run requires `tfinvoke function`.
@@ -560,6 +560,13 @@ bump script. A stale `dashboard_version` in customer Terraform values does not
 block or relabel the code deployment; those customer settings are not rewritten.
 
 Function and Web App package deployments are independent:
+
+Web App verification checks only the Web App and its authentication/access
+configuration; it does not require Function outputs or check or restart the
+collector. If the Web App package deployed successfully but verification failed,
+rerun `verify webapp` after correcting the local verification tool, without
+redeploying the package. Function verification retains its managed-identity
+storage and trigger checks.
 
 ```bash
 ./infra/deploy.sh tfdeploy function  # collector only
@@ -646,12 +653,17 @@ python -m vulnerability_view.operations_cli verify webapp
 
 ### Function code only
 
-Update `function_version` in `terraform/main.tfvars.json`, then:
+Pull the published source containing the intended `function-version.json`, then:
 
 ```bash
 python -m vulnerability_view.operations_cli deploy function
 python -m vulnerability_view.operations_cli verify function
 ```
+
+Changing the source version or applying Terraform alone does not upgrade the
+running collector. Deployment menu option **3** performs this Function
+deploy/verify sequence; Web App option **4** does not deploy the collector.
+Existing run metadata retains its original collector version.
 
 ### Dashboard code only
 

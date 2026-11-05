@@ -100,6 +100,21 @@ Use `-m ""` to include both regular and performance-marked tests in a full run.
 The million-record dashboard benchmarks below are standalone, opt-in commands,
 not part of ordinary pytest validation.
 
+## Release versions
+
+Before publishing changed application code, update the affected tracked release
+metadata: `function-version.json` for the collector and `dashboard/config.js`
+for the Web App. Bump both when shared changes affect both applications. Use
+`YYYY.MM.DD.N` with the UTC release date and increment `N` for another release
+on the same UTC day; keep revision timestamps in UTC and example version values
+consistent.
+
+Publishing source does not deploy either application. Function deployment reads
+the packaged version file and stamps `COLLECTOR_VERSION`; Web App deployment
+reads the dashboard source version. Terraform preserves existing deployed
+version settings instead of relabeling old code. Retained run metadata must
+continue identifying the collector release that actually produced that run.
+
 ## Full-server cold-start benchmark
 
 This local-only harness generates synthetic data in an isolated temporary

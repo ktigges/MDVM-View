@@ -2513,10 +2513,22 @@ def test_verify_function_rejects_invalid_trigger_response(monkeypatch, functions
         operations_cli.verify("function")
 
 
+def test_verify_function_still_requires_valid_storage_identity(monkeypatch):
+    outputs = {"resource_group_name": "rg-test", "function_app_name": "func-test"}
+    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: outputs[name])
+
+    def invalid_storage_identity(resource_group, function_app):
+        assert (resource_group, function_app) == ("rg-test", "func-test")
+        raise RuntimeError("Function storage identity is invalid")
+
+    monkeypatch.setattr(operations_cli, "_validate_function_runtime_storage_auth", invalid_storage_identity)
+    with pytest.raises(RuntimeError, match="Function storage identity is invalid"):
+        operations_cli.verify("function")
+
+
 def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatch, capsys):
     outputs = {
         "resource_group_name": "rg-test",
-        "function_app_name": "func-test",
         "web_app_name": "app-test",
         "dashboard_url": "https://app-test.example/",
         "dashboard_enterprise_application_name": "DVM Viewer",
@@ -2545,13 +2557,17 @@ def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatc
         return RedirectResponse()
 
     monkeypatch.setattr(operations_cli, "_tf_output", lambda name: outputs[name])
-    monkeypatch.setattr(operations_cli, "_validate_function_runtime_storage_auth", lambda *args: None)
+    monkeypatch.setattr(
+        operations_cli, "_validate_function_runtime_storage_auth",
+        lambda *args: pytest.fail("Web App verification must not inspect the Function"),
+    )
     monkeypatch.setattr(operations_cli, "_az", fake_az)
     monkeypatch.setattr(operations_cli.requests, "get", fake_get)
 
     operations_cli.verify("webapp")
 
     assert all(kwargs["timeout"] == 60 for _, kwargs in azure_calls)
+    assert all(args[0] != "functionapp" for args, _ in azure_calls)
     assert get_calls == [
         (("https://app-test.example/",), {"allow_redirects": False, "stream": True, "timeout": (10, 30)})
     ]
@@ -2564,7 +2580,6 @@ def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatc
 def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys):
     outputs = {
         "resource_group_name": "rg-test",
-        "function_app_name": "func-test",
         "web_app_name": "app-test",
         "dashboard_url": "https://app-test.example/",
         "dashboard_enterprise_application_name": "DVM Viewer",
@@ -2581,7 +2596,10 @@ def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys):
             return None
 
     monkeypatch.setattr(operations_cli, "_tf_output", lambda name: outputs[name])
-    monkeypatch.setattr(operations_cli, "_validate_function_runtime_storage_auth", lambda *args: None)
+    monkeypatch.setattr(
+        operations_cli, "_validate_function_runtime_storage_auth",
+        lambda *args: pytest.fail("Web App verification must not inspect the Function"),
+    )
     monkeypatch.setattr(
         operations_cli,
         "_az",
