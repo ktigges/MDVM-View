@@ -131,11 +131,11 @@ separate substeps. Heartbeats every 60 seconds show cumulative `cpuSeconds`,
 `lastProgressAgeSeconds`, and the latest substep. The heartbeat runs in the
 isolated child and is forwarded by the Function invocation thread.
 
-For the customer Function, export this combined chronological timeline after a
-run (change the role for the lab):
+For your Function App, export this combined chronological timeline after a
+run (replace the placeholder with your Function App name):
 
 ```kusto
-let FunctionApp = "func-dvmviewer-prod-elite";
+let FunctionApp = "<functionAppName>";
 let Since = ago(24h);
 union
     (AppTraces
@@ -222,8 +222,8 @@ Inspect a Web App deployment:
 
 ```bash
 az webapp log deployment list \
-  --resource-group "<resource-group>" \
-  --name "<web-app-name>" \
+  --resource-group "<resourceGroupName>" \
+  --name "<WebAppName>" \
   --query 'sort_by(@,&start_time)[-1].{id:id,status:status,active:active,start:start_time,end:end_time}' \
   --output table
 ```

@@ -527,13 +527,13 @@ purposes:
 
 | Terraform variable | Example | Purpose | Application setting |
 |---|---|---|---|
-| `history_storage_account_name` | `stdvmhistreplace123` | Retains immutable raw responses, curated datasets, run manifests, and the current manifest pointer. This is application data and must survive Function replacement. | `STORAGE_ACCOUNT_NAME` |
-| `function_runtime_storage_account_name` | `stdvmfuncreplace123` | Stores Azure Functions host state and deployment packages. It is operational infrastructure, not vulnerability history. | Managed by Terraform through `AzureWebJobsStorage__*`; do not put this account in `.env`. |
+| `history_storage_account_name` | `<historyStorageAccountName>` | Retains immutable raw responses, curated datasets, run manifests, and the current manifest pointer. This is application data and must survive Function replacement. | `STORAGE_ACCOUNT_NAME` |
+| `function_runtime_storage_account_name` | `<functionRuntimeStorageAccountName>` | Stores Azure Functions host state and deployment packages. It is operational infrastructure, not vulnerability history. | Managed by Terraform through `AzureWebJobsStorage__*`; do not put this account in `.env`. |
 
-For the supplied example values, local application configuration is:
+Replace the placeholder with your protected history storage account name:
 
 ```dotenv
-STORAGE_ACCOUNT_NAME=stdvmhistreplace123
+STORAGE_ACCOUNT_NAME=<historyStorageAccountName>
 STORAGE_CONTAINER_NAME=dvm-history
 STORAGE_CURRENT_CONTAINER_NAME=dvm-current
 ```

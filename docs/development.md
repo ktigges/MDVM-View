@@ -455,11 +455,12 @@ history. It uses the signed-in Azure CLI identity, verifies the selected storage
 account belongs to the selected subscription, and requires separate existing
 history and current-pointer containers.
 
-For the test environment, build and publish indexes for the current snapshot:
+Replace the resource placeholders with your environment's values. To build and
+publish indexes for the current snapshot:
 
 ```bash
 PYTHONPATH=src .venv/bin/python tools/rebuild_dashboard_indexes.py \
-  --account sadvmviewerdata \
+  --account "<historyStorageAccountName>" \
   --history-container dvm-history \
   --current-container dvm-current \
   --publish
@@ -503,7 +504,7 @@ A local build can be published later **without downloading or rebuilding again**
 
 ```bash
 PYTHONPATH=src .venv/bin/python tools/rebuild_dashboard_indexes.py \
-  --account sadvmviewerdata \
+  --account "<historyStorageAccountName>" \
   --history-container dvm-history \
   --current-container dvm-current \
   --publish --publish-existing output/index-rebuilds/rebuild-<local-build-id>
@@ -541,7 +542,7 @@ The populator's `--resume-local` option reuses a saved local population director
 
 ```bash
 PYTHONPATH=src .venv/bin/python tools/populate_load_test_data.py \
-  --account sadvmviewerdata \
+  --account "<historyStorageAccountName>" \
   --history-container dvm-history \
   --current-container dvm-current \
   --resume-local output/load-test-data/population-REPLACE_WITH_SAVED_ID \

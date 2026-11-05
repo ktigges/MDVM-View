@@ -318,8 +318,8 @@ republishing the Web App package:
 
 ```bash
 az webapp config appsettings set \
-  --resource-group <resource-group> \
-  --name <web-app-name> \
+  --resource-group "<resourceGroupName>" \
+  --name "<WebAppName>" \
   --settings DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=true
 ```
 

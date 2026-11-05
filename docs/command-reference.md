@@ -463,7 +463,7 @@ logs, query the Function's linked workspace without an operation-ID filter:
 ```kusto
 AppTraces
 | where TimeGenerated > ago(1h)
-| where AppRoleName =~ "<function-app-name>"
+| where AppRoleName =~ "<functionAppName>"
 | where Message contains "[debug] PASSED:" or Message contains "[debug] FAILED:"
 | project TimeGenerated, Message
 | order by TimeGenerated desc
