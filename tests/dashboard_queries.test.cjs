@@ -347,6 +347,20 @@ test("changing report views resets visual progress without retaining a cancelled
   assert.equal(app.run("dashboardVisualProgress.timer"),null);
 });
 
+test("shared activity tiles put full-width labels before their counts",()=>{
+  const tiles=[...html.matchAll(/<button\b[^>]*data-(?:new|fixed)-view=[^>]*>(.*?)<\/button>/g)];
+  assert.equal(tiles.length,8);
+  for(const [,markup] of tiles)assert.match(markup,/^<span>[^<]+<\/span><strong id="[^"]+">0<\/strong>$/);
+  const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
+  assert.match(css,/\.new-activity-metrics button,\.new-activity-metrics \.window-metric\{[^}]*grid-template-columns:minmax\(0,1fr\)/);
+});
+
+test("summary decision tiles put titles above million-record values",async()=>{
+  const app=fixture();await tick();
+  app.run('renderDecisionMetrics("executiveWorkload",[{value:1836170,label:"Detected findings",detail:"Current detections",target:"overview"}])');
+  assert.match(app.elements.get("executiveWorkload").innerHTML,/<span>Detected findings<\/span><strong>1,836,170<\/strong>/);
+});
+
 test("report progress respects reduced motion and marks elapsed updates as non-announcing",()=>{
   const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
   assert.match(css,/@media\(prefers-reduced-motion:reduce\)\{\.report-progress-indicator\{animation:none/);
