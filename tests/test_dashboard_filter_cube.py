@@ -55,16 +55,34 @@ def test_categorical_rollups_preserve_exact_summary_matching_and_distinct_counts
         assert canonical(actual) == reference, payload
 
 
-def test_incompatible_date_search_and_grouping_scopes_do_not_use_rollups(tmp_path):
+@pytest.mark.parametrize("filters", [
+    {"search": "finding-0001"},
+    {"newPeriodFilter": True, "newPeriod": "custom", "newPeriodStart": "2026-10-24", "newPeriodEnd": "2026-10-24"},
+    {"remediationPeriodFilter": True}, {"latestRunChangesOnly": True},
+    {"workloadGrouping": {"rules": []}}, {"slaPolicy": {"version": "changed"}},
+])
+def test_incompatible_date_search_and_grouping_scopes_do_not_use_rollups(tmp_path, filters):
     e = engine(tmp_path)
     e.read_model.prepare({})
-    for filters in (
-        {"search": "finding-0001"}, {"newPeriodFilter": True, "newPeriod": "week"},
-        {"remediationPeriodFilter": True}, {"latestRunChangesOnly": True},
-        {"workloadGrouping": {"rules": []}}, {"slaPolicy": {"version": "changed"}},
-    ):
-        result = e.query({"view": "overview", "filters": filters})
-        assert result["metadata"]["readModel"] == "exact-query"
+    payload = {"view": "overview", "filters": filters}
+    expected = canonical(engine(tmp_path / "exact").query(payload))
+    result = e.query(payload)
+    assert result["metadata"]["readModel"] == "exact-query"
+    assert canonical(result) == expected
+
+
+@pytest.mark.parametrize("severity", ["All", "High"])
+def test_equivalent_first_seen_period_uses_rollups_with_exact_results(tmp_path, severity):
+    payload = {
+        "view": "overview",
+        "filters": {"newPeriodFilter": True, "newPeriod": "week", "severity": severity},
+    }
+    expected = canonical(engine(tmp_path / "exact").query(payload))
+    e = engine(tmp_path / "aggregate")
+    e.read_model.prepare({})
+    result = e.query(payload)
+    assert result["metadata"]["readModel"] == "filtered-aggregate"
+    assert canonical(result) == expected
 
 
 def test_filtered_cve_representatives_empty_identifiers_and_latest_outcomes(tmp_path):

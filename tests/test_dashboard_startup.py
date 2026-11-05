@@ -9,28 +9,33 @@ import pytest
 from azure.core.exceptions import HttpResponseError
 
 from vulnerability_view import dashboard_startup as diagnostics
+from vulnerability_view.dashboard_queries import DashboardQueryEngine
 from test_dashboard_queries import engine
 
 
 @pytest.mark.parametrize("dataset,indexes", [("findings", 21), ("finding-events", 3)])
 def test_each_sqlite_index_and_analyze_exposes_the_real_order_and_plan(tmp_path, monkeypatch, capsys, dataset, indexes):
     query = engine(tmp_path)
-    original = query._connect
+    original = DashboardQueryEngine._connect
     monitor = diagnostics.StartupDiagnostics()
     observed, committed = [], []
 
     @contextmanager
-    def connect(filters=None):
-        with original(filters) as db:
+    def connect(self, filters=None):
+        with original(self, filters) as db:
             def trace(sql):
+                progress = monitor.snapshot()
+                plan = progress["indexPlan"]
+                if plan is None or plan["dataset"] != dataset:
+                    return
                 if sql.startswith(("CREATE INDEX", "ANALYZE")):
-                    observed.append((sql, monitor.snapshot()))
+                    observed.append((sql, progress))
                 elif sql == "COMMIT" and monitor.stage.startswith("build-index:"):
                     committed.append(monitor.stage)
             db.set_trace_callback(trace)
             yield db
 
-    monkeypatch.setattr(query, "_connect", connect)
+    monkeypatch.setattr(DashboardQueryEngine, "_connect", connect)
     with diagnostics.startup_diagnostics(monitor):
         query.dataset_info(dataset)
     assert len(observed) == indexes + 1

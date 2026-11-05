@@ -1,6 +1,6 @@
 # Environment and deployment plan
 
-> **Last modified:** 2026-09-27
+> **Last modified:** 2026-11-05
 > **Purpose:** Define local, test, and Azure deployment boundaries, resources, and production-readiness gates.
 
 ## Operating model
@@ -321,6 +321,79 @@ synchronous pilot rather than a Durable Functions orchestration.
 For existing Flex deployments, follow the [hosting migration procedure](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments).
 Code deployment alone does not change the hosting plan. Dedicated hosting
 removes consumption-driven scale-in but does not guarantee uninterrupted runs.
+
+### Existing-environment viewer update and second-tenant test
+
+For an environment that already has the Function, Web App, Terraform state and
+a published dataset:
+
+1. Pull the published source with `git pull --ff-only`. Preserve the environment's
+   existing uncommitted settings and Terraform state; do not copy another
+   tenant's settings, data targets or state.
+2. Refresh the local dependencies, even if the deployment menu already imports
+   successfully:
+
+   ```bash
+   .venv/bin/python -m pip install -e ".[dev]"
+   ```
+
+   On Windows PowerShell:
+
+   ```powershell
+   .\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"
+   ```
+
+   The PowerShell menu creates `.venv-win` on first use; the command above is for
+   updating an existing environment.
+3. Sign in to the target tenant and select its subscription:
+
+   ```bash
+   az login --tenant "<tenantId>"
+   az account set --subscription "<subscriptionId>"
+   az account show --query "{tenantId:tenantId,subscriptionId:id,name:name}"
+   ```
+
+4. Confirm `infra/terraform/main.tfvars.json` and the Terraform backend/state
+   belong to that environment. Start `./infra/deployment-menu.sh` or
+   `.\infra\deployment-menu.ps1`.
+5. Run menu **2**, review the plan, and apply only the intended infrastructure
+   changes. This adds the private `dvm-viewer-cache` container to the existing
+   storage account, the Web App's container-scoped access and
+   `DASHBOARD_DERIVED_CACHE_CONTAINER`. Stop if retained storage or evidence
+   containers would be deleted or replaced. Allow new role assignments time to
+   propagate.
+6. Run menu **4** to deploy/verify the Web App. This viewer update does not
+   require deploying the Function, invoking collection or running the manual
+   index-rebuild command.
+7. Leave the first startup running until `/api/health` reports
+   `dashboardReady: true`. Startup automatically restores compatible published
+   indexes or builds missing indexes from the existing immutable datasets. It
+   also prepares missing aggregates, the search projection, history and default
+   view results, then saves completed artifacts in the viewer-cache container.
+   An empty cache can require substantial one-time preparation; do not repeatedly
+   restart the application while it is advancing.
+8. Sign in as an assigned dashboard viewer. Confirm the expected run and finding
+   counts, navigate all nine views, change first-seen/severity filters, open a
+   large recommendation detail and download a small filtered CSV.
+9. After publication finishes, `/api/diagnostics` should show no cache-publication
+   error or pending query jobs. Perform one controlled Web App restart:
+
+   ```bash
+   az webapp restart --resource-group "<resourceGroupName>" --name "<WebAppName>"
+   ```
+
+   Verify readiness and the same counts again. Compatible artifacts should be
+   restored rather than rebuilt. New snapshots or incompatible index versions
+   still need their own preparation; this is snapshot reuse, not delta indexing.
+
+Use the same sequence in a second tenant only if it already has its own deployed
+environment and published dataset. For a brand-new tenant, follow the
+[greenfield checklist](greenfield-deployment.md), configure tenant-specific
+resource names and permissions, then use menu **1** for the complete
+infrastructure/Function/Web App deployment. A new environment also needs an
+initial collection (or an explicitly approved test-data publication) before the
+viewer can prepare data. Answer **N** to the collection prompt when testing an
+existing published snapshot; collect only when a new dataset is intended.
 
 ### Function pilot deployment
 

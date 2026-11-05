@@ -61,6 +61,18 @@ Run the regular suite before release. Large-data memory/performance checks are
 excluded by default, including from the GitHub publishing workflow; small-data
 correctness and concurrency regressions remain enabled.
 
+After pulling dependency changes, refresh the deployment/development environment:
+
+```bash
+.venv/bin/python -m pip install -e ".[dev]"
+```
+
+On Windows PowerShell, use `.\.venv-win\Scripts\python.exe` instead.
+FastAPI 0.118.3 and Starlette 0.48.0 are pinned together for Python 3.12+
+compatibility, including Python 3.14 coroutine detection without deprecated
+`asyncio.iscoroutinefunction` calls. Do not patch installed framework files or
+suppress these warnings instead of updating the dependencies.
+
 ```bash
 .venv/bin/python -m pytest -q
 terraform -chdir=infra/terraform validate
