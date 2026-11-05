@@ -4,6 +4,7 @@ Purpose: Verify append-only shared recommendation workflow persistence.
 """
 
 import json
+import hashlib
 
 import pytest
 
@@ -13,12 +14,18 @@ from vulnerability_view.recommendation_tracking import RecommendationTrackingSto
 class FakeBlob:
     def __init__(self, content: bytes = b""):
         self.content = content
+        self.downloads = 0
+
+    @property
+    def etag(self):
+        return hashlib.sha256(self.content).hexdigest()
 
     def upload_blob(self, content: bytes, overwrite: bool):
         assert overwrite is False
         self.content = content
 
     def download_blob(self):
+        self.downloads += 1
         return self
 
     def readall(self):
@@ -34,7 +41,7 @@ class FakeContainer:
 
     def list_blobs(self, name_starts_with):
         return [
-            type("BlobItem", (), {"name": name})()
+            type("BlobItem", (), {"name": name, "etag": self.blobs[name].etag})()
             for name in sorted(self.blobs)
             if name.startswith(name_starts_with)
         ]
@@ -79,6 +86,51 @@ def test_tracking_store_surfaces_malformed_events():
 
     with pytest.raises(json.JSONDecodeError):
         store.latest()
+
+
+def test_tracking_cache_reuses_unchanged_events_but_observes_new_events():
+    container = FakeContainer()
+    store = RecommendationTrackingStore(
+        "account", "workflow", object(), service_factory=lambda **_: FakeService(container),
+    )
+    first = store.record("rec-1", "InProgress", "run-1", "2026-10-24T12:00:00Z", "user", "User")
+    store.latest()["rec-1"]["UserStatus"] = "Clear"
+    assert store.latest()["rec-1"]["UserStatus"] == "InProgress"
+    assert container.blobs[first["BlobName"]].downloads == 1
+    second = store.record("rec-1", "ReadyForValidation", "run-1", "2026-10-24T12:00:00Z", "user", "User")
+    assert store.latest()["rec-1"]["UserStatus"] == "ReadyForValidation"
+    assert container.blobs[first["BlobName"]].downloads == 1
+    assert container.blobs[second["BlobName"]].downloads == 1
+
+
+def test_tracking_cache_revalidates_changed_etags_and_does_not_hide_corruption():
+    container = FakeContainer()
+    store = RecommendationTrackingStore(
+        "account", "workflow", object(), service_factory=lambda **_: FakeService(container),
+    )
+    event = store.record("rec-1", "InProgress", "run-1", "2026-10-24T12:00:00Z", "user", "User")
+    assert store.latest()["rec-1"]["UserStatus"] == "InProgress"
+    blob = container.blobs[event["BlobName"]]
+    blob.content = json.dumps({**event, "UserStatus": "Clear"}).encode()
+    assert store.latest()["rec-1"]["UserStatus"] == "Clear"
+    assert blob.downloads == 2
+    blob.content = b"not-json"
+    with pytest.raises(json.JSONDecodeError):
+        store.latest()
+    assert blob.downloads == 3
+
+
+def test_tracking_event_cache_is_bounded():
+    container = FakeContainer()
+    for index in range(260):
+        container.blobs[f"events/{index}.json"] = FakeBlob(json.dumps({
+            "RecommendationId": "rec-1", "UserStatus": "InProgress", "UpdatedUtc": "2026-10-24T12:00:00Z",
+        }).encode())
+    store = RecommendationTrackingStore(
+        "account", "workflow", object(), service_factory=lambda **_: FakeService(container),
+    )
+    assert len(store.latest()) == 1
+    assert len(store._event_cache) == 256
 
 
 def test_tracking_store_ignores_adls_directory_markers():

@@ -1,11 +1,15 @@
 import asyncio
+import csv
+import io
 import json
+import hashlib
 import time
 from threading import Event
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 import pytest
+from fastapi.responses import JSONResponse
 
 from vulnerability_view import dashboard_snapshots
 from vulnerability_view.config import Settings
@@ -14,7 +18,7 @@ from vulnerability_view.dashboard_server import create_app
 
 def request(
     app, path, *, method="GET", payload=None, content_type="application/json",
-    headers=(), disconnect_after_first_chunk=False,
+    headers=(), disconnect_after_first_chunk=False, capture_chunks=None,
 ):
     async def run():
         messages = []
@@ -37,6 +41,8 @@ def request(
 
         async def send(message):
             messages.append(message)
+            if capture_chunks is not None and message["type"] == "http.response.body" and message.get("body"):
+                capture_chunks.append(message["body"])
             if message["type"] == "http.response.body" and (
                 not message.get("more_body") or disconnect_after_first_chunk
             ):
@@ -70,6 +76,13 @@ class Engine:
     def cached(self, payload):
         return None
 
+    def query_identity(self, payload):
+        semantic = {key: value for key, value in payload.items() if key not in {"requestId", "asyncQuery"}}
+        return hashlib.sha256(json.dumps(semantic, sort_keys=True).encode()).hexdigest()
+
+    def is_interactive(self, payload):
+        return payload.get("view") not in {"trend", "executiveSnapshot"}
+
     def indexed_rows(self):
         return {}
 
@@ -99,6 +112,132 @@ def app(monkeypatch, tmp_path):
     yield application
     application.state.dashboard_query_jobs.close()
     application.state.dashboard_snapshots.close()
+
+
+def test_cached_results_bypass_occupied_workers(app, monkeypatch):
+    release = Event()
+    jobs = app.state.dashboard_query_jobs
+    snapshot = select_snapshot(app)
+
+    def blocked():
+        assert release.wait(5)
+        return JSONResponse({"ready": True})
+
+    def cached(self, payload):
+        return {"snapshotId": self.snapshot_id, "scope": {"findings": 1837575}, "notices": []}
+
+    monkeypatch.setattr(Engine, "cached", cached)
+    monkeypatch.setattr(Engine, "is_interactive", lambda *args: pytest.fail("A cache hit must not be queued"))
+    try:
+        jobs.poll("busy-one", snapshot["snapshotId"], blocked)
+        jobs.poll("busy-two", snapshot["snapshotId"], blocked)
+        start = time.monotonic()
+        status, _, body = request(app, "/api/dashboard/query", method="POST", payload={
+            "snapshotId": snapshot["snapshotId"], "view": "recommendations",
+            "asyncQuery": True, "requestId": "cached-navigation",
+        })
+        assert status == 200
+        assert json.loads(body)["scope"]["findings"] == 1837575
+        assert time.monotonic() - start < .5
+        assert Engine.calls == []
+    finally:
+        release.set()
+
+
+def test_equivalent_api_requests_share_one_computation(app, monkeypatch):
+    entered, release = Event(), Event()
+    snapshot = select_snapshot(app)
+    calls = []
+
+    def blocked(self, payload):
+        calls.append(payload)
+        entered.set()
+        assert release.wait(5)
+        return {"snapshotId": self.snapshot_id, "notices": []}
+
+    monkeypatch.setattr(Engine, "query", blocked)
+    base = {"snapshotId": snapshot["snapshotId"], "view": "executiveSnapshot", "asyncQuery": True}
+    try:
+        for request_id in ("first-view", "second-view"):
+            status, _, _ = request(
+                app, "/api/dashboard/query", method="POST", payload={**base, "requestId": request_id},
+            )
+            assert status == 202
+        assert entered.wait(1)
+        assert len(app.state.dashboard_query_jobs.diagnostics()["pending"]) == 1
+        release.set()
+        for _ in range(100):
+            status, _, _ = request(
+                app, "/api/dashboard/query", method="POST", payload={**base, "requestId": "second-view"},
+            )
+            if status != 202:
+                break
+            time.sleep(.005)
+        assert status == 200
+        assert len(calls) == 1
+    finally:
+        release.set()
+
+
+def test_cancel_api_releases_abandoned_query_subscription(app, monkeypatch):
+    entered, release = Event(), Event()
+    snapshot = select_snapshot(app)
+
+    def blocked(self, payload):
+        entered.set()
+        assert release.wait(5)
+        return {"snapshotId": self.snapshot_id}
+
+    monkeypatch.setattr(Engine, "query", blocked)
+    payload = {
+        "snapshotId": snapshot["snapshotId"], "view": "executiveSnapshot",
+        "asyncQuery": True, "requestId": "abandoned-report",
+    }
+    try:
+        assert request(app, "/api/dashboard/query", method="POST", payload=payload)[0] == 202
+        assert entered.wait(1)
+        status, _, body = request(app, "/api/dashboard/query/cancel", method="POST", payload=payload)
+        assert status == 200 and json.loads(body)["cancelled"] is True
+        release.set()
+        status, _, _ = request(app, "/api/dashboard/query", method="POST", payload=payload)
+        assert status == 499
+    finally:
+        release.set()
+
+
+def test_export_waits_with_progress_when_heavy_capacity_is_in_use(app):
+    snapshot = select_snapshot(app)
+    with app.state.dashboard_query_jobs.export_slot():
+        status, _, body = request(app, "/api/dashboard/export", method="POST", payload={
+            "snapshotId": snapshot["snapshotId"], "view": "overview",
+        })
+    assert status == 202
+    result = json.loads(body)
+    assert result["status"] == "preparing"
+    assert result["retryAfterSeconds"] == 2
+    assert "report or export" in result["detail"]
+
+
+def test_export_batches_rows_without_changing_csv_contents(app, monkeypatch):
+    snapshot = select_snapshot(app)
+
+    def rows(self, payload):
+        for index in range(1200):
+            yield {"FindingKey": str(index), "Evidence": 'quoted,"value"\n' + "x" * 100}
+
+    monkeypatch.setattr(Engine, "iter_export", rows)
+    chunks = []
+    status, _, body = request(
+        app, "/api/dashboard/export", method="POST",
+        payload={"snapshotId": snapshot["snapshotId"], "view": "overview"},
+        capture_chunks=chunks,
+    )
+    assert status == 200
+    records = list(csv.DictReader(io.StringIO(body.decode("utf-8-sig"))))
+    assert len(records) == 1200
+    assert records[-1] == {"FindingKey": "1199", "Evidence": 'quoted,"value"\n' + "x" * 100}
+    assert len(chunks) <= 6
+    assert max(map(len, chunks)) < 66 * 1024
 
 
 def test_real_engine_and_async_api_agree_on_request_and_response_shape(tmp_path):
@@ -227,6 +366,66 @@ def test_async_query_requires_stable_poll_identity(app):
         "snapshotId": snapshot["snapshotId"], "asyncQuery": True,
     })
     assert status == 422
+
+
+def test_async_query_polls_remain_responsive_while_tracking_preparation_is_blocked(app, tmp_path):
+    entered, release = Event(), Event()
+
+    class Tracking:
+        reads = 0
+
+        def latest(self):
+            self.reads += 1
+            entered.set()
+            assert release.wait(5)
+            return {}
+
+    tracking = Tracking()
+    application = create_app(
+        Settings(dashboard_data_source="local", dashboard_recommendation_tracking_enabled=True),
+        project_root=tmp_path, recommendation_tracking_store=tracking,
+    )
+    snapshot = select_snapshot(application)
+    payload = {
+        "snapshotId": snapshot["snapshotId"], "view": "executive",
+        "asyncQuery": True, "requestId": "slow-tracking",
+    }
+
+    async def exercise():
+        pending = asyncio.create_task(asyncio.to_thread(
+            request, application, "/api/dashboard/query", method="POST", payload=payload,
+        ))
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            for attempt in range(2):
+                result = await asyncio.wait_for(
+                    asyncio.shield(pending) if attempt == 0 else asyncio.to_thread(
+                        request, application, "/api/dashboard/query", method="POST", payload=payload,
+                    ),
+                    timeout=.5,
+                )
+                status, _, body = result
+                assert status == 202
+                if attempt:
+                    assert json.loads(body)["progress"]["stage"] == "recommendation-tracking-read"
+            assert tracking.reads == 1
+        finally:
+            release.set()
+            await pending
+
+    try:
+        asyncio.run(exercise())
+        for _ in range(100):
+            status, _, body = request(application, "/api/dashboard/query", method="POST", payload=payload)
+            if status != 202:
+                break
+            time.sleep(.005)
+        assert status == 200, body
+        assert tracking.reads == 1
+    finally:
+        release.set()
+        application.state.dashboard_query_jobs.close()
+        application.state.dashboard_snapshots.close()
 
 
 def test_expired_or_unknown_snapshot_returns_conflict(app):

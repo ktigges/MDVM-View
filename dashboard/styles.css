@@ -301,6 +301,7 @@ main{width:100%;max-width:1600px!important;min-width:0;padding:22px clamp(16px,2
 [hidden]{display:none!important}
 .dashboard-query-status{position:sticky;top:0;z-index:120;display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff0ec;color:#922f23;border-bottom:1px solid #e8b4a9}
 .dashboard-query-status span{flex:1}
+.dashboard-query-status[role="status"]{background:#edf5fc;color:#234e70;border-bottom-color:#b8d2e8}
 .index-progress-plan{font-size:12px;overflow-wrap:anywhere}.index-progress-plan summary{cursor:pointer}.index-progress-plan ol{max-height:240px;overflow:auto;padding-left:24px}.dashboard-query-status:has(.index-progress-plan){flex-wrap:wrap}
 .query-pending{visibility:hidden!important;pointer-events:none}
 .server-pagination{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 0}

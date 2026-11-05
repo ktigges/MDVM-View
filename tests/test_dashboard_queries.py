@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
+from contextlib import contextmanager
 import json
 import math
 import random
@@ -151,6 +152,61 @@ def test_recommendation_search_fallback_still_searches_finding_evidence(tmp_path
     with e._connect() as db:
         e._match_recommendations(db, {"search": "unique finding evidence text"})
         assert [row[0] for row in db.execute("SELECT RecommendationId FROM matched_recommendations")] == ["rec-0"]
+
+
+@pytest.mark.parametrize("selection", [
+    {"type": "recommendation", "id": "rec-0"},
+    {"type": "machine", "id": "device-0"},
+    {"type": "cve", "id": "CVE-2026-0000"},
+    {"type": "finding", "id": "finding-0000"},
+    {"type": "machine", "id": "rule:endpoints"},
+])
+def test_detail_counts_and_sorting_decode_only_displayed_finding_payloads(tmp_path, selection):
+    data = datasets(1200)
+    e = engine(tmp_path, data)
+    e.prepare_workspace_indexes()
+    reads = {}
+    payload_reads = 0
+    statement = ""
+    filters = {"workloadGrouping": {"rules": [
+        {"id": "endpoints", "label": "Endpoints", "field": "DeviceName", "operator": "prefix", "value": "endpoint-"},
+    ]}}
+    with e._connect(filters) as db:
+        def trace(sql):
+            nonlocal statement
+            statement = sql
+
+        def payload(rowid, dataset):
+            nonlocal payload_reads
+            payload_reads += dataset == "findings"
+            if statement.startswith("SELECT count(*) FROM ("):
+                reads[statement] = reads.get(statement, 0) + 1
+            return json.dumps(data[dataset][rowid - 1])
+
+        db.set_trace_callback(trace)
+        db.create_function("payload_json", 2, payload)
+        e._finding_scope(db, "scoped", "1", [], filters)
+        out = {"texts": {}, "cards": {}, "tables": {}}
+        e._detail(db, out, {"selection": selection, "limit": 5}, filters, [])
+    assert not reads, {sql: count for sql, count in reads.items()}
+    assert payload_reads <= sum(len(table["items"]) for table in out["tables"].values()) + 2
+
+
+@pytest.mark.parametrize("status", [None, "", "Unavailable", "Available", False, 0, {"source": "unknown"}, ["unknown"]])
+def test_paged_cve_metadata_preserves_sql_json_scalar_semantics(tmp_path, status):
+    data = datasets(1)
+    data["findings"][0]["CveMetadataStatus"] = status
+    e = engine(tmp_path, data)
+    result = e.query({"view": "overview", "mode": "cves"})["tables"]["findingsTable"]["items"][0]
+    with e._connect() as db:
+        expected = db.execute("""
+            SELECT coalesce(nullif(json_extract(data,'$.CveMetadataStatus'),''),'Available') status,
+              CASE WHEN json_extract(data,'$.CveMetadataStatus')='Unavailable' THEN NULL ELSE _exploit END exploit
+            FROM findings
+        """).fetchone()
+    assert result["CveMetadataStatus"] == expected["status"]
+    assert type(result["CveMetadataStatus"]) is type(expected["status"])
+    assert result["KnownExploit"] == expected["exploit"]
 
 
 def finding(index=0, **changes):
@@ -738,6 +794,31 @@ def test_tracking_counts_use_exact_collector_contract_and_empty_timestamp_catalo
     assert len(list(e.iter_dataset("recommendations"))) == 3
     with pytest.raises(ValueError, match="timestamp"):
         e.query({"view": "overview"})
+
+
+def test_tracking_counts_are_single_flight_snapshot_pinned_and_return_copies(tmp_path, monkeypatch):
+    e = engine(tmp_path)
+    original, statements = e._connect, []
+
+    @contextmanager
+    def observe(*args, **kwargs):
+        with original(*args, **kwargs) as db:
+            db.set_trace_callback(statements.append)
+            yield db
+
+    monkeypatch.setattr(e, "_connect", observe)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(e.active_recommendation_counts, [SNAPSHOT, SNAPSHOT]))
+    assert results[0] == results[1]
+    assert results[0]
+    results[0].clear()
+    assert e.active_recommendation_counts(SNAPSHOT) == results[1]
+    assert sum("SELECT RecommendationId,count(*) FROM findings" in sql for sql in statements) == 1
+    assert e.active_recommendation_counts("2026-10-23T12:00:00Z") == {}
+    assert e.active_recommendation_counts("2026-10-22T12:00:00Z") == {}
+    assert len(e._tracking_counts) == 2
+    other = engine(tmp_path / "other", datasets(0), "different-snapshot")
+    assert other.active_recommendation_counts(SNAPSHOT) == {}
 
 
 def test_snapshot_identity_and_derived_cache_are_pinned(tmp_path):

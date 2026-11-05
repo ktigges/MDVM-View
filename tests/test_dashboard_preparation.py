@@ -149,6 +149,12 @@ def test_shell_health_and_progress_are_responsive_before_indexes_are_ready(tmp_p
                 assert status == 202
                 assert headers[b"retry-after"] == b"2"
                 assert "snapshotId" not in json.loads(body)
+                status, _, body = await asyncio.to_thread(
+                    request, application, "/api/dashboard/query", method="POST",
+                    payload={"snapshotId": "a" * 64, "asyncQuery": True, "requestId": "during-restart"},
+                )
+                assert status == 202
+                assert json.loads(body)["progress"]["rows"] == 204000
                 for path in ("/api/data-browser/catalog", "/api/data-browser/findings"):
                     status, headers, _ = await asyncio.to_thread(request, application, path)
                     assert status == 503
@@ -162,6 +168,70 @@ def test_shell_health_and_progress_are_responsive_before_indexes_are_ready(tmp_p
             status, _, body = await asyncio.to_thread(request, application, "/api/dashboard/snapshot")
             assert status == 200
             assert json.loads(body)["preparation"]["status"] == "ready"
+
+    asyncio.run(verify())
+
+
+def test_multiple_expensive_filter_requests_do_not_starve_navigation(tmp_path, monkeypatch):
+    directory = tmp_path / "dashboard/data"
+    directory.mkdir(parents=True)
+    for name, rows in datasets().items():
+        (directory / f"{name}.json").write_text(json.dumps(rows))
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/sla-policies.json").write_text('{"policies":[]}')
+    application = create_app(
+        Settings(
+            dashboard_auth_enabled=False, dashboard_static_dir=str(ROOT / "dashboard"),
+            dashboard_recommendation_tracking_enabled=False,
+        ), project_root=tmp_path,
+    )
+    entered, release = Event(), Event()
+    original = DashboardQueryEngine.query
+
+    def slow_exact_query(self, payload):
+        if payload.get("filters", {}).get("search"):
+            entered.set()
+            assert release.wait(5)
+        return original(self, payload)
+
+    monkeypatch.setattr(DashboardQueryEngine, "query", slow_exact_query)
+
+    async def verify():
+        async with application.router.lifespan_context(application):
+            try:
+                for _ in range(500):
+                    if application.state.dashboard_preparation.diagnostics()["readySnapshotId"]:
+                        break
+                    await asyncio.sleep(.01)
+                status, _, body = await asyncio.to_thread(request, application, "/api/dashboard/snapshot")
+                assert status == 200
+                snapshot_id = json.loads(body)["snapshotId"]
+                for index in range(2):
+                    payload = {
+                        "snapshotId": snapshot_id, "view": "recommendations",
+                        "filters": {**initial_filters(ROOT / "dashboard/config.js"), "search": f"slow-{index}"},
+                        "asyncQuery": True, "requestId": f"slow-{index}",
+                    }
+                    status, _, _ = await asyncio.to_thread(
+                        request, application, "/api/dashboard/query", method="POST", payload=payload,
+                    )
+                    assert status == 202
+                assert await asyncio.to_thread(entered.wait, 5)
+                payload.update(
+                    filters=initial_filters(ROOT / "dashboard/config.js"), requestId="ordinary-navigation",
+                )
+                for _ in range(500):
+                    status, _, body = await asyncio.to_thread(
+                        request, application, "/api/dashboard/query", method="POST", payload=payload,
+                    )
+                    if status != 202:
+                        break
+                    await asyncio.sleep(.01)
+                assert status == 200, body
+                assert "recommendationTable" in json.loads(body)["tables"]
+                assert not release.is_set()
+            finally:
+                release.set()
 
     asyncio.run(verify())
 
@@ -306,6 +376,57 @@ def test_real_lifespan_prepares_indexes_then_queries_every_view_on_demand(tmp_pa
     assert "stage=view:executive:" not in logs
     assert "stage=view:trend:" not in logs
     assert "outcome=ready" in logs
+
+
+def test_persistent_startup_warms_all_views_and_restores_without_reingestion(tmp_path, monkeypatch):
+    from test_dashboard_cache import Service, cache
+    from vulnerability_view import dashboard_server
+    from vulnerability_view.dashboard_snapshots import DashboardSnapshots
+
+    data = tmp_path / "dashboard/data"
+    data.mkdir(parents=True)
+    for name, rows in datasets().items():
+        (data / f"{name}.json").write_text(json.dumps(rows))
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/sla-policies.json").write_text('{"policies":[]}')
+    service = Service()
+    monkeypatch.setattr(dashboard_server, "DashboardDerivedCache", lambda *args, **kwargs: cache(service))
+    settings = Settings(
+        dashboard_data_source="local", dashboard_auth_enabled=False,
+        dashboard_static_dir=str(ROOT / "dashboard"), dashboard_derived_cache_container="viewer-cache",
+    )
+
+    async def verify():
+        for restart in range(2):
+            application = create_app(settings, project_root=tmp_path)
+            async with application.router.lifespan_context(application):
+                preparation = application.state.dashboard_preparation
+                for _ in range(1000):
+                    if preparation.diagnostics()["readySnapshotId"]:
+                        break
+                    await asyncio.sleep(.01)
+                assert preparation.diagnostics()["status"] == "ready", preparation.diagnostics()
+                with application.state.dashboard_snapshots.acquire(preparation.metadata()["snapshotId"]) as entry:
+                    assert entry.engine.search_index.ready()
+                    assert entry.engine.products.path.is_file()
+                    if not restart:
+                        assert entry.engine.history_index_path is not None
+                if not restart:
+                    def unexpected(*args):
+                        raise AssertionError("A restart must restore indexes, not ingest curated rows")
+                    monkeypatch.setattr(DashboardSnapshots, "_rows", unexpected)
+                    original_query = DashboardQueryEngine.query
+
+                    def require_cached(engine, payload):
+                        assert engine.cached(payload) is not None, payload["view"]
+                        return original_query(engine, payload)
+
+                    monkeypatch.setattr(DashboardQueryEngine, "query", require_cached)
+
+    asyncio.run(verify())
+    assert any("/products-v1/" in name and name.endswith("/complete.json") for name in service.blobs)
+    assert any("/search-v1/" in name and name.endswith("/complete.json") for name in service.blobs)
+    assert any("/history-v10/" in name and name.endswith("/complete.json") for name in service.blobs)
 
 
 @pytest.mark.parametrize("fail_summary", [False, True])

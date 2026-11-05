@@ -31,3 +31,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+addopts = "-m 'not performance'"
+markers = [
+  "performance: opt-in large-data memory and performance regression checks",
+]

@@ -1,6 +1,6 @@
 # Development, demonstration, and source control
 
-> **Last modified:** 2026-11-03
+> **Last modified:** 2026-11-05
 > **Purpose:** Run the dashboard during development, demonstrate it consistently, validate changes, and publish source safely.
 
 ## Dashboard development
@@ -57,7 +57,9 @@ Run the smallest affected test selection first:
 .venv/bin/python -m pytest -q tests/test_dashboard_exports.py
 ```
 
-Run the complete suite before release:
+Run the regular suite before release. Large-data memory/performance checks are
+excluded by default, including from the GitHub publishing workflow; small-data
+correctness and concurrency regressions remain enabled.
 
 ```bash
 .venv/bin/python -m pytest -q
@@ -67,6 +69,17 @@ bash -n infra/check-runs.sh
 bash -n infra/check-function-logs.sh
 git diff --check
 ```
+
+Run the retained large-data memory regressions explicitly when changing
+collection/finalization memory behavior:
+
+```bash
+.venv/bin/python -m pytest -q -m performance tests/test_bounded_processing.py
+```
+
+Use `-m ""` to include both regular and performance-marked tests in a full run.
+The million-record dashboard benchmarks below are standalone, opt-in commands,
+not part of ordinary pytest validation.
 
 ## Full-server cold-start benchmark
 
@@ -102,7 +115,8 @@ under a unique directory in ignored `output/dashboard-startup-benchmarks/`.
 The command prints the results path before generation begins. `results.json`
 records generation time separately from process-launch-to-readiness time, plus
 shared-index preparation time, on-demand per-view timings, diagnostics/index bytes,
-CPU time, and peak RSS. No view is precomputed before readiness. Resource
+CPU time, and peak RSS. Shared read-model aggregates are prepared before readiness;
+full view requests still execute independently on demand. Resource
 measurements cover the server process through application shutdown, including
 the post-readiness verification requests; they exclude the data generator.
 Peak RSS measurement requires Linux or macOS. If unavailable, the memory
@@ -194,8 +208,9 @@ at every Web App restart. Old snapshots still incur local construction.
 
 ASGI startup now serves the authenticated shell while data preparation runs in
 the background. `/api/health` is liveness; `dashboardReady` remains false until
-the shared workspace dataset indexes are ready. Summary calculations are not a
-global readiness requirement. `/api/dashboard/snapshot` returns
+the shared workspace dataset indexes and default-scope read model are ready.
+Read-model construction includes shared Summary/SLA metrics, but does not execute
+the Summary request handler or a nine-view query sequence. `/api/dashboard/snapshot` returns
 HTTP 202 plus preparation status and `Retry-After` until then, and HTTP 200 with a
 pinned snapshot afterward. `/api/dashboard/status` exposes preparation stage,
 elapsed/stage seconds, processed rows/bytes and explicit retry/error state.
@@ -215,11 +230,106 @@ without deploying the updated code.
 
 Only the primary index is downloaded/restored before initial readiness. Without
 a compatible published index, the required workspace datasets are fully indexed
-first; no partial finding totals are exposed. Once those prerequisites are ready,
+first, followed by the viewer-only read model; no partial finding totals are exposed.
+Once those prerequisites are ready,
 the snapshot becomes queryable and the selected view runs through the existing
 bounded asynchronous query workers. A slow Summary does not gate independent
-Recommendations or other views. There is no nine-view startup sequence: all
-views, including Summary, are computed on demand.
+Recommendations or other views. There is no nine-view startup sequence: view
+requests read prepared aggregates where compatible and otherwise use exact queries.
+
+### Viewer-only aggregate read model
+
+The Web App builds a separate, versioned SQLite sidecar after restoring/building
+the primary index. It contains default-filter recommendation impact and priority
+totals, CVE/workload relationships, Summary/SLA metrics, endpoint inventory
+aggregates, and indexed evidence-row locators. Recommendation evidence locators
+also retain the existing query's ordering when priorities tie. Original finding
+payloads are hydrated only for the selected evidence page.
+
+Construction is single-flight per engine, capped at **512 MiB**, uses a **2 MiB**
+sidecar page cache, and atomically installs only a completed model. Snapshot
+preparation reserves that capacity against the existing **8 GiB** cache budget.
+Requests attach the completed model read-only. Failed construction is explicit,
+does not publish readiness or partial aggregates, and leaves any previously ready
+snapshot available. Active SQLite files live on fast disposable worker storage. When
+`DASHBOARD_DERIVED_CACHE_CONTAINER` is configured, completed primary indexes and
+aggregate sidecars are also retained as compressed, immutable artifacts in a
+separate private container (`dvm-viewer-cache` in Terraform). The Web App has
+container-scoped Blob Data Contributor access there, not additional write access
+to retained evidence or current pointers. No cache code deletes Azure blobs.
+
+On restart/deployment, the worker downloads the compatible completed artifacts,
+verifies compressed hashes, bounded expanded sizes, SQLite integrity and
+dataset/scope identity, and atomically restores local files instead of rebuilding
+the same snapshot. Primary reuse is keyed by snapshot and query format;
+aggregates additionally include read-model format, workload grouping, filters and
+pinned SLA policy. Changed aggregate scope can reuse the primary index while
+building a replacement sidecar. A completion descriptor is uploaded only after
+the artifact upload succeeds; incomplete uploads are never served. Cache misses
+build normally, while corrupt cache artifacts and storage failures are explicit
+preparation errors, not silently reported as a successful restore.
+Successful cache reuse is logged server-side, not displayed as a dashboard warning
+or a Retry action.
+
+Persisting a newly built cache is part of preparation. Browser reloads and user
+sessions share the worker's prepared files. New immutable snapshots still require
+their own compatible indexes/aggregates; this is snapshot reuse, not an
+incremental/delta-indexing claim. Without the setting, cache loss requires
+rebuilding derived files, not rerunning collection.
+
+For an existing customer environment, pull the published source with
+`git pull --ff-only`, use deployment menu **2** to review/apply the cumulative
+infrastructure update, then menu **4** to deploy/verify only the Web App.
+The infrastructure update creates the cache container, scoped identity role and
+application setting. No Function deployment or new collection is required for
+this viewer-only update; validate against the current published dataset.
+Menu **1** already deploys both applications after infrastructure, so do not
+repeat those deployments if using it; answer **N** to its optional collection
+prompt when retaining the existing sample.
+
+The scope identity includes evidence filters, workload-grouping rules and the
+pinned SLA policy. UI state and mutable recommendation workflow events are not
+part of the aggregate identity. Workflow state is applied live to recommendation
+matching/display; snapshot-wide tracking counts are prepared separately from
+filtered finding totals.
+
+The same bounded sidecar also contains categorical-filter rollups, exact CVE
+membership/histograms and latest-refresh remediation counts. Compatible severity,
+asset class, subscription, owner, exposure, reporting-health, domain and
+recommendation-type filters reuse these products instead of creating one model
+per filter combination. Distinct CVE totals use membership unions, never sums of
+per-device cardinalities. Day/week/month activity counters remain snapshot-pinned.
+Filtered CVE lists preserve the original reducer's representative-row traversal;
+unrecognized SQLite query plans retain the original exact list query. Original
+evidence paging and some filtered drill-down aggregates also remain exact queries.
+
+Search, date-window restrictions, latest-run-only restrictions, custom periods,
+unsupported origins, or changed policy/grouping without a compatible model use
+the original exact path, **not** incompatible totals. Response
+`metadata.readModel` identifies `aggregate`, `filtered-aggregate`, or `exact-query`;
+the filtered mode means compatible rollups are available, not that every table
+avoids source queries. Historical reports still use their existing query path.
+Consequently, these optimizations do not establish performance for arbitrary
+filters or history reports.
+
+First-seen/remediation restrictions can reuse an otherwise identical default
+model only when indexed date bounds prove that every finding is within the
+requested window, with no NULL dates, and every model recommendation has scoped
+finding evidence. This preserves the restriction rather than silently clearing
+it. Non-equivalent restrictions keep exact queries. Admission checks compatible
+completed results before queueing and resolves aggregate eligibility rather than
+classifying every date restriction as expensive. Aggregate-backed navigation keeps
+interactive capacity even while a report runs. Uncertain exact fallbacks use the
+bounded expensive-query lane.
+
+This is deliberately **not connected to collection finalization**. It does not
+change collection/normalization, curated or raw evidence, the v10 primary/history
+publication format, Function deployment, manifest completion rules or the current
+pointer. No read-model file is uploaded to retained storage. Existing indexed or
+unindexed snapshots work without recollection. Missing compatible published
+indexes are recorded in server logs, not presented as query failures when the
+viewer can prepare local indexes. Local preparation does not publish an index to
+retained history or change that manifest.
 
 The internal query name `executive` corresponds to the visible **Summary** tab;
 `overview` is **Vulnerabilities**. Per-query progress now names activity/filter
@@ -245,9 +355,27 @@ the original application worker; it is not a redeployed startup benchmark or a
 guaranteed response time. Aggregate counts and SLA calculations remain significant
 work even after unnecessary evidence decoding is removed.
 
-The lifecycle-event index is downloaded/restored on first use and attached read-only;
-it is not copied into the primary database. Other views, including history
-reports, are prepared only when requested.
+The lifecycle-event index is isolated and attached read-only; its dataset
+metadata is not copied into the primary database. Without persistent viewer
+caching, history and report preparation remains on demand. With
+`DASHBOARD_DERIVED_CACHE_CONTAINER` enabled, startup restores or builds the compact
+exact-search projection, isolated history index and all nine default-view results
+before advertising the new snapshot as ready. This is a one-time preparation per
+snapshot; compatible completed artifacts are restored after application restarts.
+Changing filter scopes can still require new report computation.
+
+Search uses block-level trigram candidates followed by the same exact substring
+predicate, never approximate matching or reduced evidence. Shared products retain
+bounded exact JSON results and report intermediates (64 MiB total SQLite limit).
+Search/history artifacts and versioned product generations are uploaded
+immutably to the separate viewer-cache container. Products are coalesced on one
+background publisher, with explicit failure diagnostics and bounded retries;
+queries do not wait for an upload. Startup saves its warmed results before
+readiness. Shutdown attempts a bounded flush; an incomplete flush is logged and
+does not invalidate existing completed artifacts. Only descriptors written after
+successful upload and verification are eligible for restoration. No retained
+evidence or current-snapshot pointer is rewritten.
+
 Their existing asynchronous queries return HTTP 202 with per-job index progress;
 detail/search/filter/pagination/export calculations and bounded result pages are
 unchanged. A previous complete snapshot remains served during replacement
@@ -255,6 +383,64 @@ preparation or failure. Query/export, evidence-browser and tracking endpoints
 cannot read an index that is still being installed. Initial failures remain
 visible and retry at the existing dashboard cache interval. First-use report
 aggregation may still be expensive even when all row indexes are restored.
+
+Compatible completed query results return before worker admission. Equivalent
+requests share computation by semantic identity; client request IDs identify
+subscribers, not separate computations. Running-job polls reuse the captured
+policy/workflow payload rather than rereading storage. A needed workflow refresh
+runs once on the existing bounded pool and returns HTTP 202 progress without
+holding the polling request open. Unchanged workflow refreshes do not invalidate
+browser results or restart the selected report. Tracking-enabled browser results
+retain their five-second freshness check.
+
+Completed bounded view responses are also saved in the products database and
+restored before querying facts, not just cached in process memory. Their identity
+includes the pinned scope and relevant workflow state. Reports query narrow
+immutable facts directly rather than copying the entire finding scope into a
+temporary table; small temporal aggregates may still use SQLite temporary space.
+
+The browser releases a query subscriber when navigation or detail closure aborts
+its polling channel. Only the authenticated subscriber can release its request;
+other subscribers keep shared work alive. Cancellation before admission is also
+remembered briefly so an in-flight abandoned request cannot recreate work.
+Unpolled subscribers expire after 30 seconds; queued work has a 30-second limit.
+SQLite uses cooperative cancellation and execution deadlines. Interactive work
+has a 60-second budget, expensive work 120 seconds, and exports 600 seconds;
+exhaustion is an explicit error, never a partial successful result. Synchronous
+query callers use the same admission policy. Reports and CSV exports share one
+heavy-work slot, separate from the two interactive workers.
+An export waiting for that slot returns preparation status; the native download
+form retries automatically with the original pinned payload for up to two
+minutes, without occupying another long-running SQL worker.
+CSV rows are buffered into bounded 64-KiB-character chunks after the first row,
+avoiding a thread-pool handoff and network write for every finding.
+
+Initial query polls use 250 ms intervals, then 500 ms and finally two seconds for
+longer preparation. Cached results need no preparation poll. A pinned browser
+that encounters an application restart receives preparation progress and resumes
+automatically rather than displaying a transient index-installation failure.
+
+Finding pages sort/count compact row references before decoding only the
+displayed evidence. Grouped CVE/workload tables likewise defer representative
+CVE metadata and last-seen timestamps until after pagination, preserving SQLite
+JSON scalar semantics. Detail tables reuse the exact distinct/evidence totals
+already computed for their cards rather than repeating grouped count queries.
+This applies to recommendation, machine, grouped-workload, CVE and finding
+details; finding/CVE exports retain the same response values and ordering.
+Detail progress identifies counts, workloads, CVEs, recommendations and evidence
+separately. These query-only changes remain compatible with format-10 indexes.
+The detail panel displays that progress itself; request errors remain visible
+inside the panel and clear its busy state rather than leaving a loading title
+with an error hidden behind the full-screen overlay.
+
+Active recommendation counts are immutable for a pinned snapshot/timestamp.
+Their per-engine cache retains at most two timestamp scopes, shares concurrent
+first reads, and returns copies. Workflow events remain live: their existing
+five-second refresh lists blobs and checks ETags, while a 256-entry LRU avoids
+downloading unchanged event bodies again. New or changed events are read and
+validated; malformed replacements still fail explicitly. Local-index fallback
+notices describe the indexing mode, not a rebuild that appears permanently
+in progress after readiness.
 
 The load-test populator still targets exactly the requested upload count,
 including the new indexes; it emits two fewer derived raw pages. Previously

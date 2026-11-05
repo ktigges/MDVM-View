@@ -178,6 +178,14 @@ resource "azurerm_storage_container" "dashboard_workflow" {
   }
 }
 
+resource "azurerm_storage_container" "dashboard_cache" {
+  for_each = local.web_app_instances
+
+  name                  = "dvm-viewer-cache"
+  storage_account_id    = azurerm_storage_account.history.id
+  container_access_type = "private"
+}
+
 resource "azurerm_network_security_perimeter_association" "history_storage" {
   for_each = local.network_security_perimeter_instances
 
@@ -679,6 +687,15 @@ resource "azurerm_role_assignment" "dashboard_workflow_contributor" {
   principal_type     = "ServicePrincipal"
 }
 
+resource "azurerm_role_assignment" "dashboard_cache_contributor" {
+  for_each = local.web_app_instances
+
+  scope              = azurerm_storage_container.dashboard_cache[each.key].id
+  role_definition_id = local.role_definition_ids.storage_blob_data_contributor
+  principal_id       = azurerm_user_assigned_identity.dashboard[each.key].principal_id
+  principal_type     = "ServicePrincipal"
+}
+
 resource "azurerm_service_plan" "dashboard" {
   for_each = local.web_app_instances
 
@@ -767,6 +784,7 @@ resource "azurerm_linux_web_app" "dashboard" {
     "DASHBOARD_BRANDING_ENABLED"                  = "true"
     "DASHBOARD_BRANDING_ROLE"                     = "Dashboard.Administrator"
     "DASHBOARD_CACHE_SECONDS"                     = tostring(var.dashboard_cache_seconds)
+    "DASHBOARD_DERIVED_CACHE_CONTAINER"           = azurerm_storage_container.dashboard_cache[each.key].name
     "WEBSITES_CONTAINER_START_TIME_LIMIT"         = "1800"
     "DASHBOARD_VERSION"                           = var.dashboard_version
     "DASHBOARD_DATA_BROWSER_ENABLED"              = tostring(var.dashboard_data_browser_enabled)

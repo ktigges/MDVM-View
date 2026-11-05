@@ -10,13 +10,15 @@ const snapshotId = "a".repeat(64);
 const snapshot = {snapshotId, runId:"run-1", snapshotTimeUtc:"2026-10-24T00:00:00Z", source:"local", slaPolicy:null};
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function fixture({snapshotStatus=200, notices=[], now=null, preparation=null}={}) {
+function fixture({snapshotStatus=200, notices=[], now=null, preparation=null, trackingEnabled=false}={}) {
   const elements = new Map(), nodes = [], requests = [], timers = new Map();
   let timerId = 0;
   function node(id="") {
     const classes = new Set();
     const value = {
-      id, dataset:{}, value:"", textContent:"", innerHTML:"", hidden:false, disabled:false,
+      id, dataset:{}, value:"", textContent:"", hidden:false, disabled:false,
+      get innerHTML(){return this.markup||"";},
+      set innerHTML(markup){this.markup=markup;for(const [,id] of markup.matchAll(/\bid="([^"]+)"/g))if(!elements.has(id))node(id);},
       listeners:{}, options:[], children:[], style:{setProperty(){},removeProperty(){}},
       classList:{add:(...names)=>names.forEach(name=>classes.add(name)),remove:(...names)=>names.forEach(name=>classes.delete(name)),contains:name=>classes.has(name),toggle(name,force){const next=force??!classes.has(name);if(next)classes.add(name);else classes.delete(name);return next;}},
       addEventListener(event,handler){(this.listeners[event]??=[]).push(handler);},
@@ -89,8 +91,9 @@ function fixture({snapshotStatus=200, notices=[], now=null, preparation=null}={}
       requests.push(request);
       if(url==="/api/dashboard/snapshot")return Promise.resolve(response(preparation?{status:"preparing",preparation,retryAfterSeconds:2}:{...snapshot,notices},snapshotStatus));
       if(url==="/api/dashboard/status")return Promise.resolve(response(preparation||{status:"ready"}));
-      if(url==="/api/health")return Promise.resolve(response({}));
+      if(url==="/api/health")return Promise.resolve(response({recommendationTrackingEnabled:trackingEnabled}));
       if(url==="/api/auth")return Promise.resolve(response({enabled:false}));
+      if(url==="/api/dashboard/query/cancel")return Promise.resolve(response({cancelled:true}));
       if(url.startsWith("/api/branding/logo"))return Promise.resolve(response({},404));
       return new Promise((resolve,reject)=>{request.resolve=(payload,status=200)=>resolve(response(payload,status));request.reject=reject;});
     },
@@ -140,6 +143,31 @@ test("startup polls index preparation without rendering partial findings",async(
   assert.equal(app.elements.get("loadingNotice").hidden,true);
 });
 
+test("startup names shared aggregate preparation without showing partial totals",async()=>{
+  const app=fixture({snapshotStatus:202,preparation:{
+    status:"preparing",progress:{stage:"read-model:recommendation-relationships",elapsedSeconds:61,stageSeconds:8},
+  }});
+  await tick();
+  const notice=app.elements.get("loadingNotice").innerHTML;
+  assert.match(notice,/Preparing shared dashboard aggregates: recommendation relationships/);
+  assert.match(notice,/61s elapsed/);
+  assert.match(notice,/8s in current stage/);
+  assert.match(notice,/Partial findings are not shown/);
+  assert.equal(app.query().length,0);
+});
+
+test("startup distinguishes persistent cache reuse from rebuilding",async()=>{
+  const app=fixture({snapshotStatus:202,preparation:{
+    status:"preparing",progress:{stage:"viewer-cache:restore-primary",processedBytes:10485760,elapsedSeconds:12},
+  }});
+  await tick();
+  const notice=app.elements.get("loadingNotice").innerHTML;
+  assert.match(notice,/Restoring persistent query indexes/);
+  assert.match(notice,/10.0 MiB/);
+  assert.doesNotMatch(notice,/Rebuilding/);
+  assert.equal(app.query().length,0);
+});
+
 test("index restore and preparation errors remain visible while retrying",async()=>{
   const app=fixture({snapshotStatus:202,preparation:{
     status:"error",error:"Snapshot preparation failed. Retrying automatically.",
@@ -187,6 +215,44 @@ test("Summary query phases use visible view names and do not block navigation",a
   assert.equal(app.query().at(-1).payload.view,"recommendations");
   app.query().at(-1).resolve(app.payload());await tick();
   assert.equal(app.elements.get("loadingNotice").hidden,true);
+});
+
+test("workflow preparation has explicit progress instead of a generic blocked response",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve({
+    snapshotId,status:"preparing",retryAfterSeconds:2,
+    progress:{stage:"recommendation-tracking-read",elapsedSeconds:15},
+  },202);await tick();
+  assert.match(app.elements.get("loadingNotice").innerHTML,/Reading recommendation workflow state/);
+  assert.match(app.run('dashboardPreparationText({progress:{stage:"query:executive:tracking"}})'),/Preparing Summary: recommendation workflow state/);
+  assert.match(app.run('dashboardPreparationText({progress:{stage:"query:detail:detail-workloads"}})'),/Preparing Selected item: affected workloads/);
+  assert.match(app.run('dashboardPreparationText({progress:{stage:"query:detail:detail-evidence"}})'),/Preparing Selected item: finding evidence page/);
+});
+
+test("initial tracking refresh does not abort and restart the selected report",async()=>{
+  const app=fixture({trackingEnabled:true});await tick();
+  const initial=app.query()[0];
+  const reads=app.requests.filter(request=>request.url.startsWith("/api/recommendation-tracking"));
+  assert.ok(reads.length);
+  for(const read of reads)read.resolve({items:[]});
+  await tick();
+  assert.equal(app.query().length,1);
+  assert.equal(initial.options.signal.aborted,false);
+  initial.resolve(app.payload());await tick();
+  assert.equal(app.elements.get("loadingNotice").hidden,true);
+});
+
+test("unchanged workflow refresh preserves cached analytics without resubmitting a report",async()=>{
+  const app=fixture({trackingEnabled:true});await tick();
+  for(const read of app.requests.filter(request=>request.url.startsWith("/api/recommendation-tracking")))read.resolve({items:[]});
+  await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  const count=app.query().length,size=app.run("dashboardQuery.responses.size");
+  const refresh=app.run("refreshRecommendationTracking()");
+  app.requests.filter(request=>request.url.startsWith("/api/recommendation-tracking")).at(-1).resolve({items:[]});
+  assert.equal(await refresh,true);
+  assert.equal(app.query().length,count);
+  assert.equal(app.run("dashboardQuery.responses.size"),size);
 });
 
 test("per-index status lists complete, active and waiting steps without pretending to know percent",async()=>{
@@ -468,6 +534,27 @@ test("snapshot metadata failures are visible and retry metadata without requesti
   assert.equal(app.requests.filter(request=>request.url==="/api/dashboard/snapshot").length,2);
 });
 
+test("detail preparation displays the actual server stage",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('pivotToMachine({DeviceId:"machine-1",DeviceName:"example-ws11"})');
+  app.query().at(-1).resolve({
+    snapshotId,status:"preparing",retryAfterSeconds:2,
+    progress:{stage:"query:detail:detail-workloads",elapsedSeconds:12},
+  },202);await tick();
+  assert.match(app.elements.get("pivotSummary").textContent,/affected workloads/);
+  assert.match(app.elements.get("pivotSummary").textContent,/12s elapsed/);
+});
+
+test("detail failures are visible inside the panel and clear its busy state",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('pivotToMachine({DeviceId:"machine-1",DeviceName:"example-ws11"})');
+  app.query().at(-1).reject(new Error("network offline"));await tick();
+  assert.match(app.elements.get("pivotSummary").textContent,/network offline/);
+  assert.equal(app.elements.get("pivotPanel")["aria-busy"],"false");
+});
+
 test("detail queries pin selection and closing detail ignores an in-flight response",async()=>{
   const app=fixture();await tick();
   app.query()[0].resolve(app.payload());await tick();
@@ -483,13 +570,22 @@ test("detail queries pin selection and closing detail ignores an in-flight respo
   assert.equal(app.elements.get("pivotPanel").hidden,true);
 });
 
-test("snapshot notices stay visible and oversized pages fail rather than entering the browser UI",async()=>{
+test("successful queries without notices hide the status bar and Retry",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  assert.equal(app.elements.get("dashboardQueryStatus").hidden,true);
+  assert.equal(app.elements.get("retryDashboardQuery").hidden,true);
+});
+
+test("snapshot warnings stay visible without Retry and oversized pages expose a retryable error",async()=>{
   const app=fixture({notices:["SLA policy unavailable"]});await tick();
   app.query()[0].resolve(app.payload());await tick();
   assert.match(app.elements.get("dashboardQueryMessage").textContent,/SLA policy unavailable/);
+  assert.equal(app.elements.get("retryDashboardQuery").hidden,true);
   app.run('activateView("overview")');
   app.query().at(-1).resolve(app.payload({tables:{findingsTable:{columns:[],items:Array(201).fill({}),total:201}}}));await tick();
   assert.match(app.elements.get("dashboardQueryMessage").textContent,/oversized table page/);
+  assert.equal(app.elements.get("retryDashboardQuery").hidden,false);
 });
 
 test("every workspace view queries lazily and generic tables receive bounded First/Previous/Next/Last controls",async()=>{
@@ -606,6 +702,24 @@ test("CVE buttons inside finding-instance rows open CVE detail rather than the s
   assert.deepEqual(app.query().at(-1).payload.selection,{type:"cve",id:"CVE-2026-999"});
 });
 
+test("busy native exports retry with their original payload and neutral progress",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.elements.get("exportFindingsCsv").click();
+  app.query().at(-1).resolve(app.payload({tables:{findingsTable:{items:[],total:250}}}));await tick();
+  const body=app.elements.get("body"),frame=body.children.find(child=>child.tagName==="iframe");
+  const original=body.children.filter(child=>child.tagName==="form").at(-1).children[0].value;
+  app.run('state.severity="Low"');
+  frame.contentDocument={body:{textContent:JSON.stringify({status:"preparing",detail:"Waiting for a report",retryAfterSeconds:2})}};
+  frame.dispatch("load");
+  assert.equal(app.elements.get("dashboardQueryStatus").role,"status");
+  assert.equal(app.elements.get("retryDashboardQuery").hidden,true);
+  app.flushTimers();await tick();
+  const forms=body.children.filter(child=>child.tagName==="form");
+  assert.equal(forms.length,2);
+  assert.equal(forms.at(-1).children[0].value,original);
+});
+
 test("native CSV error documents remain visible for unavailable and expired snapshots",async()=>{
   const app=fixture();await tick();
   app.query()[0].resolve(app.payload());await tick();
@@ -675,6 +789,9 @@ test("changing views aborts a preparing query and cancels its pending poll timer
   app.run('activateView("overview")');await tick();
   const overview=app.query().at(-1);
   assert.equal(summary.options.signal.aborted,true);
+  const cancellation=app.requests.find(request=>request.url==="/api/dashboard/query/cancel");
+  assert.equal(cancellation.payload.requestId,summary.payload.requestId);
+  assert.equal(cancellation.options.keepalive,true);
   assert.notEqual(overview.payload.requestId,summary.payload.requestId);
   app.flushTimers();await tick();
   assert.equal(app.query().length,2);

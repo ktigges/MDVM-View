@@ -422,10 +422,15 @@ PY
           return "$deploy_exit"
         fi
       fi
+      local -a web_app_settings
+      web_app_settings=("DASHBOARD_VERSION=$dashboard_version" "WEBSITES_CONTAINER_START_TIME_LIMIT=1800")
+      if [[ -n "${DASHBOARD_DERIVED_CACHE_CONTAINER:-}" ]]; then
+        web_app_settings+=("DASHBOARD_DERIVED_CACHE_CONTAINER=$DASHBOARD_DERIVED_CACHE_CONTAINER")
+      fi
       az webapp config appsettings set \
         --resource-group "$resource_group" \
         --name "$web_app" \
-        --settings "DASHBOARD_VERSION=$dashboard_version" "WEBSITES_CONTAINER_START_TIME_LIMIT=1800" \
+        --settings "${web_app_settings[@]}" \
         --output none
       az webapp restart \
         --resource-group "$resource_group" \

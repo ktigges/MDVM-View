@@ -373,6 +373,7 @@ def test_frozen_manifest_baseline_requires_matching_content(work):
         )
 
 
+@pytest.mark.performance
 def test_streaming_publication_memory_is_independent_of_total_rows(work):
     def measure(count):
         gc.collect()
@@ -391,6 +392,7 @@ def test_streaming_publication_memory_is_independent_of_total_rows(work):
     assert large < 4_000_000
 
 
+@pytest.mark.performance
 def test_large_normalization_and_reconciliation_keep_python_working_set_bounded(work):
     def measure(count):
         source = payloads(0)
@@ -418,6 +420,7 @@ def test_large_normalization_and_reconciliation_keep_python_working_set_bounded(
     assert large < 4_000_000
 
 
+@pytest.mark.performance
 def test_full_finalization_native_rss_is_bounded_with_large_raw_and_event_history(work):
     code = r"""
 import json, resource, sys

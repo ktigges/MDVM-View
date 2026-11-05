@@ -155,7 +155,7 @@ function applyPresentationConfig(){
 }
 applyPresentationConfig();
 
-apiFetch("/api/health").then(response=>response.ok?response.json():null).then(runtime=>{if(runtime?.localDevelopmentOnly)$("developmentWarning").hidden=false;state.recommendationTrackingEnabled=Boolean(runtime?.recommendationTrackingEnabled);state.recommendationTrackingLocalPreview=Boolean(runtime?.recommendationTrackingLocalPreview);$("recommendationTrackingFilterLabel").hidden=!state.recommendationTrackingEnabled;if(state.recommendationTrackingEnabled&&dashboardQuery.snapshot)void refreshRecommendationTracking();}).catch(()=>{});
+apiFetch("/api/health").then(response=>response.ok?response.json():null).then(runtime=>{if(runtime?.localDevelopmentOnly)$("developmentWarning").hidden=false;state.recommendationTrackingEnabled=Boolean(runtime?.recommendationTrackingEnabled);state.recommendationTrackingLocalPreview=Boolean(runtime?.recommendationTrackingLocalPreview);$("recommendationTrackingFilterLabel").hidden=!state.recommendationTrackingEnabled;if(state.recommendationTrackingEnabled&&dashboardQuery.snapshot)void refreshLegacyTracking();}).catch(()=>{});
 apiFetch("/api/auth").then(response=>{if(!response.ok)throw new Error(`Authentication status: ${response.status}`);return response.json();}).then(auth=>{const element=$("authStatus");element.hidden=presentation.authentication?.showStatus===false;element.textContent=auth.enabled?(auth.user?.displayName?`Signed in as ${auth.user.displayName}`:"Signed in with Microsoft Entra ID"):"Local access · authentication off";element.classList.toggle("authenticated",Boolean(auth.authenticated));configureSignedInUser(auth);configureBranding(auth);}).catch(()=>{$("authStatus").textContent="Authentication status unavailable";$("signedInUser").hidden=true;});
 const dashboardDatasets=[
   {name:"findings",key:"findings",label:"findings",required:true},
@@ -1041,11 +1041,12 @@ function invalidateDashboardChannel(channel){
   channel.controller=null;
 }
 
-function dashboardStatus(message="",expired=false){
+function dashboardStatus(message="",expired=false,retryable=true,informational=false){
   $("dashboardQueryStatus").hidden=!message;
+  $("dashboardQueryStatus").setAttribute("role",informational?"status":"alert");
   $("dashboardQueryMessage").textContent=message;
   $("reloadDashboardSnapshot").hidden=!expired;
-  $("retryDashboardQuery").hidden=expired;
+  $("retryDashboardQuery").hidden=!message||expired||!retryable;
 }
 
 function dashboardBusy(view,busy){
@@ -1096,8 +1097,8 @@ async function dashboardResponse(response,isCurrent=()=>true){
 
 function dashboardPreparationText(status){
   const progress=status.progress||{},stage=String(progress.failure?.stage||progress.stage||"waiting-for-data");
-  const views={executive:"Summary",overview:"Vulnerabilities",recommendations:"Recommendations",priority:"Prioritize",workstations:"Endpoint assets",sla:"Remediate",trend:"Trends",executiveSnapshot:"Executive snapshot",help:"Help"};
-  const phases={header:"activity and filter metadata","scope-counts":"finding counts","recommendation-matching":"recommendation matching","recommendation-impact":"recommendation impact totals","recommendation-ranking":"recommendation ranking","recommendation-details":"recommendation evidence","summary":"summary metrics and run comparison",sla:"SLA metrics"};
+  const views={executive:"Summary",overview:"Vulnerabilities",recommendations:"Recommendations",priority:"Prioritize",workstations:"Endpoint assets",sla:"Remediate",trend:"Trends",executiveSnapshot:"Executive snapshot",detail:"Selected item",help:"Help"};
+  const phases={tracking:"recommendation workflow state",header:"activity and filter metadata","scope-counts":"finding counts","recommendation-matching":"recommendation matching","recommendation-impact":"recommendation impact totals","recommendation-ranking":"recommendation ranking","recommendation-details":"recommendation evidence","summary":"summary metrics and run comparison",sla:"SLA metrics","detail-workloads":"affected workloads","detail-cves":"related CVEs","detail-recommendations":"related recommendations","detail-evidence":"finding evidence page"};
   let action=stage;
   if(stage.startsWith("load-rows:"))action=`Rebuilding ${stage.split(":")[1]} index`;
   else if(stage.startsWith("build-index:")){
@@ -1112,6 +1113,17 @@ function dashboardPreparationText(status){
   else if(stage==="validate-query-index")action="Validating published data index";
   else if(stage.startsWith("download:"))action=`Downloading ${stage.split(":")[1]} data`;
   else if(stage==="prepare-workspace-indexes")action="Preparing shared workspace indexes";
+  else if(stage==="prepare-dashboard-read-model")action="Preparing shared dashboard aggregates";
+  else if(stage==="prepare-search-index")action="Preparing searchable finding evidence";
+  else if(stage.startsWith("search-index:"))action=`Preparing search index: ${stage.split(":").slice(1).join(" ").replace(/-/g," ")}`;
+  else if(stage.startsWith("prepare-report:"))action=`Preparing shared ${views[stage.split(":")[1]]||stage.split(":")[1]} results`;
+  else if(stage.startsWith("read-model:"))action=`Preparing shared dashboard aggregates: ${stage.split(":")[1].replace(/-/g," ")}`;
+  else if(stage.startsWith("viewer-cache:")){
+    const phase=stage.split(":")[1],operation=phase.split("-")[0],artifact=phase.slice(operation.length+1);
+    const kind={primary:"query indexes","read-model":"dashboard aggregates","products-v1":"shared query results","search-v1":"search index","history-v10":"lifecycle evidence index"}[artifact]||artifact;
+    action=`${{restore:"Restoring",validate:"Validating",publish:"Saving"}[operation]||operation} persistent ${kind}`;
+  }
+  else if(stage==="recommendation-tracking-read")action="Reading recommendation workflow state";
   else if(stage.startsWith("query:")){
     const [,view,phase]=stage.split(":");
     action=`Preparing ${views[view]||view}: ${phases[phase]||phase}`;
@@ -1145,6 +1157,7 @@ function pollDashboardPreparation(){
       const status=await response.json();
       if(generation!==dashboardPreparationGeneration)return;
       const notice=$("dashboardPreparationStatus");
+      notice.setAttribute("role",status.status==="error"?"alert":"status");
       const expanded=notice.querySelector("[data-index-plan]")?.open;
       const newer=status.readySnapshotId&&status.readySnapshotId!==dashboardQuery.snapshot?.snapshotId;
       notice.hidden=status.status==="ready"&&!newer;
@@ -1213,7 +1226,7 @@ async function startSnapshotDashboard(){
     if(!state.slaPolicy)$("slaPolicySummary").textContent="SLA policy is unavailable for this pinned snapshot.";
     render();
     pollDashboardPreparation();
-    if(state.recommendationTrackingEnabled)void refreshRecommendationTracking();
+    if(state.recommendationTrackingEnabled)void refreshLegacyTracking();
   }catch(error){
     if(sequence!==channel.sequence||error.name==="AbortError")return;
     hideDashboardLoadingNotice();
@@ -1272,17 +1285,30 @@ function waitForDashboardPoll(milliseconds,signal){
 async function postDashboardQuery(request,{signal,isCurrent=()=>true,onPreparing=()=>{}}={}){
   const requestId=globalThis.crypto?.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const body=JSON.stringify({...request,asyncQuery:true,requestId});
-  for(;;){
-    if(signal?.aborted||!isCurrent())throw dashboardQueryAbort();
-    const response=await apiFetch("/api/dashboard/query",{method:"POST",headers:{"Content-Type":"application/json"},body,signal});
-    if(signal?.aborted||!isCurrent())throw dashboardQueryAbort();
-    const payload=await dashboardResponse(response,isCurrent);
-    if(signal?.aborted||!isCurrent())throw dashboardQueryAbort();
-    if(response.status!==202)return payload;
-    if(payload.status!=="preparing")throw new Error("The server returned an invalid query-preparation response.");
-    const retryAfterSeconds=Number(payload.retryAfterSeconds);
-    onPreparing(payload.progress);
-    await waitForDashboardPoll((Number.isFinite(retryAfterSeconds)&&retryAfterSeconds>0?retryAfterSeconds:2)*1000,signal);
+  const cancel=()=>{
+    void fetch("/api/dashboard/query/cancel",{
+      method:"POST",headers:{"Content-Type":"application/json"},keepalive:true,
+      body:JSON.stringify({snapshotId:request.snapshotId,view:request.view,requestId}),
+    }).then(response=>{if(!response.ok)throw new Error(`Cancellation request failed (${response.status}).`);})
+      .catch(error=>console.warn("Could not release an abandoned dashboard query.",error));
+  };
+  if(signal?.aborted)throw dashboardQueryAbort();
+  signal?.addEventListener("abort",cancel,{once:true});
+  try{
+    for(;;){
+      if(signal?.aborted||!isCurrent())throw dashboardQueryAbort();
+      const response=await apiFetch("/api/dashboard/query",{method:"POST",headers:{"Content-Type":"application/json"},body,signal});
+      if(signal?.aborted||!isCurrent())throw dashboardQueryAbort();
+      const payload=await dashboardResponse(response,isCurrent);
+      if(signal?.aborted||!isCurrent())throw dashboardQueryAbort();
+      if(response.status!==202)return payload;
+      if(payload.status!=="preparing")throw new Error("The server returned an invalid query-preparation response.");
+      const retryAfterSeconds=Number(payload.retryAfterSeconds);
+      onPreparing(payload.progress,payload.preparation);
+      await waitForDashboardPoll((Number.isFinite(retryAfterSeconds)&&retryAfterSeconds>0?retryAfterSeconds:2)*1000,signal);
+    }
+  }finally{
+    signal?.removeEventListener("abort",cancel);
   }
 }
 
@@ -1297,11 +1323,11 @@ async function queryDashboardView(view=state.activeView,tableId=null,page=0){
   try{
     const key=dashboardResponseKey(request),cached=dashboardQuery.responses.get(key);
     const reusable=cached&&(!state.recommendationTrackingEnabled||Date.now()-cached.time<5000);
-    const payload=reusable?cached.payload:await postDashboardQuery(request,{signal:channel.controller.signal,isCurrent:()=>sequence===channel.sequence&&!dashboardQuery.expired,onPreparing:progress=>{
-      if(detail)$("pivotSummary").textContent="Preparing exact snapshot detail. This can take several minutes for a cold snapshot; this panel will update automatically.";
+    const payload=reusable?cached.payload:await postDashboardQuery(request,{signal:channel.controller.signal,isCurrent:()=>sequence===channel.sequence&&!dashboardQuery.expired,onPreparing:(progress,preparation)=>{
+      if(detail)$("pivotSummary").textContent=progress?dashboardPreparationText(preparation||{progress}):"Preparing exact snapshot detail; this panel will update automatically.";
       else{
         const checks=++dashboardVisualProgress.checks;
-        showDashboardVisualProgress("Preparing exact snapshot results","The server has accepted this report for preparation; this view updates automatically when results are ready.",progress?dashboardPreparationText({progress}):`Server preparation pending · ${checks} status check${checks===1?"":"s"}`,progress);
+        showDashboardVisualProgress("Preparing exact snapshot results","The server has accepted this report for preparation; this view updates automatically when results are ready.",progress?dashboardPreparationText(preparation||{progress}):`Server preparation pending · ${checks} status check${checks===1?"":"s"}`,progress);
       }
     }});
     if(sequence!==channel.sequence||dashboardQuery.expired)return;
@@ -1310,11 +1336,16 @@ async function queryDashboardView(view=state.activeView,tableId=null,page=0){
     else{dashboardQuery.responses.delete(key);dashboardQuery.responses.set(key,cached);}
     dashboardBusy(view,false);
     const notices=[...new Set([...(dashboardQuery.snapshot.notices||[]),...(payload.notices||[])])];
-    dashboardStatus(notices.join(" · "));
+    dashboardStatus(notices.join(" · "),false,false);
   }catch(error){
     if(sequence!==channel.sequence||error.name==="AbortError"||dashboardQuery.expired)return;
-    if(!detail)hideDashboardLoadingNotice();
-    dashboardStatus(error.message||"Dashboard query failed. Retry to load this scope.");
+    const message=error.message||"Dashboard query failed. Retry to load this scope.";
+    if(detail){
+      dashboardBusy(view,false);
+      if(!tableId)$("pivotTitle").textContent="Unable to load selected item";
+      $("pivotSummary").textContent=`${message} Close this panel and select the item again to retry.`;
+    }else hideDashboardLoadingNotice();
+    dashboardStatus(message);
   }
 }
 
@@ -1521,16 +1552,16 @@ async function exportDashboardCsv(view=state.activeView,tableId=null){
   const controller=new AbortController(),snapshotId=dashboardQuery.snapshot.snapshotId;
   dashboardQuery.exportControllers.add(controller);
   const request=dashboardRequest(view,tableId);
-  dashboardStatus("Validating CSV export against the pinned snapshot…");
+  dashboardStatus("Validating CSV export against the pinned snapshot…",false,false,true);
   try{
     const validation=await postDashboardQuery(request,{signal:controller.signal,isCurrent:()=>dashboardQuery.snapshot?.snapshotId===snapshotId&&!dashboardQuery.expired,onPreparing:()=>{
-      dashboardStatus("Preparing exact export detail from the pinned snapshot. The download will start when it is ready.");
+      dashboardStatus("Preparing exact export detail from the pinned snapshot. The download will start when it is ready.",false,false,true);
       $("retryDashboardQuery").hidden=true;
     }});
     if(tableId&&!validation.tables?.[tableId])throw new Error("The requested export detail is unavailable on this server. Retry after the dashboard update is complete.");
-    if(tableId&&Number(validation.tables[tableId].total)===0){dashboardStatus("No matching rows to export for the selected filters.");return;}
+    if(tableId&&Number(validation.tables[tableId].total)===0){dashboardStatus("No matching rows to export for the selected filters.",false,false,true);return;}
     if(dashboardQuery.expired||dashboardQuery.snapshot?.snapshotId!==snapshotId)return;
-    const frame=document.createElement("iframe"),form=document.createElement("form"),input=document.createElement("input");
+    const frame=document.createElement("iframe"),started=Date.now();
     frame.name=`dashboard-export-${Date.now()}-${++dashboardQuery.exportSequence}`;frame.hidden=true;
     frame.title="CSV download response";
     frame.addEventListener("load",()=>{
@@ -1538,14 +1569,23 @@ async function exportDashboardCsv(view=state.activeView,tableId=null){
         const text=frame.contentDocument?.body?.textContent?.trim();
         if(!text)return;
         const payload=JSON.parse(text),message=payload.detail||payload.error||"CSV export failed.";
+        if(payload.status==="preparing"){
+          if(Date.now()-started>120000){dashboardStatus("CSV export waited too long for capacity. Retry the export.");return;}
+          dashboardStatus(message,false,false,true);
+          setTimeout(submit,Math.max(1,Math.min(5,Number(payload.retryAfterSeconds)||2))*1000);
+          return;
+        }
         if(/snapshot expired|reload.*(?:snapshot|dashboard)|data changed/i.test(message))expireDashboardSnapshot();else dashboardStatus(message);
       }catch(error){dashboardStatus("The CSV download could not be completed. Check your sign-in and retry.");}
     });
-    form.method="POST";form.action="/api/dashboard/export";form.target=frame.name;form.hidden=true;
-    input.type="hidden";input.name="payload";input.value=JSON.stringify(request);form.appendChild(input);
-    document.body.appendChild(frame);document.body.appendChild(form);
-    form.submit();form.remove();
-    dashboardStatus("CSV download requested for all matching rows, not just this page. Your browser streams the file directly.");
+    const submit=()=>{
+      const form=document.createElement("form"),input=document.createElement("input");
+      form.method="POST";form.action="/api/dashboard/export";form.target=frame.name;form.hidden=true;
+      input.type="hidden";input.name="payload";input.value=JSON.stringify(request);form.appendChild(input);
+      document.body.appendChild(form);form.submit();form.remove();
+    };
+    document.body.appendChild(frame);submit();
+    dashboardStatus("CSV download requested for all matching rows, not just this page. Your browser streams the file directly.",false,false,true);
     // A successful attachment has no iframe document load event.
     setTimeout(()=>frame.remove(),300000);
   }catch(error){if(error.name!=="AbortError")dashboardStatus(error.message||"CSV export failed.");}
@@ -1579,9 +1619,11 @@ exportLifecycleCsv=()=>{void exportDashboardCsv("trend","lifecycleDetailTable");
 exportExecutiveSnapshotCsv=()=>{void exportDashboardCsv("executiveSnapshot",state.executiveSnapshotUnit==="recommendations"?"executiveSnapshotRecommendationTable":"executiveSnapshotFindingTable");};
 const refreshLegacyTracking=refreshRecommendationTracking;
 refreshRecommendationTracking=async()=>{
+  const previous=JSON.stringify([...state.recommendationTracking]);
   const success=await refreshLegacyTracking();
-  if(success)clearDashboardResponseCache();
-  if(success&&dashboardQuery.snapshot&&!dashboardQuery.expired){if(state.selectedEntity)void queryDashboardView("detail");else render();}
+  const changed=success&&previous!==JSON.stringify([...state.recommendationTracking]);
+  if(changed)clearDashboardResponseCache();
+  if(changed&&dashboardQuery.snapshot&&!dashboardQuery.expired){if(state.selectedEntity)void queryDashboardView("detail");else render();}
   return success;
 };
 $("retryDashboardQuery").addEventListener("click",()=>{

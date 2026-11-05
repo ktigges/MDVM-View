@@ -18,6 +18,7 @@ ENVIRONMENT_KEYS = (
     "DASHBOARD_DATA_BROWSER_ENABLED", "DASHBOARD_DATA_BROWSER_ROLE",
     "DASHBOARD_RECOMMENDATION_TRACKING_ENABLED", "DASHBOARD_RECOMMENDATION_TRACKING_ROLE",
     "DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER",
+    "DASHBOARD_DERIVED_CACHE_CONTAINER",
 )
 
 
@@ -28,6 +29,12 @@ def test_dotenv_example_uses_supported_collection_settings():
     assert "FULL_COLLECTION_WEEKDAY=6" in dotenv
     assert "FULL_ENRICHMENT_WEEKDAY" not in dotenv
 
+
+def test_derived_viewer_cache_is_opt_in_and_loads_explicit_container(monkeypatch, tmp_path):
+    monkeypatch.delenv("DASHBOARD_DERIVED_CACHE_CONTAINER", raising=False)
+    assert Settings.load(env_path=tmp_path / "missing.env").dashboard_derived_cache_container == ""
+    monkeypatch.setenv("DASHBOARD_DERIVED_CACHE_CONTAINER", "dvm-viewer-cache")
+    assert Settings.load(env_path=tmp_path / "missing.env").dashboard_derived_cache_container == "dvm-viewer-cache"
 
 def test_settings_loads_dotenv_and_trims_values(monkeypatch, tmp_path: Path):
     for key in ENVIRONMENT_KEYS:
