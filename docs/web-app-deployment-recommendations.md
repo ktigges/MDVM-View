@@ -1,758 +1,123 @@
-# Publishing and Azure cost options
+# Hosting and cost notes
 
-> **Last modified:** 2026-11-03
-> **Purpose:** Compare Web App hosting, security, scale, availability, and Azure cost options.
+These notes describe the current Terraform baseline and the decisions that
+change its cost. Installation is covered in [DEPLOY.md](../DEPLOY.md);
+runtime behavior is covered in [Application flow](application-flow.md).
 
-> **Collector hosting update:** Current Terraform uses a separate Dedicated B2
-> collector plan with one fixed worker and Always On. The Flex Consumption
-> collector costs and scale-to-zero scenarios below describe the earlier design,
-> not the current deployment baseline. Budget continuous B2 compute separately
-> from dashboard compute. Existing Flex deployments require the
-> [hosting migration](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments).
+## Current hosting
 
-The editable standalone estimator is
-[`tools/calculator.html`](../tools/calculator.html). Open it directly as a
-local file, or run `python -m http.server 8765 --directory tools` and open
-`http://127.0.0.1:8765/calculator.html`. It is
-intentionally separate from the operational dashboard navigation. The
-calculator can load `infra/terraform/main.tfvars.json` locally and models
-Function execution, Web App compute, immutable-history growth and operations,
-Function runtime storage, workflow events, Log Analytics/Application Insights,
-bandwidth, optional networking, licensing, support, and contingency. Rates
-remain editable because Azure pricing, offers, and regions change. It reports
-both the monthly run-rate at the selected horizon and a first-year total that
-accounts for increasing storage each month.
+| Component | Current baseline |
+|---|---|
+| Collector | Separate Linux Dedicated B2 plan, one fixed worker, Always On |
+| Dashboard | Separate Linux App Service B2 plan, one instance and one Uvicorn process |
+| Protected data | Standard ADLS Gen2 history account; replication is configured per environment |
+| Functions state | Separate runtime storage account for host state and Durable Functions |
+| Viewer cache | Separate private container in the history account, with scoped Web App write access |
+| Monitoring | Application Insights and Log Analytics for collection diagnostics |
+| Authentication | Managed identities and Microsoft Entra / Easy Auth |
 
-Load the environment-specific `infra/terraform/main.tfvars.json` used for the
-deployment being estimated. For the current lab, use
-`infra/terraform/main.tfvars.json`; for another environment, first create its
-values file from `main.tfvars.example.json` and load that copy.
-The browser reads it locally and does not upload it.
+Both plans incur continuous compute charges. The collector is **not** Flex
+Consumption and does not scale to zero between runs. Older Flex deployments
+need the [hosting migration](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments).
 
-The deployed history model is append-only with no automatic purge. The
-calculator's bounded-retention selection is a cost scenario only; it does not
-change Terraform or storage. The configured immutability period is a minimum
-no-change/no-delete period, not an expiration date.
+The plans are separate so collection and interactive reporting do not compete
+for the same worker. Dedicated collector hosting was chosen to avoid
+consumption-driven scale-in during long collections. Durable checkpoints address
+interrupted work; Always On alone does not provide that recovery.
 
-## Recommended starting point
-
-Keep the collector and dashboard as separate workloads:
-
-- **Collector:** use the separate Azure Functions Dedicated B2 plan with one
-  fixed worker and Always On. This avoids consumption-driven scale-in but does
-  not prevent all restarts. Re-evaluate capacity after measured runs.
-- **Dashboard:** publish the existing FastAPI application to one Linux Azure
-  Web App.
-- **Published dashboard:** use one Basic B2 instance in one region.
-- **Recovery:** redeploy the application from Terraform and the immutable
-  application package. Do not pay for idle standby compute.
-- **Data:** retain LRS for the lowest cost while preserving the existing
-  append-only/WORM controls. Application redeployability does not replace
-  retained evidence.
-- **Higher-capacity option:** move to one Premium v3 P0v3 instance only when deployment
-  slots, autoscale, private networking, or measured performance requires it.
-
-Do not add Front Door, Redis, private endpoints, NAT Gateway, a second region,
-or an always-ready Function instance until a security, availability, or
-measured performance requirement justifies the added fixed cost.
-
-The dashboard is a recoverable viewer rather than a five-nines transactional
-system. Its code and infrastructure are reproducible, and the durable data is
-held separately. A short outage while a single Web App is redeployed is
-acceptable for the stated requirement. The dashboard is also read-heavy,
-changes only after a collector publication, and caches a verified immutable
-bundle.
-
-## Pricing scope and assumptions
-
-The figures below are planning estimates, not a quote. They use public Azure
-retail prices retrieved on **2026-09-27**, USD, Central US, and approximately
-730 hours per month. Enterprise agreements, negotiated discounts, taxes,
-currency, Dev/Test pricing, reservations, and price changes can alter
-the result. Confirm the final design in the
-[Azure Pricing Calculator](https://azure.microsoft.com/pricing/calculator/)
-immediately before deployment.
-
-The operator is responsible for all Azure charges generated by the selected
-services, retention periods, redundancy, monitoring, networking, and data
-transfer. Configure budgets and alerts before deployment and review actual
-usage after each material workload or architecture change.
-
-The estimate must include these separately:
-
-1. Collector Function compute and executions.
-2. Function runtime storage.
-3. Immutable DVM history and current-pointer storage.
-4. Dashboard App Service compute.
-5. Application Insights and Log Analytics.
-6. Data transfer.
-7. Optional networking and edge services.
-8. Redundant instances, zones, or regions.
-9. Backup and retention growth.
-
-Microsoft Defender Vulnerability Management and Microsoft Entra licensing are
-outside this infrastructure estimate. Confirm those licenses separately.
-
-## Quick option comparison
-
-| Option | Approximate fixed dashboard compute | Availability posture | Best use | Main limitations |
-|---|---:|---|---|---|
-| Local only | $0 Azure Web App cost | Developer workstation only | UI development | Not a published service |
-| App Service Free F1 | $0 | No production SLA | Short demonstrations | Quotas, no Always On, not production |
-| Linux Basic B1, one instance | about **$13.14/month** | Single instance | Lower-capacity development or temporary cost fallback | No autoscale or deployment slots; less memory and CPU than the deployment baseline |
-| Linux Basic B2, one instance | about **$25.55/month** | Single instance | **Recommended deployment baseline** | No autoscale or deployment slots; recover by redeploying |
-| Linux Standard S1, one instance | about **$69.35/month** | Single instance | Workloads specifically needing Standard features | Current Central US retail price is higher than P0v3; compare before selecting |
-| Linux Premium v3 P0v3, one instance | about **$62.05/month** | Single instance | Feature/performance upgrade | No instance redundancy by itself |
-| Linux Premium v3 P0v3, two instances | about **$124.10/month** | Instance redundancy | Small production deployment | Both instances are billed continuously |
-| Linux Premium v3 P0v3, three instances | about **$186.15/month** | Candidate zone-redundant baseline | Higher availability in one region | Confirm regional zone support and minimum instance rules |
-| Linux Premium v3 P1v3, one instance | about **$124.10/month** | Single larger instance | Only after load testing shows P0v3 is constrained | Twice the P0v3 compute price |
-| Two-region App Service | at least twice the selected App Service compute | Regional disaster recovery | Strict regional continuity | Requires traffic routing, deployment synchronization, and tested failover |
-
-These totals cover Web App compute only. Storage, monitoring, networking, and
-data transfer are additional. App Service plan instances are billed while
-allocated, whether or not users are actively viewing the dashboard.
-
-Current Central US Linux retail meters used above:
-
-| SKU | Retail hourly rate | Approximate 730-hour month |
-|---|---:|---:|
-| B1 | $0.018/hour | $13.14 |
-| B2 | $0.035/hour | $25.55 |
-| S1 | $0.095/hour | $69.35 |
-| P0v3 | $0.085/hour | $62.05 |
-| P1v3 | $0.170/hour | $124.10 |
-
-P0v3 and P1v3 also publish one-year and three-year reservation prices. Do not
-reserve capacity for the pilot. Measure utilization first, then compare the
-reservation effective monthly price against pay-as-you-go and the likelihood
-that the application will remain on the same plan family.
-
-## Collector Function cost
-
-### Current design
-
-The deployed collector uses:
-
-- Flex Consumption `FC1`;
-- 2 GB instance memory;
-- maximum instance count of one;
-- zero Always Ready instances;
-- collection frequency supplied as a calculator variable, with **two
-  collections per day** as the planning default;
-- ordinary Azure Storage-backed Function triggers;
-- no separately priced managed Durable Task Scheduler.
-
-Flex Consumption bills On Demand execution memory in GB-seconds plus
-executions. The public pricing model currently includes a monthly free grant
-of 100,000 GB-seconds and 250,000 executions per subscription across eligible
-Flex Consumption apps.
-
-The observed live collection ran for roughly 14 minutes. Define these
-calculator inputs rather than embedding one schedule:
-
-```text
-function_memory_gb = 2
-average_collection_minutes = 14
-collections_per_day = 2
-days_per_month = 30
-monthly_free_gb_seconds = 100,000
-monthly_free_executions = 250,000
-```
-
-`collections_per_day` is a pricing input, not a deployment setting. Changing it
-in an estimate does not alter the Function timer. The current Terraform value
-remains one collection at 05:00 UTC (`0 0 5 * * *`). If operations later
-select two actual collections per day, set `collection_schedule` to an
-organization-defined twice-daily NCRONTAB expression and deploy that change separately.
-
-With the default planning values:
-
-```text
-2 GB × 14 minutes × 60 seconds × 2 collections/day × 30 days
-= 100,800 GB-seconds/month
-```
-
-This is only 800 GB-seconds above the free grant, or approximately **$0.02 per
-month** at the current Central US On Demand execution-time meter. Small changes
-in actual duration can move it just above or below the free grant. The timer
-and supporting Function executions remain far below 250,000 executions.
-Runtime storage and monitoring remain separate charges.
-
-| Collections/day | Monthly GB-seconds | Billable after 100,000 free | Approximate execution-time charge |
-|---:|---:|---:|---:|
-| 1 | 50,400 | 0 | $0.00 |
-| 2 | 100,800 | 800 | $0.02 |
-| 4 | 201,600 | 101,600 | $2.64 |
-
-This table assumes 2 GB, 14 minutes per collection, 30 days, and no other Flex
-Consumption app using the subscription-level grant.
-
-Use this calculator formula:
-
-```text
-Monthly GB-seconds =
-  configured memory in GB
-  × average execution seconds
-  × collections_per_day
-  × days_per_month
-
-Billable GB-seconds =
-  max(0, monthly GB-seconds - available subscription free grant)
-
-Monthly execution charge =
-  max(0, executions - available execution free grant)
-  × execution meter
-```
-
-Current Central US public Flex meters include approximately:
-
-- On Demand execution time: **$0.000026 per GB-second** after the free grant.
-- On Demand executions: **$0.40 per million** after the free grant.
-- Always Ready baseline: **$0.000004 per GB-second** while provisioned.
-- Always Ready execution time: **$0.000016 per GB-second**, plus executions.
-
-The retail API expresses the execution meter as `$0.000004 per 10
-executions`, which is equivalent to `$0.40 per million`.
-
-### Function cost drivers
-
-- Increasing collection frequency.
-- Increasing the configured memory from 2 GB to 4 GB.
-- Running full recommendation enrichment more often.
-- Longer Defender throttling or retry periods.
-- Enabling Always Ready instances.
-- Raising maximum instance count for concurrent work.
-- Adding managed Durable Task Scheduler capacity.
-- Other Flex apps consuming the subscription-level free grant.
-
-For this scheduled collector, Always Ready usually adds cost without value.
-Cold-start latency is not user-facing, and the collection already runs
-asynchronously from dashboard use.
-
-### Function hosting alternatives
-
-| Plan | Cost behavior | When to consider |
-|---|---|---|
-| Flex Consumption | Scale to zero; execution and memory billing; optional Always Ready | Current and recommended |
-| Legacy Consumption | Larger free grant but fewer modern networking/scaling capabilities | Only if Flex is unavailable and requirements remain simple |
-| Functions Premium | At least one continuously allocated instance; vCPU and memory billed per second | Private networking, consistently high collection volume, or cold-start requirements |
-| Function on App Service plan | Shares already-paid App Service capacity | Only when operational coupling is acceptable and spare capacity is proven |
-
-Do not move the collector onto the dashboard plan merely to reduce the number
-of resources. It couples collection failures and scaling to the user-facing
-site and removes the current scale-to-zero advantage.
-
-Official references:
-
-- [Azure Functions pricing](https://azure.microsoft.com/pricing/details/functions/)
-- [Flex Consumption hosting](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan)
-- [Estimate Functions consumption costs](https://learn.microsoft.com/azure/azure-functions/functions-consumption-costs)
+The dashboard baseline accepts a single-instance outage during recovery or
+redeployment. It is not a high-availability design. Retained evidence is separate
+from replaceable application hosting.
 
 ## Dashboard hosting options
 
-### Option 1: Linux App Service Basic B2
-
-Use for a low-cost pilot with a small known audience.
-
-- Recommended starting capacity in this design.
-- Supports the existing FastAPI application with minimal change.
-- Supports App Service Authentication and managed identity.
-- One warm process preserves the in-memory verified-bundle cache.
-- Does not provide deployment slots or autoscale.
-- A single instance remains a maintenance and failure boundary.
-
-This is the recommended publishing option for this viewer because temporary
-interruption is acceptable and the application can be recreated from
-Terraform and the deployment package.
-
-### Option 2: Linux App Service Premium v3 P0v3
-
-Use only when production networking, deployment slots, autoscale, or measured
-resource demand justifies the higher fixed cost.
-
-- Current Central US pay-as-you-go compute is approximately $62.05/month per
-  instance.
-- Supports deployment slots, autoscale, stronger scale limits, and production
-  networking features.
-- Can be expanded from one to multiple instances without changing the
-  application architecture.
-- Supports zone redundancy where the region and plan configuration allow it.
-
-Because the current Central US retail meter for P0v3 is below S1, P0v3 is the
-preferred production comparison. Recheck the calculator because regional
-prices and availability can change.
-
-### Option 3: Linux App Service Standard S1
-
-Standard provides deployment slots and autoscale, but its current Central US
-retail price is higher than P0v3. Keep it in the calculator for comparison,
-but select it only when regional availability, organizational policy, or an
-existing shared Standard plan makes it cheaper in practice.
-
-### Option 4: Azure Container Apps Consumption
-
-Container Apps can scale the dashboard to zero and may reduce compute cost for
-rarely used environments. It is not the first recommendation because:
-
-- cold starts affect interactive users;
-- every new replica must reload and verify the current bundle;
-- authentication, ingress, health, and scaling require a different deployment
-  design;
-- the current App Service identity-header mechanism would need validation
-  against Container Apps authentication behavior;
-- private networking and log ingestion can dominate a very small compute bill.
-
-Use it only if measured use is intermittent enough to justify the additional
-engineering and operational model.
-
-### Option 5: Static Web Apps plus an API
-
-The visual assets are static, but the deployed solution is not purely static.
-The FastAPI server provides:
-
-- trusted authentication enforcement;
-- managed-identity reads from protected storage;
-- manifest and hash verification;
-- server-side feature and role gates;
-- curated Data evidence APIs.
-
-Static Web Apps would still need a secured API and a revised authentication
-flow. It is a redesign option, not a drop-in low-cost deployment.
-
-### Options not recommended
-
-- **Virtual machine:** continuous VM, patching, backup, and availability costs
-  for no application benefit.
-- **AKS:** cluster and operational overhead are disproportionate.
-- **App Service Environment:** isolated networking and stamp fees are far
-  beyond the current workload.
-- **Serving the dashboard from the collector Function:** couples user traffic
-  to collection and requires a material application redesign.
-
-Official references:
-
-- [Linux App Service pricing](https://azure.microsoft.com/pricing/details/app-service/linux/)
-- [App Service plans](https://learn.microsoft.com/azure/app-service/overview-hosting-plans)
-- [Premium v3](https://learn.microsoft.com/azure/app-service/app-service-configure-premium-v3-tier)
-- [Deployment slots](https://learn.microsoft.com/azure/app-service/deploy-staging-slots)
-- [App Service zone redundancy](https://learn.microsoft.com/azure/app-service/configure-zone-redundancy)
-
-## Availability and redundancy choices
-
-Availability is purchased in layers. This viewer does not require five-nines
-availability, so the default is deliberately a single application instance in
-one region. Terraform and the deployment package provide application recovery;
-protected storage provides data durability.
-
-| Layer | Low-cost choice | Higher-resilience choice | Cost effect |
-|---|---|---|---|
-| Web compute | One B2 or P0v3 instance | Two instances | Approximately multiplies App Service compute by two |
-| Availability zone | No zone redundancy | Zone-redundant Premium v3 plan | Bills the required minimum instance count |
-| Region | One Central US deployment | Second-region Web App and failover route | Roughly duplicates compute and supporting resources |
-| History storage | LRS | ZRS, GRS/RA-GRS, or GZRS/RA-GZRS | Higher per-GB and transaction prices |
-| Current pointer | Same protected account design | Geo-redundant account plus tested failover procedure | Added storage cost and operational complexity |
-| Edge routing | Direct App Service endpoint | Front Door Standard or Premium | Fixed monthly base plus requests and data transfer |
-| Recovery | Redeploy code; retain immutable data | Warm secondary application and automated routing | Higher fixed cost but lower recovery time |
-
-### Suggested service levels
-
-**Lower-capacity pilot**
-
-- One B1 Web App.
-- Existing Flex collector.
-- Existing LRS history storage.
-- No Front Door or private endpoint.
-- Accept instance and regional interruption.
-
-**Published viewer, recommended deployment baseline**
-
-- One B2 Web App.
-- One Central US deployment.
-- LRS history and Function runtime storage.
-- Direct App Service endpoint with Entra authentication.
-- Alerts and a documented redeployment procedure.
-- No deployment slot, autoscale, zone redundancy, standby region, Front Door,
-  private endpoint, NAT Gateway, or Redis.
-
-**Optional higher availability**
-
-- Zone-redundant P0v3 or P1v3 with the required minimum instances.
-- ZRS or GZRS history storage.
-- Front Door only if global routing, WAF, or regional failover is required.
-- Tested restore/failover runbook.
-
-**Regional disaster recovery**
-
-- Duplicate Web App deployment in a designated second region.
-- Front Door or Traffic Manager routing.
-- GRS/RA-GRS or GZRS/RA-GZRS selected according to read and failover needs.
-- Decide whether the collector remains active in one region or uses a
-  single-writer failover design. Never run concurrent collectors that can
-  publish competing current manifests.
-
-## Storage cost and redundancy
-
-There are two storage accounts with different purposes:
-
-1. **History storage:** protected raw pages, curated datasets, manifests, and
-   retained evidence.
-2. **Function runtime storage:** Function host state and runtime artifacts.
-
-The history account is the material long-term storage cost because immutable
-data accumulates. The current pointer is small. Estimate history growth as:
-
-```text
-Monthly retained GB =
-  average compressed raw GB per run
-  + average compressed curated GB per run
-  + manifests and policies
-  × runs per month
-
-Steady retained GB at 365 days =
-  average retained GB per run × runs per day × 365
-```
-
-Also enter read, write, list, and data-retrieval operations in the calculator.
-The dashboard cache materially reduces repeated blob reads.
-
-Approximate first-tier Central US Hot hierarchical-namespace capacity rates
-observed on 2026-09-27 were:
-
-- LRS: about **$0.018/GB-month**.
-- ZRS: about **$0.023/GB-month**.
-- GRS: about **$0.037/GB-month**.
-- GZRS: use the calculator for the exact hierarchical-namespace meter; the
-  public general block-blob meter was about **$0.0414/GB-month**.
-
-Higher volume tiers reduce marginal capacity prices. Transactions and any
-geo-replication or egress charges remain separate.
-
-| Redundancy | Protection | Use here |
+| Choice | Reason to consider it | Limitation or cost |
 |---|---|---|
-| LRS | Three copies in one physical location | Lowest-cost pilot |
-| ZRS | Synchronous copies across availability zones | Recommended when in-region zone failure must not interrupt history access |
-| GRS | LRS primary plus asynchronous secondary-region copies | Regional durability with planned failover |
-| RA-GRS | GRS plus read access to secondary | Read continuity before failover |
-| GZRS | ZRS primary plus asynchronous secondary-region copies | Strong zonal and regional protection |
-| RA-GZRS | GZRS plus secondary read access | Highest read-resilience option |
+| Local | Development, replay, or offline evaluation | Not the hosted service |
+| Basic B2, one instance | Existing deployment baseline | No deployment slots or autoscale |
+| Larger supported SKU | Measured CPU, memory, or disk pressure | Higher continuous compute cost |
+| Standard/Premium tier with deployment slots | Staged deployment and warm-up before switching production | Tier cost and slot resource contention |
+| Multiple instances | Instance-level availability or measured concurrent demand | Each instance prepares its own local caches |
+| Second region | An approved regional recovery requirement | Additional hosting, traffic routing, and tested recovery procedures |
 
-Geo redundancy does not automatically make the application multi-region.
-Application routing, identity, current-pointer behavior, and collector
-single-writer semantics still require a tested design.
-
-Do not configure lifecycle deletion for retained DVM history. Cost management
-must not bypass the append-only and WORM requirements.
-
-Official reference:
-[Azure Storage redundancy](https://learn.microsoft.com/azure/storage/common/storage-redundancy).
-
-## Monitoring and logging
-
-Application Insights uses a Log Analytics workspace. Its principal variable
-cost is ingested GB, followed by retention beyond the included period and
-optional query/export features.
-
-Add these calculator inputs:
-
-- Function invocation logs and dependency telemetry.
-- Web App request, exception, dependency, and availability telemetry.
-- Platform diagnostic logs.
-- Expected GB ingested per day.
-- Retention period.
-- Alert rules, notification channels, and availability tests.
-- Diagnostic archive to Storage, if required.
-
-Cost controls:
-
-- Keep normal successful request logging concise.
-- Sample high-volume request and dependency telemetry.
-- Preserve failures, security events, collection status, and publication
-  errors without sampling them away.
-- Set explicit daily caps and alerts, understanding that caps can suppress
-  operational evidence.
-- Keep vulnerability history in protected Storage, not Log Analytics.
-- Start with the existing 30-day workspace retention and extend only when an
-  operational requirement calls for it.
-
-## Networking, ingress, and data transfer
-
-### Direct App Service endpoint
-
-This is the lowest-cost publishing path:
-
-- App Service HTTPS endpoint.
-- App Service Authentication with Microsoft Entra ID.
-- Access restricted to authorized users/groups.
-- Managed identity from Web App to protected storage.
-- No Front Door and no private endpoint.
-
-### Private networking
-
-Private endpoints add a per-endpoint hourly charge and processed-data charge.
-Depending on the design, also account for:
-
-- Private DNS zones and queries.
-- VNet integration.
-- NAT Gateway hourly and processed-data charges when fixed outbound IP is
-  required.
-- VPN Gateway or ExpressRoute for private user access.
-- Additional private endpoints for both Web App and Storage.
-
-Private access is a security architecture choice, not a default cost
-optimization.
-
-### Front Door and WAF
-
-Azure Front Door is useful for global routing, edge acceleration, WAF, bot
-protection, or multi-region failover. Public pricing includes:
-
-- Standard base fee: approximately **$35/month**.
-- Premium base fee: approximately **$330/month**.
-- Requests.
-- Edge-to-client transfer.
-- Edge-to-origin transfer.
-
-Premium includes advanced WAF and Private Link capabilities. For a small
-single-region internal dashboard, the base fee can exceed the Web App compute
-cost, so defer Front Door until one of those capabilities is required.
-
-Official references:
-
-- [Azure Front Door pricing](https://azure.microsoft.com/pricing/details/frontdoor/)
-- [Azure Private Link pricing](https://azure.microsoft.com/pricing/details/private-link/)
-
-## Authentication and the hidden Data evidence link
-
-App Service Authentication itself does not require a separate application
-compute SKU, but Microsoft Entra licensing for conditional access, identity
-governance, or other tenant features may apply.
-
-Set:
-
-```text
-DASHBOARD_AUTH_ENABLED=true
-DASHBOARD_DATA_BROWSER_ENABLED=false
-DASHBOARD_DATA_BROWSER_ROLE=Data.Evidence.Reader
-```
-
-Enable the evidence browser only for operators or auditors who need to prove
-or troubleshoot dashboard calculations:
-
-```text
-DASHBOARD_DATA_BROWSER_ENABLED=true
-```
-
-Behavior:
-
-- Data evidence is not present in dashboard navigation or dashboard cards.
-  Authorized operators open `/data-evidence` directly.
-- Hiding the link is presentation only and is not a security control.
-- When disabled, `/api/data-browser/*` returns HTTP 404.
-- When `DASHBOARD_DATA_BROWSER_ROLE` is configured, authenticated users
-  without that App Service application role receive HTTP 403.
-- The browser exposes only whitelisted normalized datasets, including the
-  named Azure subscription inventory.
-- It does not expose raw Defender payloads, arbitrary blob paths, account
-  keys, SAS tokens, editing, or deletion.
-
-The deployment uses both controls:
-
-1. **Easy Auth** performs Microsoft Entra sign-in and supplies the trusted
-   principal header to FastAPI.
-2. **Enterprise Application assignment** determines who may sign in. Terraform
-   enables assignment-required behavior and assigns the configured Entra group
-   to `Dashboard.Viewer`.
-
-The Enterprise Application display name is `DVM Viewer`; the app registration
-uses the same name. After apply, Terraform outputs
-`dashboard_enterprise_application_object_id` and
-`dashboard_entra_client_id` identify it. Manage assignments at **Microsoft
-Entra ID > Enterprise applications > DVM Viewer > Users and groups**.
-Group-based Enterprise Application assignment requires the applicable
-Microsoft Entra ID licensing; if it is unavailable, assign individual users
-the `Dashboard.Viewer` role.
-
-When the evidence browser is enabled, assign `Data.Evidence.Reader` to authorized
-users or groups in the Enterprise Application. The Web App does not maintain a
-separate user list.
-
-The application flag is defense in depth, not a replacement for Easy Auth.
-When enabled, FastAPI accepts only the trusted
-`X-MS-CLIENT-PRINCIPAL` identity header supplied by App Service. Local UI
-development keeps authentication and the evidence browser disabled.
-
-## Request and data path
-
-1. The browser authenticates through App Service Authentication using
-   Microsoft Entra ID.
-2. FastAPI validates the trusted App Service principal.
-3. The Web App uses a dedicated user-assigned managed identity with Storage
-   Blob Data Reader.
-4. The server reads `dvm-current/current/manifest.json`.
-5. It verifies and caches the immutable curated files referenced by that
-   completed manifest.
-6. Browser requests are served from the Web App cache.
-
-Never send storage keys, SAS tokens, or private-container URLs to the browser.
-Do not reuse the collector's contributor identity for the Web App.
+App Service features and capacity vary by tier and region. Deployment preflight
+checks the configured SKU and approved candidate regions; it does not select a
+more expensive tier without operator confirmation.
 
 ## Cache and scale controls
 
-- Keep static dashboard assets in the Web App package.
-- Start with `DASHBOARD_CACHE_SECONDS=300` unless publication must appear in
-  less than five minutes. This controls manifest freshness, not index expiry;
-  replacement preparation adds time before a new run is served.
-- Check the small current manifest instead of downloading every dataset for
-  every request.
-- FastAPI gzip-compresses responses of at least 1 KiB when the client advertises
-  gzip support.
-- Reuse snapshot-pinned application caches. Query APIs use `no-store`; static
-  assets require revalidation so deployments do not leave stale UI code.
-- Do not add Azure Cache for Redis initially.
-- Scale on sustained CPU, memory, response latency, or HTTP queue length.
-- Test with a representative customer snapshot, retained lifecycle events,
-  concurrent users, and two-snapshot replacement before scaling up. The
-  [two-million-finding engine benchmark](../README.md#dashboard-flow) is a
-  scale reference, not a guarantee of hosted performance.
+The dashboard serves aggregates and bounded pages from server-side SQLite.
+It does not send complete findings or lifecycle history to each browser.
+The configured viewer cache can restore compatible completed indexes and reports
+after a process restart. A new snapshot still needs preparation.
 
-Each Uvicorn process on each App Service instance owns its temporary SQLite
-indexes, downloaded inputs, bounded memory caches, and query executors.
-The default is one process. More processes/instances can increase throughput
-but multiply downloads, index preparation, memory, disk use, and compute.
-Each process enforces its own 8 GiB/two-snapshot local retention budget;
-that budget is not shared across workers.
+FastAPI serves the shell while preparation runs in the background. HTTP liveness
+is different from data readiness. A previous complete snapshot stays available
+during replacement preparation or failure.
 
-Cold preparation runs before application traffic is accepted. A restarted
-process uses a new temporary directory and rebuilds indexes, even if stale
-files from a previous process remain on the host. Always On does not prevent
-all restarts. Terraform allows up to 30 minutes for container startup; investigate
-failures rather than treating that allowance as an expected startup duration.
+The default worker has an 8 GiB/two-snapshot local retention budget, plus
+additional SQLite and restoration scratch needs. Increasing processes or
+instances multiplies local preparation, memory, disk, and download work.
+It is not a substitute for measuring the actual bottleneck.
 
-During ordinary operation, the old ready snapshot stays served while a new
-run is prepared. Ensure sufficient disk for both snapshots and SQLite scratch
-work. Do not equate the benchmark's process RSS with total App Service memory,
-or its retained index size with the Azure history export size.
+Published indexes and persistent viewer-cache generations also consume Azure
+Storage. There is no automatic cloud cache purge. Cost estimates include these
+alongside raw and curated evidence, not just compressed findings JSON.
 
-See [Web App runtime](application-flow.md#7-web-app-startup-indexing-memory-and-caches)
-for startup, memory budgets, cache invalidation, and diagnostics.
+The [runtime reference](application-flow.md#7-web-app-startup-indexing-memory-and-caches)
+explains readiness, reuse, and limits. [Performance checks](development.md#performance-checks)
+cover local validation; customer data and hosting still need separate testing.
 
-### Measured 2,500-endpoint synthetic baseline
+## Storage, monitoring, and networking
 
-The figures in this subsection describe the earlier full-dataset delivery
-path. They are retained for comparison, not acceptance measurements for the
-current server-paged dashboard.
+Replication is an environment decision. LRS is the lower-cost baseline;
+zone/geo redundancy adds durability options and cost, not application failover
+by itself. WORM duration is a minimum protection period, not an expiry that
+deletes evidence. No lifecycle deletion rule is provisioned for retained data.
 
-The deterministic six-month generator completed in about 0.13 seconds on the
-development host and produced 2,500 distinct devices and 2,500 findings. The
-compact synthetic findings JSON measured about 4.55 MiB raw and 0.25 MiB with
-gzip; the synthetic device inventory measured about 1.76 MiB raw and 0.05 MiB
-with gzip.
+Log ingestion, retention, and diagnostic volume are separate cost inputs.
+Collection failure, stale publication, and application availability need an
+agreed alerting and response process. Their existence should not be inferred
+from deploying Application Insights.
 
-The combined local build measured 2,642 unique devices and 36,904 findings.
-The written findings file was 71.11 MiB, while the current FastAPI JSON
-response transferred about 1.21 MiB with gzip. Against the Azure-backed
-validation server, the first findings request took about 9.60 seconds because
-it loaded and verified the current bundle; the next process-cache hit took
-about 0.87 seconds. Treat these as development-host measurements, not an Azure
-App Service latency guarantee.
-
-The current dashboard replaces full browser findings downloads with
-server-side streaming indexes and bounded view/page responses. It prepares
-default views before serving traffic, retains immutable indexes for the
-process lifetime subject to local eviction, and loads the CVE description
-catalog on demand. Gzip reduces transfer; the indexing/paging changes address
-the full-dataset parsing and filtering costs of the earlier path.
+The default network perimeter configuration initially allows all IPv4 sources.
+Authentication and RBAC still apply, but this is not private networking.
+Private endpoints, Front Door, WAF, NAT, additional regions, or other services
+need their own design, validation, and cost approval.
 
 ## Calculator worksheet
 
-Create separate calculator scenarios rather than mixing minimum and
-high-availability settings.
+The standalone [Azure cost calculator](../tools/calculator.html) opens locally.
+It can read an environment values file and published manifest without uploading
+them. It is excluded from the deployed dashboard.
 
-### Scenario A: lowest-cost hosted pilot
+The estimate includes:
 
-- Functions Flex Consumption, 2 GB, zero Always Ready.
-- `collections_per_day=2` by default; vary it for 1, 2, 4, or another
-  operational schedule.
-- Two Standard LRS storage accounts.
-- 365-day immutable history.
-- Linux App Service B2, one instance.
-- Application Insights and Log Analytics at measured ingestion.
-- No Front Door, private endpoints, NAT Gateway, Redis, backup, or second
-  region.
+- Continuous collector and dashboard compute, with actual instance counts.
+- Existing history, retained bytes per collection, and collection frequency.
+- Published indexes, checkpoints, failed runs, and viewer-cache writes/growth.
+- Function runtime storage and append-only workflow/branding events.
+- Storage reads, writes, lists, and transfers.
+- Monitoring ingestion/retention and any added networking.
+- Optional licensing or other organizational costs.
 
-### Scenario B: optional App Service feature upgrade
+The timer default is one collection per day. Rates remain editable and must
+be checked for the target region, currency, agreement, and date. The
+[Azure Pricing Calculator](https://azure.microsoft.com/pricing/calculator/)
+provides current pricing inputs. No historical dollar table in this repository
+is a current quote.
 
-- Same Function settings.
-- History storage LRS.
-- Linux App Service P0v3, one instance.
-- Entra authentication and separate Web App managed identity.
-- 30-day operational-log retention.
-- Alerts for failed collections, stale manifests, and Web App health.
+The calculator's bounded-retention option is hypothetical. It does not
+configure deletion or authorize removal of any retained data.
 
-### Scenario C: single-region high availability
+## Cost behavior and remaining environment decisions
 
-- Same Function settings; evaluate Function zone redundancy independently.
-- History storage ZRS.
-- Linux App Service P0v3, two or region-required zone-redundant instances.
-- Autoscale maximum three.
-- Deployment slot.
-- Optional private endpoints only if policy requires them.
+Retained runs and viewer-cache generations accumulate, so storage growth remains
+part of the running cost. There is no automatic cloud cleanup in the app.
+Deleting retained evidence is not an application cost-control operation.
 
-### Scenario D: regional disaster recovery
-
-- Duplicate production Web App plan and app in a second region.
-- Geo-redundant history storage.
-- Front Door Standard for routing, or Premium when WAF/Private Link
-  requirements justify it.
-- Duplicate monitoring and networking resources as applicable.
-- Tested single-writer collector and current-manifest failover.
-
-For every scenario, enter:
-
-- 730 instance-hours per always-on Web App instance.
-- Minimum, normal, and maximum autoscale instance counts.
-- Function memory, average duration, `collections_per_day`, days/month,
-  GB-seconds, and executions.
-- Stored GB after 30, 180, and 365 days.
-- Blob reads, writes, lists, and retrieval.
-- Monitoring GB/day and retention.
-- Internet egress and Front Door transfer.
-- Private endpoint-hours and processed GB.
-- Backup storage and retention.
-- Reservation or savings commitment only as a separate comparison.
-
-## Cost-control guardrails
-
-- Add Azure Cost Management budgets at 50%, 80%, and 100% of the adopted
-  monthly estimate.
-- Tag resources with environment, owner, application, and cost center.
-- Use local hosting or B1 only when intentionally accepting lower development capacity.
-- Do not enable Always Ready for the scheduled collector.
-- Start and remain on one B2 instance unless measurements or a required
-  platform feature justify P0v3.
-- Cap autoscale at three until load testing supports a higher limit.
-- Sample routine telemetry and alert on ingestion growth.
-- Review immutable storage growth monthly.
-- Revisit reservations only after several months of stable usage.
-- Treat Front Door Premium, Private Link, NAT Gateway, Redis, and a second
-  region as explicit architecture decisions.
-- Never reduce cost by deleting retained DVM history.
-
-## Deployment order
-
-1. Keep the protected storage account and retained history unchanged.
-2. Deploy the updated collector package.
-3. Set `collector_management_group_id` and let the Function Terraform stage
-   grant the collector identity Reader once on the management group whose
-   nested subscriptions should appear in the inventory.
-4. Run and validate a new immutable collection.
-5. Confirm `subscriptions.json.gz` and the other curated datasets are present
-   in the completed manifest.
-6. Add the Web App, plan, read-only identity, App Service Authentication,
-   monitoring, and settings as a separate deployment stage.
-7. Configure Easy Auth before setting `DASHBOARD_AUTH_ENABLED=true`.
-8. Keep `DASHBOARD_DATA_BROWSER_ENABLED=false` initially; enable it only with
-   the intended application-role assignment.
-9. Deploy the FastAPI package.
-10. Validate sign-in, authorization, `/api/health`, `/api/status`, cache
-    behavior, evidence access, and realistic concurrent-user load.
+Budgets, ownership, alert recipients, and any reservation commitments belong
+to the environment record. SKU, region, replication, and worker count affect
+both cost and behavior; the existing deployment approval covers those changes.
+The current application does not depend on a larger tier, Redis, a second
+region, or additional networking being added.

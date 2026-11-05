@@ -1,25 +1,19 @@
 # Azure deployment guide
 
-> **Last modified:** 2026-10-12
-> **Purpose:** Deploy and validate protected storage, the collector Function, and the authenticated dashboard Web App, with explicit operator and runtime identity boundaries.
-
-The deployment is staged so retained DVM history stays independent of
-replaceable application infrastructure.
+This is the full installation and update runbook. The
+[greenfield checklist](docs/greenfield-deployment.md) summarizes the sequence;
+the [README](README.md) explains the application.
+Deployment is staged so retained DVM history stays independent of replaceable
+application infrastructure.
 
 The protected foundation and collector Function are identical whether the Web
 App runs locally or in Azure. A hosted deployment simply adds the cumulative
 `webapp` stage; it does not create a second foundation or a different
 collector.
 
-For the complete inventory of Terraform inputs, runtime environment variables,
-JSON keys, generated Azure App Settings, SLA controls, presentation settings,
-and script overrides, see
-[Complete configuration reference](docs/configuration-reference.md).
-For troubleshooting, automation, or an individually required command, see the
-[Command reference](docs/command-reference.md).
-For the command-by-command internals, tool dependencies, Azure CLI identity
-behavior, Terraform boundaries, and package contents of `infra/deploy.sh`, see
-[Infrastructure and deploy.sh reference](infra/README.md).
+Settings are defined in the [configuration reference](docs/configuration-reference.md),
+commands in the [command reference](docs/command-reference.md), and deployment
+tool internals in the [infrastructure reference](infra/README.md).
 
 ## Workstation prerequisites
 
@@ -65,9 +59,18 @@ cloning and before starting the menu.
 
 ## Before using the menu
 
-The supported deployment path is the interactive deployment menu documented in
-the [project README](README.md#deploy-or-update). Use it for first deployment,
-updates, code-only deployments, verification, collection, and diagnostics.
+The deployment menu covers first deployment, updates, verification, collection,
+and diagnostics. The customer source branch is `latest`:
+
+```bash
+git clone --branch latest https://github.com/ktigges/MDVM-View.git
+cd MDVM-View
+```
+
+An existing deployment clone updates with `git pull --ff-only` after confirming
+its branch and finishing or preserving local work. New workstation setup also
+requires the existing environment's values and Terraform state; a fresh clone
+does not recreate that state.
 
 Before starting the menu:
 
@@ -429,11 +432,9 @@ Windows, macOS, and Linux all use
 fallback. Both forms are documented in
 [Infrastructure operations](infra/README.md).
 
-Python 3.14.7 has been tested successfully for local installation, deployment
-operations, and the full project test suite. The test run produces dependency
-deprecation warnings but no failures. Terraform continues to configure the
-Azure Function and Linux Web App runtimes for Python 3.12. Using Python 3.14.7
-on the workstation does not change those deployed runtimes.
+The workstation setup uses Python 3.14; Terraform configures both hosted
+applications for Python 3.12. A workstation interpreter change does not change
+the deployed runtime.
 
 ## What the deployment commands do
 
@@ -873,8 +874,8 @@ paths are append-only. Only `current/manifest.json` is replaceable.
    Contributor for the dashboard identity on that container only.
 5. One single-tenant Entra app registration and Enterprise Application named
    `DVM Viewer`.
-6. `Dashboard.Viewer` and `Data.Evidence.Reader` app roles for manual
-   assignment. `Recommendation.Tracker` remains defined for existing
+6. `Dashboard.Viewer`, `Data.Evidence.Reader`, and `Dashboard.Administrator`
+   app roles for manual assignment. `Recommendation.Tracker` remains defined for existing
    assignments, but the current workflow does not require it.
 7. Assignment-required Enterprise Application access.
 8. App Service Easy Auth with unauthenticated requests redirected to Entra.
@@ -883,28 +884,26 @@ paths are append-only. Only `current/manifest.json` is replaceable.
    indexes provide aggregate metrics, filtering, and bounded table pages.
    Dataset downloads are streamed and checksum-verified before indexing.
 
-The large-data dashboard enhancement is a **Web App code-only update**:
-use deployment-menu option 4, or `deploy webapp` followed by `verify webapp`.
-It requires neither a new collection nor a Function deployment, additional
-Storage permissions, or customer-side version edits. The existing `ijson`
-dependency is reused.
+Dashboard-only code changes use menu option 4, or `deploy webapp` followed by
+`verify webapp`. They do not need a new collection or Function deployment.
+Infrastructure features, including the persistent viewer cache and its scoped
+permissions, require a reviewed cumulative `webapp` plan when not already present.
 
-Indexes and compressed dataset caches are disposable local files, not new
-historical Azure artifacts. Each worker retains at most two snapshots within
-an 8 GiB local cache budget. Ensure the App Service worker has sufficient free
-local disk for its inputs, indexes, and SQLite query scratch space. Analytical
-facts are indexed separately from losslessly compressed evidence payloads.
-Initial startup after a restart takes longer while indexes and all nine default
-navigation views are prepared, before the worker accepts browser traffic.
-Deployment sets `WEBSITES_CONTAINER_START_TIME_LIMIT=1800` and verification
-allows the same startup window. New snapshots are prepared in the background
-before new sessions select them; allow disk room for both the served snapshot
-and its replacement. Startup failure prevents readiness; replacement failure
-retains the prior ready snapshot with explicit diagnostics and a visible notice.
-Already-cached views return directly, and browser revisits reuse bounded results.
-Other expensive queries use background workers and short polling requests.
-If a selected snapshot expires, reload
-the dashboard; do not delete retained history or start another collection.
+The current stage also creates the separate `dvm-viewer-cache` container,
+container-scoped Web App write access, and `DASHBOARD_DERIVED_CACHE_CONTAINER`.
+Completed compatible indexes and query products can be restored after restart.
+Local active indexes remain disposable.
+
+The authenticated shell starts while data preparation runs in the background.
+With persistent caching enabled, the server restores/builds the shared indexes,
+aggregates, search, history, and nine default views before advertising a snapshot
+as ready. Liveness does not establish that readiness. Failed initial preparation
+is visible and retries; a failed replacement retains the previous ready snapshot.
+
+Each worker has an 8 GiB/two-snapshot budget plus temporary-space requirements.
+Deployment retains the 1,800-second container startup allowance; it is not a
+promised preparation time. The [runtime reference](docs/application-flow.md#7-web-app-startup-indexing-memory-and-caches)
+explains readiness, cache restoration, disk limits, and snapshot expiry.
 
 The Enterprise Application display name is `DVM Viewer`; the app registration
 uses the same name. After apply, Terraform outputs

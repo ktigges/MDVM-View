@@ -1,8 +1,5 @@
 # Command reference
 
-> **Last modified:** 2026-10-08
-> **Purpose:** Explain cross-platform and legacy project commands, what they change, and when operators should use them.
-
 Run commands from the repository root unless a section says otherwise.
 
 ## 1. Quick operator decisions
@@ -377,7 +374,7 @@ Deployment menu option **5** offers:
   It does not retry, follow next links, archive responses, normalize findings,
   access snapshot Storage, or publish a manifest. A missing current manifest
   remains missing after a successful debug request.
-- **C — Complete collection**: ask for records per page (default **1,000**),
+- **C — Complete collection**: ask for records per page (default **2,500**),
   require `COLLECT`, and collect the complete dataset with normal paging,
   retries, validation, and publication.
 
@@ -387,7 +384,9 @@ each included Defender machine ID. It then retrieves catalog details only for
 distinct CVEs referenced by those findings, using filtered batches of up to 50
 IDs with normal paging, followed by recommendations. It does not download the
 unfiltered catalog or repeat a CVE lookup per device/software finding. Missing
-requested CVEs or unexpected catalog IDs fail the run before publication.
+CVE details are retried and can publish as `PartialSuccess`, with explicit
+unknown metadata and every finding retained. Unexpected catalog IDs and corrupt
+required evidence fail before publication.
 An empty finding set requires no catalog API request and retains an explicit
 empty catalog archive for replay. The findings request is
 `/api/vulnerabilities/machinesVulnerabilities?$filter=machineId eq '<id>'&$top=<page-size>`,
@@ -409,9 +408,10 @@ Complete/full collections now default to **2,500** findings per page (range
 retains its 1-1,000 bound and existing defaults. Live machine-findings requests
 are paced about 24/minute across machines, pages, and retries. HTTP 429 honors
 the full server-requested cooldown rather than capping it at 60 seconds.
-The five-attempt budget and four-hour execution limit remain; no durable
-checkpoint/resume is added. Deploy Function code with option **3** and update
-the local menu to use these defaults.
+Request attempts remain bounded. The Dedicated host has no configured execution
+deadline; Durable activities retain response and processing checkpoints across
+worker interruptions. Recovery preserves the active run's original settings
+instead of silently starting a replacement.
 
 Equivalent cross-platform commands:
 
@@ -685,7 +685,7 @@ explicitly, set `LOG_ANALYTICS_WORKSPACE_NAME` (PowerShell:
 reported explicitly and does not establish application health; Azure query
 errors and warnings are shown rather than converted into empty results.
 
-Flex Consumption can recycle the instance holding local deployment logs.
+App Service restarts can remove instance-local deployment logs.
 `az functionapp log deployment show` may therefore report that logs are no
 longer available even for a successful deployment. The menu queries retained
 Application Insights deployment telemetry, but cannot recover logs that were
@@ -726,7 +726,7 @@ git diff --check
 | `bash -n` | Parse shell scripts without executing them |
 | `git diff --check` | Detect whitespace and patch formatting errors |
 
-## 9. Recommended sequences
+## 9. Update and collection sequences
 
 ### Function code-only update
 

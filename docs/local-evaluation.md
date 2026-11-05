@@ -1,14 +1,8 @@
 # Local evaluation and local datasets
 
-> **Last modified:** 2026-09-28
-> **Purpose:** Keep a complete run in the local file store and review the entire dashboard before deploying Azure infrastructure.
-
-This is a separate local-only development and demonstration path. It is not
-required when installing the Azure collector and running the Web App locally
-against the collector's published Azure data. You can collect or replay source
-data, retain the raw and normalized run, inspect every dashboard dataset, and
-validate the application locally. It calls no Terraform command, creates no
-Azure resource, and does not upload to Azure Storage.
+This path runs the dashboard from local data without deploying Azure
+infrastructure. Live collection still calls the authorized source APIs;
+replay uses previously retained responses. The examples keep publication local.
 
 ## 1. Workstation requirements
 
@@ -170,7 +164,7 @@ shared recommendation tracking, and immutable Azure retention can only be
 validated after deployment. Local recommendation tracking is an in-memory UI
 preview and resets when the local process stops.
 
-## 6. Validate before deciding to deploy
+## 6. Local validation
 
 Confirm:
 
@@ -183,8 +177,8 @@ Confirm:
 6. Collection duration, peak memory, compressed run size, and telemetry volume
    are recorded for Azure sizing and cost estimates.
 
-Only after this review proceed to
-[Azure deployment guide](../DEPLOY.md).
+Hosted identity, scheduling, and access behavior are covered by the
+[deployment guide](../DEPLOY.md), not by local-only validation.
 
 ## 7. Local data safety and cleanup
 

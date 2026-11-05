@@ -1,10 +1,7 @@
 # Dashboard and collection logic
 
-> **Last modified:** 2026-09-28
-> **Purpose:** Define the implemented rules that determine collection state, finding lifecycle, SLA results, prioritization, filtering, remediation outcomes, and shared recommendation workflow.
-
-This document describes current application behavior. Configuration files and
-source code remain authoritative when a value shown here changes.
+This document defines the implemented calculation rules. Configuration files
+and source code determine the values used by a particular deployment.
 
 For the straight-through runtime sequence—including exact API calls, raw and
 curated files, compression, weekly full behavior, dashboard startup, caching,
@@ -57,11 +54,23 @@ machineId | cveId | productName | productVersion
 
 A product-version change can therefore close one key and open another.
 
+The same CVE in the same product/version on 100 devices is 100 finding
+instances but one distinct CVE. A finding instance is not an attack, an
+independent patch job, or another count of the same key on every scan.
+Dashboard totals use the selected snapshot and filters.
+
 The dashboard separates current detections from evidence confirmation.
 `Open`, `Reopened`, and `DetectionReturned` are current detections.
 `PendingConfirmation` and `PendingVerification` remain visible as pending
 evidence but can be hidden or isolated with the Exposure status filter.
 Confirmed fixed evidence remains available in SLA and lifecycle reporting.
+
+The default recommendation-type filter is Vulnerability. Its current
+classifier recognizes update/security-update remediation or vulnerability wording;
+some end-of-support uninstall recommendations fall into Misconfiguration instead.
+Their linked findings can be excluded from this default scope even though
+Defender supplied vulnerability evidence. This is a known classification
+limitation, not a lifecycle or retention rule.
 
 ## 3. Asset classification and operating queue
 

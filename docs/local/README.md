@@ -4,16 +4,14 @@ This section is separate from the hosted Azure deployment path. It applies
 only when running, testing, demonstrating, or replaying Vulnerability View on a
 workstation.
 
-Do not use local instructions to deploy or operate the hosted
-application. For Azure deployment and normal operations, return to the
-[project README](../../README.md) and use the interactive deployment menu.
+Hosted installation is covered in the [deployment guide](../../DEPLOY.md).
 
 ## Choose the local task
 
 | Local task | Guide |
 |---|---|
 | Evaluate the dashboard with local datasets | [Local evaluation and datasets](../local-evaluation.md) |
-| Develop, test, or demonstrate the application | [Development, demonstration, and source control](../development.md) |
+| Develop, test, or maintain the application | [Development and maintenance](../development.md) |
 | Collect and replay an authorized sample | [Collect and replay a sample](../sample-replay.md) |
 | Look up local-only commands | [Command reference](../command-reference.md) |
 

@@ -1,6 +1,6 @@
 /**
  * Author: Kevin Tigges
- * Last modified: 2026-10-24
+ * Last modified: 2026-11-05
  * Purpose: Configure dashboard version, presentation, filters, and diagnostic labels.
  */
 
@@ -28,8 +28,8 @@ window.VULNERABILITY_VIEW_DEFAULTS = {
 };
 
 window.VULNERABILITY_VIEW_CONFIG = {
-  version: "2026.11.05.3",
-  revision: "2026-11-05T04:30:22Z",
+  version: "2026.11.05.4",
+  revision: "2026-11-05T18:12:40Z",
   branding: {
     eyebrow: "VULNERABILITY VIEW",
     title: "Microsoft Vulnerability Management",

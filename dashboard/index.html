@@ -1,6 +1,6 @@
 <!--
   Author: Kevin Tigges
-  Last modified: 2026-10-08
+  Last modified: 2026-11-05
   Purpose: Define the versioned vulnerability dashboard page structure and readable controls.
 -->
 <!doctype html>
@@ -10,7 +10,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
   <link rel="icon" type="image/png" href="favicon.png?v=20261009-2216">
-  <link rel="stylesheet" href="styles.css?v=20261025-002433">
+  <link rel="stylesheet" href="styles.css?v=20261105-181240">
 </head>
 <body>
   <header class="topbar">
@@ -47,9 +47,8 @@
     <span class="loading-spinner" aria-hidden="true"></span>
     <div class="loading-notice-content">
       <strong>Loading dashboard summary</strong><span>Pinning the current snapshot; detail is queried only when requested.</span>
-      <div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="Pinning the current snapshot; completion percentage unavailable"><span class="report-progress-indicator"></span></div>
+      <div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="Pinning the current snapshot"><span class="report-progress-indicator"></span></div>
       <div class="report-progress-meta"><span id="reportProgressPhase">Pinning the current snapshot</span><span id="reportProgressElapsed" aria-live="off">Elapsed 0:00</span></div>
-      <small>Completion percentage and remaining time are not reported by the server.</small>
     </div>
   </div>
   <section id="dashboardPreparationStatus" class="dashboard-query-status" role="status" aria-live="polite" hidden></section>
@@ -123,7 +122,7 @@
       <section class="new-activity-metric-group" aria-labelledby="firstSeenMetricLabel">
         <strong id="firstSeenMetricLabel">First seen in window</strong>
         <div class="new-activity-metrics">
-          <button type="button" data-new-view="overview" data-findings-mode="findings" title="Apply the first-seen window and open these findings"><span>finding instances</span><strong id="newFindingCount">0</strong></button>
+          <button type="button" data-new-view="overview" data-findings-mode="findings" title="One instance is one CVE in a specific software product/version on one device. The same CVE in the same product/version on 100 devices counts as 100 instances, not 100 different CVEs or attacks. One update can remove many instances. This count uses the selected snapshot, workspace filters, and first-seen window. Select to open these findings."><span>finding instances</span><strong id="newFindingCount">0</strong></button>
           <button type="button" data-new-view="overview" data-findings-mode="cves" title="Apply the first-seen window and open these CVEs"><span>distinct CVEs</span><strong id="newCveCount">0</strong></button>
           <button type="button" data-new-view="workstations" title="Apply the first-seen window and open matching endpoint devices"><span>machines first affected</span><strong id="newMachineCount">0</strong></button>
           <button type="button" data-new-view="recommendations" title="Apply the first-seen window and open matching recommendations"><span>recommendations</span><strong id="newRecommendationCount">0</strong></button>
@@ -240,10 +239,11 @@
         <article class="panel wide">
           <div class="panel-title"><h3 id="findingsListTitle">Vulnerability findings</h3><span id="findingsListContext">All findings matching workspace filters</span></div>
           <div class="findings-list-controls">
-            <label>Show<select id="findingsMode"><option value="findings">Finding instances</option><option value="cves">Distinct CVEs</option></select></label>
+            <label>Show<select id="findingsMode" aria-describedby="findingInstancesHelp" title="Finding instances count each device, CVE, software product and version combination. Distinct CVEs count each CVE ID once, even when it affects many devices."><option value="findings">Finding instances</option><option value="cves">Distinct CVEs</option></select></label>
             <label>Search workspace<input id="findingsSearch" type="search" placeholder="CVE, software, machine..." aria-describedby="findingsSearchHelp"></label>
             <small id="findingsSearchHelp">Search applies to all matching records, not just this page, and updates workspace counts.</small>
           </div>
+          <details class="finding-count-help"><summary>What counts as a finding instance?</summary><p id="findingInstancesHelp">One finding instance is one CVE detected in a specific software product/version on one device. The same CVE in the same product/version on 100 devices means <strong>100 finding instances, 1 distinct CVE, and 100 affected devices</strong>. Different affected products or versions on one device can add instances. Findings are not attacks or separate repair jobs: one update can remove many instances. Totals reflect the selected snapshot and workspace filters, including recommendation type and exposure status; they are not a sum of repeated scans. Active totals exclude pending and confirmed-fixed evidence.</p><p>For scale, 100 CVEs each detected in one product/version on 100 devices means <strong>10,000 exposure instances, 100 distinct CVEs, and 100 affected devices</strong>. Device counts and recommendations describe the remediation workload; exposure instances describe how widely vulnerabilities are present, not a severity-weighted risk score. A recommendation's distinct CVE total combines CVEs across its matching devices. Each device can have a smaller, different set.</p></details>
           <div class="table-wrap"><table id="findingsTable"></table></div>
           <nav class="findings-pagination" aria-label="Finding list pages">
             <span id="findingsPageStatus" role="status" aria-live="polite"></span>
@@ -370,7 +370,7 @@
           <article><strong>Work an overdue backlog</strong><p>Filter to Critical or High and review open findings outside SLA. Prioritize recommendations that remove the largest current exposure.</p></article>
           <article><strong>Investigate work that did not clear</strong><p>Find recommendations marked fixed awaiting collection but still detected after the latest successful run, then inspect the remaining machines.</p></article>
         </div></section>
-        <section class="workflow-help-definitions"><h3>Read the numbers correctly</h3><dl><div><dt>Finding instance</dt><dd>One vulnerability finding on one asset. Most dashboard totals count findings, not machines.</dd></div><div><dt>Machine count</dt><dd>Distinct endpoint devices represented by those findings. Cloud-only resources may not appear in endpoint inventory.</dd></div><div><dt>First seen window</dt><dd>Findings whose first-seen timestamp falls inside the displayed UTC range anchored to the latest collection.</dd></div><div><dt>Remediation observed</dt><dd>The first qualified absence used for SLA timing. Evidence can remain pending until a later snapshot confirms the absence.</dd></div><div><dt>Pending confirmation</dt><dd>The specific finding is absent from one qualified complete snapshot and needs the configured confirming run.</dd></div><div><dt>Pending verification</dt><dd>The device or all device evidence disappeared, so remediation is not yet credited without corroboration.</dd></div><div><dt>Previous-run changes</dt><dd>New, reopened, pending, returned, or confirmed findings between comparable collections.</dd></div><div><dt>Dashboard status</dt><dd>Shared coordination state attached to a recommendation ID. It does not update Defender or perform remediation.</dd></div></dl></section>
+        <section class="workflow-help-definitions"><h3>Read the numbers correctly</h3><dl><div><dt>Finding instance</dt><dd>One CVE detected in a specific software product/version on one device. The same CVE in the same product/version on 100 devices means 100 instances but 1 distinct CVE. Different affected products or versions on one device can add instances. This is not a count of attacks or separate fixes; one update can remove many instances. Counts reflect the selected snapshot and workspace filters, not a sum of repeated scans. Active totals exclude pending and confirmed-fixed evidence.</dd></div><div><dt>Machine count</dt><dd>Distinct endpoint devices represented by those findings. Cloud-only resources may not appear in endpoint inventory.</dd></div><div><dt>First seen window</dt><dd>Findings whose first-seen timestamp falls inside the displayed UTC range anchored to the latest collection.</dd></div><div><dt>Remediation observed</dt><dd>The first qualified absence used for SLA timing. Evidence can remain pending until a later snapshot confirms the absence.</dd></div><div><dt>Pending confirmation</dt><dd>The specific finding is absent from one qualified complete snapshot and needs the configured confirming run.</dd></div><div><dt>Pending verification</dt><dd>The device or all device evidence disappeared, so remediation is not yet credited without corroboration.</dd></div><div><dt>Previous-run changes</dt><dd>New, reopened, pending, returned, or confirmed findings between comparable collections.</dd></div><div><dt>Dashboard status</dt><dd>Shared coordination state attached to a recommendation ID. It does not update Defender or perform remediation.</dd></div></dl></section>
       </div>
     </section>
 
@@ -381,7 +381,7 @@
   <aside id="recommendationPreview" class="recommendation-preview" role="status" hidden></aside>
   <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
   <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
-  <script src="config.js?v=20261025-002433"></script>
-  <script src="app.js?v=20261025-002433"></script>
+  <script src="config.js?v=20261105-181240"></script>
+  <script src="app.js?v=20261105-181240"></script>
 </body>
 </html>

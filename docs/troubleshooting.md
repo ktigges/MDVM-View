@@ -1,8 +1,5 @@
 # Troubleshooting
 
-> **Last modified:** 2026-11-03
-> **Purpose:** Diagnose local collection, Azure Function, Web App, storage, authentication, and data-publication problems.
-
 Start with the smallest read-only check that can distinguish the failure.
 Commands and their effects are listed in the
 [Command reference](command-reference.md).
@@ -111,9 +108,9 @@ If the Python worker exits near its configured memory limit:
 4. Review and apply a new cumulative Terraform plan.
 5. Run one controlled collection and measure again.
 
-Large endpoint pages are archived and streamed during normalization, but larger
-scales still require measured certification. Do not infer 10,000-device
-support solely from a smaller successful run.
+Large endpoint pages are archived and streamed during normalization. A successful
+run at one inventory size does not establish capacity for a larger one;
+working set and API throughput remain environment-dependent.
 
 ### Processing substeps and heartbeats
 
@@ -240,12 +237,12 @@ Kudu status `4` is successful and `3` is failed.
 | UI revision did not change | Check the `Packaged Web App UI revision ...` deployment output and the latest Kudu deployment status. |
 | Data timestamp did not change after Web App deployment | Expected. Publishing UI code does not run the collector. Wait for the Function schedule or intentionally invoke one run after confirming none is active. |
 | Changes appear several minutes late | Current-manifest detection follows `DASHBOARD_CACHE_SECONDS` (hosted default 300 seconds), then the server must prepare the replacement snapshot. New sessions select the replacement only when it is ready; existing sessions remain pinned until reload. |
-| Initial deployment/restart shows 502/503 or waits before the dashboard opens | The process downloads/indexes data and prepares all nine default views before serving application traffic. Deploy updated Web App code using menu **4** for `[dashboard-startup]` stage timings and 30-second progress/CPU/memory heartbeats in console logs. See [startup readings](operations-and-configuration.md#reading-application-startup-progress). HTTP diagnostics cannot respond before startup finishes. The 1,800-second container startup allowance is not a guaranteed preparation time. A preparation exception fails startup explicitly. |
+| Initial deployment/restart shows 502/503 or waits before the dashboard opens | A gateway error means the shell is not responding; inspect App Service startup/build logs. In the current application, the shell, status, and diagnostics can respond while data preparation runs in the background. `/api/dashboard/snapshot` returns 202 until a snapshot is ready. `[dashboard-startup]` logs show stage timings and progress/resource heartbeats; preparation errors remain visible and retry. With persistent caching enabled, readiness includes compatible restored/prepared artifacts and nine default views. See [startup readings](operations-and-configuration.md#reading-application-startup-progress). The 1,800-second container allowance is not a preparation-time estimate. |
 | A new daily dataset is published but the dashboard still shows the previous run | Inspect `dashboardQueries.preparation` in `/api/diagnostics`. The old ready run remains served while the replacement prepares or if it fails. Compare the ready snapshot ID with `retainedSnapshots[]` run IDs and the Storage pointer, then reload after successful handoff. Do not rerun collection just to warm the Web App. |
 | New snapshot fails with disk-budget or insufficient-space errors | Each process permits at most two snapshots and 8 GiB of local snapshot files, with extra free space needed for SQLite scratch work. Downloaded gzip files and indexes both count. A protected ready snapshot cannot be evicted to make a replacement appear successful. Check real local bytes/free disk and worker count; do not delete Azure history. |
 | Navigation/filtering shows HTTP 202 repeatedly | This means a background query is preparing, not that collection is running. The browser polls the same logical query every two seconds. Check server errors/resource pressure if it does not complete. Two workspace threads and one report thread share a 16-job bound per process; saturation can return 503 with `Retry-After`. |
 | Dashboard asks to reload with HTTP 409 | Its pinned snapshot was evicted, local data changed, or a workflow write targeted an outdated snapshot. Reload to select the ready run; do not merge old and new results. |
-| Startup cost returns after every process restart | Expected for the current process-owned temporary indexes. They are reused across requests, not discovered/reused by a new process. Always On reduces idle unloading but does not prevent restarts. |
+| Startup cost returns after every process restart | Inspect `DASHBOARD_DERIVED_CACHE_CONTAINER`, container-scoped access, and cache compatibility/publication diagnostics. A configured cache restores completed compatible artifacts, not every in-flight/custom result. Without it, process-local indexes rebuild after restart. Always On reduces idle unloading but does not prevent restarts. |
 | Some dashboard datasets load but others return 500 or 50x | Check the live App Service plan and Always On setting before blaming the data. The deployment baseline is one B2 instance, one Uvicorn worker, and Always On enabled. Use deployment-menu choice 2 to review and restore infrastructure drift. Use `/api/diagnostics` and App Service logs to identify the failed dataset or Storage operation. Retrying can warm part of the cache, but that does not fix capacity or configuration drift. |
 | The hosted dashboard appears to work only after a developer runs `az login` locally | The hosted Web App must not use the workstation login. Browser users authenticate through App Service Authentication, and the Web App reads Storage with its managed identity. Check the Web App identity, `AZURE_CLIENT_ID`, and Storage Blob Data Reader assignment. Local `az login` is used only by deployment commands and locally hosted development. |
 
@@ -407,12 +404,11 @@ Use `/api/status`, `/api/data/<asset>.json`, and `/api/diagnostics` to test this
 complete path. Direct Blob requests require Microsoft Entra authorization and
 must not be made anonymous.
 
-The collector has no public data-retrieval HTTP endpoint. Manual collection
-uses the key-protected Azure Functions admin route for the dedicated
-`dataprep_manual_snapshot` manual trigger. It does not invoke the timer trigger
-because Flex Consumption can accept a manual timer invocation without
-dispatching it. A manual trigger starts a collection and can publish a new
-immutable run. Use only the guarded helper after confirming no run is active:
+The collector's key-protected status endpoint reports workflow and publication
+metadata, not complete finding datasets. Manual collection uses a dedicated
+starter rather than treating the timer as an HTTP operation. It can start a
+workflow and publish a new immutable run. The guarded helper makes that write
+intent explicit:
 
 ```bash
 CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function

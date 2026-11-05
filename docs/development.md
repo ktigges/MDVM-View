@@ -1,720 +1,254 @@
-# Development, demonstration, and source control
+# Development and maintenance
 
-> **Last modified:** 2026-11-05
-> **Purpose:** Run the dashboard during development, demonstrate it consistently, validate changes, and publish source safely.
+The [README](../README.md) covers the application and handoff.
+[Application flow](application-flow.md) describes the runtime.
+This guide covers local work, tests, release versions, and maintenance tools.
 
-## Dashboard development
+## Local development
 
-Replay a retained raw snapshot without calling Defender or Azure:
+The package requires Python 3.12 or later. Both Azure applications run Python
+3.12; deployment workstation setup uses Python 3.14.
+
+macOS/Linux:
 
 ```bash
-.venv/bin/vulnerability-view simulate-scheduled-run \
-  --from-raw latest \
-  --local-only
+python3.14 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
 ```
 
-Start the local dashboard:
+Windows PowerShell:
+
+```powershell
+py -3.14 -m venv .venv-win
+.\.venv-win\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+```
+
+Existing local output can be served with:
 
 ```bash
 ./start-app.sh
 ```
 
-Use `./start-app.sh 8080` for another port. Set
-`DASHBOARD_RELOAD=false` to disable the development reloader. Recommendation
-tracking is off by default. When explicitly enabled locally, it is an in-memory
-preview and resets when the process stops.
+On Windows, with the environment activated:
 
-To read the verified Azure current bundle without copying it locally:
-
-```bash
-DASHBOARD_DATA_SOURCE=azure ./start-app.sh
-curl http://127.0.0.1:8000/api/status
+```powershell
+python -m uvicorn vulnerability_view.dashboard_server:app --app-dir src --host 127.0.0.1 --port 8000 --reload
 ```
 
-## Ten-minute walkthrough
+The local dashboard reads `dashboard/data` by default. Synthetic data, live
+collection, and imported snapshots have different data-handling implications;
+the [local evaluation guide](local-evaluation.md) covers those paths.
+Local recommendation tracking is off by default. When explicitly enabled,
+the local preview is in memory and resets with the process.
 
-1. Explain the goals: identify, prioritize, coordinate remediation, measure SLA,
-   show trend, and separate operating ownership.
-2. Confirm source-data health and the visible data-origin filter.
-3. Show Critical/High findings and known-exploit evidence.
-4. Open the highest-ranked recommendation and explain Defender severity,
-   current impact, actionable workloads, device instances, and linked CVEs.
-5. Explain that one scale-out workload can represent many retained instances;
-   grouping changes presentation, not evidence.
-6. Show dashboard-local recommendation work status and state that it does not
-   update Defender.
-7. Distinguish the finding SLA clock from Defender remediation-task due dates.
-8. Show confirmed fixes, new/reopened findings, and current remaining work.
-9. Show trend comparisons and clarify which history is synthetic or live.
-10. Close with the operating path: scheduled collection, immutable history,
-    authenticated dashboard access, and source-health monitoring.
+Replay avoids repeated Defender downloads while testing normalization,
+lifecycle, SLA, or dashboard output:
+
+```bash
+vulnerability-view simulate-scheduled-run --from-raw latest --local-only
+vulnerability-view validate
+```
+
+An authorized local viewer can read Azure data with
+`DASHBOARD_DATA_SOURCE=azure ./start-app.sh`. That is real customer data access,
+not an isolated fixture. Local live collection without `--local-only` can also
+publish to configured Storage.
 
 ## Validation
 
-Run the smallest affected test selection first:
+Tests use pytest; browser interaction tests use Node.js without installing
+front-end packages. Examples:
 
 ```bash
-.venv/bin/python -m pytest -q tests/test_dashboard_exports.py
-```
-
-Run the regular suite before release. Large-data memory/performance checks are
-excluded by default, including from the GitHub publishing workflow; small-data
-correctness and concurrency regressions remain enabled.
-
-After pulling dependency changes, refresh the deployment/development environment:
-
-```bash
-.venv/bin/python -m pip install -e ".[dev]"
-```
-
-On Windows PowerShell, use `.\.venv-win\Scripts\python.exe` instead.
-FastAPI 0.118.3 and Starlette 0.48.0 are pinned together for Python 3.12+
-compatibility, including Python 3.14 coroutine detection without deprecated
-`asyncio.iscoroutinefunction` calls. Do not patch installed framework files or
-suppress these warnings instead of updating the dependencies.
-
-Generated test databases and diagnostics under `.test-work/` are local-only and
-ignored by Git. Publishing stages nonignored worktree changes; never force-add
-this directory or use Git LFS for its disposable caches. If a rejected local
-commit already includes them, an ignore rule alone does not remove them from
-that commit's history: repair the unpublished commit while preserving the local
-files before retrying the push.
-
-```bash
-.venv/bin/python -m pytest -q
-terraform -chdir=infra/terraform validate
-bash -n infra/deploy.sh
-bash -n infra/check-runs.sh
-bash -n infra/check-function-logs.sh
+python -m pytest -q tests/test_dashboard_exports.py
+node --test tests/dashboard_findings.test.cjs tests/dashboard_queries.test.cjs
+python -m pytest -q
 git diff --check
 ```
 
-Run the retained large-data memory regressions explicitly when changing
-collection/finalization memory behavior:
+Terraform and shell checks apply when those files change:
 
 ```bash
-.venv/bin/python -m pytest -q -m performance tests/test_bounded_processing.py
+terraform -chdir=infra/terraform validate
+bash -n infra/deploy.sh infra/check-runs.sh infra/check-function-logs.sh start-app.sh
 ```
 
-Use `-m ""` to include both regular and performance-marked tests in a full run.
-The million-record dashboard benchmarks below are standalone, opt-in commands,
-not part of ordinary pytest validation.
+Regular pytest excludes `performance` tests. The retained finalization regression
+can be selected explicitly:
+
+```bash
+python -m pytest -q -m performance tests/test_bounded_processing.py
+```
+
+Tests and benchmarks can create ignored `.test-work/` and `output/` content.
+Those are not release files. Dependency manifests define the environment;
+installed framework files are not maintained as project source.
 
 ## Release versions
 
-Before publishing changed application code, update the affected tracked release
-metadata: `function-version.json` for the collector and `dashboard/config.js`
-for the Web App. Bump both when shared changes affect both applications. Use
-`YYYY.MM.DD.N` with the UTC release date and increment `N` for another release
-on the same UTC day; keep revision timestamps in UTC and example version values
-consistent.
+Collector version metadata is in `function-version.json`; dashboard metadata
+is in `dashboard/config.js`. Shared Python changes may affect both packages.
+Versions use `YYYY.MM.DD.N` with the UTC date and an increment for another
+release that day. Revision timestamps use UTC.
+Every program change updates the affected application's version/revision and
+the modified program files' `Last modified` header dates. Dashboard asset
+query versions change with edited browser assets so clients request the new files.
 
-Publishing source does not deploy either application. Function deployment reads
-the packaged version file and stamps `COLLECTOR_VERSION`; Web App deployment
-reads the dashboard source version. Terraform preserves existing deployed
-version settings instead of relabeling old code. Retained run metadata must
-continue identifying the collector release that actually produced that run.
+Deployment reads those files and stamps the affected application package.
+Terraform preserves existing deployed version settings instead of relabeling
+old code. Source publication does not deploy either application.
 
-## Full-server cold-start benchmark
-
-This local-only harness generates synthetic data in an isolated temporary
-directory, starts the actual Uvicorn/FastAPI application with one worker on an
-ephemeral loopback port, and waits for real application readiness:
+The source workflow uses `main` for development and `latest` for customer
+distribution. The matching workflow menus are:
 
 ```bash
-PYTHONPATH=src .venv/bin/python tests/benchmark_dashboard_startup.py \
-  --rows 1800000 --events 1800000 \
-  --devices 2075 --cves 13222 --recommendations 100 \
-  --runs 2
+./infra/github-workflow-menu.sh
 ```
 
-For a quick smoke test:
-
-```bash
-PYTHONPATH=src .venv/bin/python tests/benchmark_dashboard_startup.py \
-  --rows 1000 --events 1000 --devices 50 --cves 100 --recommendations 20
+```powershell
+.\infra\github-workflow-menu.ps1
 ```
 
-The large scenario is the default except that `--runs` defaults to one. Each
-run is a new process with a fresh temporary index; datasets are generated once.
-The application still executes its normal startup preparation. The harness
-checks health, the exact generated run and index-ready snapshot, and completion of
-the Summary and HTTP queries for every default view after index readiness.
-Exact finding/event ingestion counts are checked from index diagnostics after
-those on-demand queries. Finding counts are checked against the default
-exposure filter (which excludes the synthetic Fixed quarter).
+The shared CLI tests before publishing/promoting and checks that files and HEAD
+did not change during validation. An edit or concurrent commit stops publication
+instead of promoting untested content. `GITHUB_WORKFLOW_TEST_COMMAND` can
+override its test command. Deployment remains a separate operation.
 
-Results, startup/heartbeat logs, and per-process resource measurements remain
-under a unique directory in ignored `output/dashboard-startup-benchmarks/`.
-The command prints the results path before generation begins. `results.json`
-records generation time separately from process-launch-to-readiness time, plus
-shared-index preparation time, on-demand per-view timings, diagnostics/index bytes,
-CPU time, and peak RSS. Shared read-model aggregates are prepared before readiness;
-full view requests still execute independently on demand. Resource
-measurements cover the server process through application shutdown, including
-the post-readiness verification requests; they exclude the data generator.
-Peak RSS measurement requires Linux or macOS. If unavailable, the memory
-acceptance check fails explicitly rather than reporting a pass.
+## Why the reporting implementation changed
 
-`--timeout-seconds` defaults to 1800 per startup; `--max-rss-mib` defaults to
-512. These are acceptance thresholds, **not enforced CPU/memory quotas**.
-Timeouts, startup failures, incorrect results, memory-threshold failures, or
-unclean shutdown return a nonzero exit code and retain the evidence. A failed
-run stops the remaining attempts. The harness terminates only its own server,
-escalating to a kill after ten seconds if necessary, and removes its generated
-data and temporary indexes. Abruptly killing the harness itself can leave
-temporary local files behind.
+Large snapshots made full browser downloads and repeated raw-evidence scans
+expensive. The current design addresses those costs in several places:
 
-The script does not read the repository's `.env`, modify demo data, call
-Azure, or change deployed application settings. Inherited Azure hosting,
-storage, identity, and dashboard environment settings are removed or overridden
-in the child, which runs from the isolated data root. Authentication, branding,
-and recommendation tracking are disabled for the benchmark.
+| Choice in place | Reason |
+|---|---|
+| Server-side SQLite facts and bounded pages | Keep complete findings/events out of browser memory |
+| Published primary/history indexes | Move reusable index construction into publication rather than every viewer restart |
+| Compressed evidence blocks and typed identifier dictionary | Preserve exact evidence while reducing index size and repeated decoding |
+| Separate shared aggregate model | Reuse counts and relationships without rescanning every finding for each default view |
+| Exact filtered rollups and CVE membership | Reuse compatible aggregates without double-counting distinct CVEs |
+| Separate persistent viewer-cache container | Restore compatible completed indexes, search, history, and query results after restart |
+| Background preparation with explicit readiness | Keep the shell responsive without reporting incomplete data as complete |
+| Separate interactive and heavy-work capacity | Keep reports and exports from occupying every navigation worker |
+| Shared requests, cancellation, and deadlines | Avoid repeating equivalent work or keeping abandoned requests indefinitely |
+| Narrow SQL projections before evidence decoding | Avoid unnecessary decompression; SQLite versions can choose different plans |
 
-**Interpretation:** 1.8 million finding events and 100 recommendations are
-explicit synthetic scenario assumptions, not measured customer counts. CVE
-cardinality describes references in the findings, not per-CVE detail files.
-The fixture mixes Open, Fixed, PendingVerification, and Reopened findings;
-other history datasets are empty. It does not simulate managed identity,
-Azure downloads/retries, tracking-event blob history, customer-specific data
-distribution, App Service disk performance, B2 CPU/memory limits, concurrent
-users, or browser rendering. "Cold" means a fresh application process/index,
-not a flushed operating-system file cache. A local pass cannot exclude an
-Azure-specific startup bottleneck.
+The [runtime reference](application-flow.md#7-web-app-startup-indexing-memory-and-caches)
+describes their current behavior and limits.
 
-## Published dashboard query indexes and staged readiness
+## Query-index maintenance
 
-Completed run bundles now include `index/dashboard-primary.sqlite3.gz` and
-`index/dashboard-history.sqlite3.gz`, published append-only under the immutable
-run's `runs/` prefix. They contain the
-existing SQLite projections, compressed evidence and indexes, built with the
-same query engine and curated datasets as browser queries. Normal CLI collection,
-durable/resumable collection, synthetic history and the standalone load-test
-populator all retain/upload this artifact before publishing the current manifest.
-Resumable processing checkpoints retain the artifact so a fresh worker restores
-them without rebuilding. Incomplete runs do not receive published indexes.
-
-The manifest records compressed SHA-256/size, expanded size, query format version
-and an identity covering the run, snapshot, normalization version, curated
-hashes/counts and query evidence schema/dictionary. The Web App streams the
-compressed download, verifies its hash/size, bounds decompression, validates
-SQLite and embedded identity/counts, then atomically installs it. Corruption
-fails preparation explicitly; it is not silently replaced with partial results.
-Older runs and incompatible format versions rebuild locally with a visible
-notice. Upgrading the application does not modify an existing immutable run.
-Changes to persisted query projections/index definitions must increment
-`QUERY_INDEX_VERSION`; changing only report calculations need not rebuild the
-stored projections.
-
-Format 10 stores exact JSON and full search text together in compressed blocks
-of 256 rows, rather than independently compressing two blobs for every row.
-Each connection caches at most four decoded blocks. Device IDs, device names
-and recommendation IDs use a shared, typed value dictionary; SQL views expose
-the original values, not the internal integer references. Those references
-have INTEGER affinity and the dictionary has a value lookup index, so decoded
-identifier predicates retain indexed fact lookups rather than nested full scans.
-The existing analytical covering indexes, metrics, filters, ordering, evidence
-fields, searches and exports are preserved. History materializes only its query
-keys; other fields remain available from the exact compressed evidence.
-
-Processing scratch and query-index SQLite pages both use 16 KiB geometry.
-Matching page sizes avoids native cache amplification when both databases are
-open during finalization. Dataset loading, index construction and dictionary
-analysis use a 2 MiB connection cache; ordinary dashboard queries retain their
-8 MiB cache, and processing scratch retains its 4 MiB cache. The existing native
-RSS regression checks the entire finalization with these databases open together,
-without relaxing its 24 MiB growth limit between 1,000 and 100,000 findings.
-The maximum page count is calculated from the actual page size.
-The **7 GiB per-database/combined published-index limit and 8 GiB
-dashboard cache budget are unchanged**. SQLITE_FULL now reports the configured
-database limit and filesystem free space explicitly; a large free drive does
-not override a database limit.
-
-There are two fixed index groups per run, not one per filter, user or view. Their storage grows
-with indexed rows and field sizes rather than filter combinations; it is extra
-storage, not a promise of zero overhead. No uncompressed index, SQLite journals
-or prepared-report variants are uploaded. Build scratch is removed after
-compression; downloaded compressed scratch is removed after installation.
-Combined expanded indexes are capped at 7 GiB and the existing per-worker 8 GiB/two-snapshot
-cache bounds remain enforced. Existing retained Azure data is never deleted.
-Index construction now costs collection/publication time rather than repeating
-at every Web App restart. Old snapshots still incur local construction.
-
-ASGI startup now serves the authenticated shell while data preparation runs in
-the background. `/api/health` is liveness; `dashboardReady` remains false until
-the shared workspace dataset indexes and default-scope read model are ready.
-Read-model construction includes shared Summary/SLA metrics, but does not execute
-the Summary request handler or a nine-view query sequence. `/api/dashboard/snapshot` returns
-HTTP 202 plus preparation status and `Retry-After` until then, and HTTP 200 with a
-pinned snapshot afterward. `/api/dashboard/status` exposes preparation stage,
-elapsed/stage seconds, processed rows/bytes and explicit retry/error state.
-The UI polls initial readiness every two seconds and replacement preparation
-every fifteen seconds. It shows download, restoration, validation, rebuild and
-waiting stages without displaying partial totals or fabricated ETAs.
-Local index construction also reports every index by name and ordinal, followed
-by a separately timed `ANALYZE` stage. Console logs emit each step's start,
-completion/failure and elapsed time; heartbeats include completed/total steps.
-The status API's `progress.indexPlan` lists the dataset, ordered steps,
-`completedSteps` and `totalSteps`. The UI shows the active index and stage
-duration, plus an expandable complete/in-progress/waiting checklist. Counts
-describe finished operations, not percentage completion inside a SQLite index
-build. A failed operation retains its stage and unfinished plan under
-`progress.failure`. Already running deployments cannot acquire these diagnostics
-without deploying the updated code.
-
-Only the primary index is downloaded/restored before initial readiness. Without
-a compatible published index, the required workspace datasets are fully indexed
-first, followed by the viewer-only read model; no partial finding totals are exposed.
-Once those prerequisites are ready,
-the snapshot becomes queryable and the selected view runs through the existing
-bounded asynchronous query workers. A slow Summary does not gate independent
-Recommendations or other views. There is no nine-view startup sequence: view
-requests read prepared aggregates where compatible and otherwise use exact queries.
-
-### Viewer-only aggregate read model
-
-The Web App builds a separate, versioned SQLite sidecar after restoring/building
-the primary index. It contains default-filter recommendation impact and priority
-totals, CVE/workload relationships, Summary/SLA metrics, endpoint inventory
-aggregates, and indexed evidence-row locators. Recommendation evidence locators
-also retain the existing query's ordering when priorities tie. Original finding
-payloads are hydrated only for the selected evidence page.
-
-Construction is single-flight per engine, capped at **512 MiB**, uses a **2 MiB**
-sidecar page cache, and atomically installs only a completed model. Snapshot
-preparation reserves that capacity against the existing **8 GiB** cache budget.
-Requests attach the completed model read-only. Failed construction is explicit,
-does not publish readiness or partial aggregates, and leaves any previously ready
-snapshot available. Active SQLite files live on fast disposable worker storage. When
-`DASHBOARD_DERIVED_CACHE_CONTAINER` is configured, completed primary indexes and
-aggregate sidecars are also retained as compressed, immutable artifacts in a
-separate private container (`dvm-viewer-cache` in Terraform). The Web App has
-container-scoped Blob Data Contributor access there, not additional write access
-to retained evidence or current pointers. No cache code deletes Azure blobs.
-
-On restart/deployment, the worker downloads the compatible completed artifacts,
-verifies compressed hashes, bounded expanded sizes, SQLite integrity and
-dataset/scope identity, and atomically restores local files instead of rebuilding
-the same snapshot. Primary reuse is keyed by snapshot and query format;
-aggregates additionally include read-model format, workload grouping, filters and
-pinned SLA policy. Changed aggregate scope can reuse the primary index while
-building a replacement sidecar. A completion descriptor is uploaded only after
-the artifact upload succeeds; incomplete uploads are never served. Cache misses
-build normally, while corrupt cache artifacts and storage failures are explicit
-preparation errors, not silently reported as a successful restore.
-Successful cache reuse is logged server-side, not displayed as a dashboard warning
-or a Retry action.
-
-Persisting a newly built cache is part of preparation. Browser reloads and user
-sessions share the worker's prepared files. New immutable snapshots still require
-their own compatible indexes/aggregates; this is snapshot reuse, not an
-incremental/delta-indexing claim. Without the setting, cache loss requires
-rebuilding derived files, not rerunning collection.
-
-For an existing customer environment, pull the published source with
-`git pull --ff-only`, use deployment menu **2** to review/apply the cumulative
-infrastructure update, then menu **4** to deploy/verify only the Web App.
-The infrastructure update creates the cache container, scoped identity role and
-application setting. No Function deployment or new collection is required for
-this viewer-only update; validate against the current published dataset.
-Menu **1** already deploys both applications after infrastructure, so do not
-repeat those deployments if using it; answer **N** to its optional collection
-prompt when retaining the existing sample.
-
-The scope identity includes evidence filters, workload-grouping rules and the
-pinned SLA policy. UI state and mutable recommendation workflow events are not
-part of the aggregate identity. Workflow state is applied live to recommendation
-matching/display; snapshot-wide tracking counts are prepared separately from
-filtered finding totals.
-
-The same bounded sidecar also contains categorical-filter rollups, exact CVE
-membership/histograms and latest-refresh remediation counts. Compatible severity,
-asset class, subscription, owner, exposure, reporting-health, domain and
-recommendation-type filters reuse these products instead of creating one model
-per filter combination. Distinct CVE totals use membership unions, never sums of
-per-device cardinalities. Day/week/month activity counters remain snapshot-pinned.
-Filtered CVE lists preserve the original reducer's representative-row traversal;
-unrecognized SQLite query plans retain the original exact list query. Original
-evidence paging and some filtered drill-down aggregates also remain exact queries.
-
-Search, date-window restrictions, latest-run-only restrictions, custom periods,
-unsupported origins, or changed policy/grouping without a compatible model use
-the original exact path, **not** incompatible totals. Response
-`metadata.readModel` identifies `aggregate`, `filtered-aggregate`, or `exact-query`;
-the filtered mode means compatible rollups are available, not that every table
-avoids source queries. Historical reports still use their existing query path.
-Consequently, these optimizations do not establish performance for arbitrary
-filters or history reports.
-
-First-seen/remediation restrictions can reuse an otherwise identical default
-model only when indexed date bounds prove that every finding is within the
-requested window, with no NULL dates, and every model recommendation has scoped
-finding evidence. This preserves the restriction rather than silently clearing
-it. Non-equivalent restrictions keep exact queries. Admission checks compatible
-completed results before queueing and resolves aggregate eligibility rather than
-classifying every date restriction as expensive. Aggregate-backed navigation keeps
-interactive capacity even while a report runs. Uncertain exact fallbacks use the
-bounded expensive-query lane.
-
-This is deliberately **not connected to collection finalization**. It does not
-change collection/normalization, curated or raw evidence, the v10 primary/history
-publication format, Function deployment, manifest completion rules or the current
-pointer. No read-model file is uploaded to retained storage. Existing indexed or
-unindexed snapshots work without recollection. Missing compatible published
-indexes are recorded in server logs, not presented as query failures when the
-viewer can prepare local indexes. Local preparation does not publish an index to
-retained history or change that manifest.
-
-The internal query name `executive` corresponds to the visible **Summary** tab;
-`overview` is **Vulnerabilities**. Per-query progress now names activity/filter
-metadata, finding counts, recommendation matching, impact totals, ranking,
-evidence enrichment and SLA metrics instead of a misleading `executive:1/9`.
-Results and readiness remain pinned to one snapshot and filter scope. Shared
-calculation dependencies and available worker capacity can still delay a query;
-independent readiness does not promise simultaneous completion on limited CPU.
-
-The recommendation-domain evidence union projects only `RecommendationId` and
-`AssetClass`. SQLite 3.40.1 (observed in Azure/Python 3.12) evaluates otherwise
-unused payload columns in a wide `UNION ALL` coroutine; decoding those compressed
-evidence blocks repeatedly made Summary preparation dramatically slower than
-SQLite 3.54 on the local workstation. The narrow projection removes payload
-decoder operations without changing matching, search or domain classification.
-
-With the customer's 1,837,575-finding snapshot, a separate read-only diagnostic
-process on Azure/SQLite 3.40.1 completed the corrected Summary in 132.892 seconds.
-The entire JSON response had the same SHA-256 as the local SQLite 3.54.1 result
-(11.398 seconds), including 1,836,170 findings in the default exposure scope,
-259 recommendations and 13,121 detected CVEs. The Azure measurement ran alongside
-the original application worker; it is not a redeployed startup benchmark or a
-guaranteed response time. Aggregate counts and SLA calculations remain significant
-work even after unnecessary evidence decoding is removed.
-
-The lifecycle-event index is isolated and attached read-only; its dataset
-metadata is not copied into the primary database. Without persistent viewer
-caching, history and report preparation remains on demand. With
-`DASHBOARD_DERIVED_CACHE_CONTAINER` enabled, startup restores or builds the compact
-exact-search projection, isolated history index and all nine default-view results
-before advertising the new snapshot as ready. This is a one-time preparation per
-snapshot; compatible completed artifacts are restored after application restarts.
-Changing filter scopes can still require new report computation.
-
-Search uses block-level trigram candidates followed by the same exact substring
-predicate, never approximate matching or reduced evidence. Shared products retain
-bounded exact JSON results and report intermediates (64 MiB total SQLite limit).
-Search/history artifacts and versioned product generations are uploaded
-immutably to the separate viewer-cache container. Products are coalesced on one
-background publisher, with explicit failure diagnostics and bounded retries;
-queries do not wait for an upload. Startup saves its warmed results before
-readiness. Shutdown attempts a bounded flush; an incomplete flush is logged and
-does not invalidate existing completed artifacts. Only descriptors written after
-successful upload and verification are eligible for restoration. No retained
-evidence or current-snapshot pointer is rewritten.
-
-Their existing asynchronous queries return HTTP 202 with per-job index progress;
-detail/search/filter/pagination/export calculations and bounded result pages are
-unchanged. A previous complete snapshot remains served during replacement
-preparation or failure. Query/export, evidence-browser and tracking endpoints
-cannot read an index that is still being installed. Initial failures remain
-visible and retry at the existing dashboard cache interval. First-use report
-aggregation may still be expensive even when all row indexes are restored.
-
-Compatible completed query results return before worker admission. Equivalent
-requests share computation by semantic identity; client request IDs identify
-subscribers, not separate computations. Running-job polls reuse the captured
-policy/workflow payload rather than rereading storage. A needed workflow refresh
-runs once on the existing bounded pool and returns HTTP 202 progress without
-holding the polling request open. Unchanged workflow refreshes do not invalidate
-browser results or restart the selected report. Tracking-enabled browser results
-retain their five-second freshness check.
-
-Completed bounded view responses are also saved in the products database and
-restored before querying facts, not just cached in process memory. Their identity
-includes the pinned scope and relevant workflow state. Reports query narrow
-immutable facts directly rather than copying the entire finding scope into a
-temporary table; small temporal aggregates may still use SQLite temporary space.
-
-The browser releases a query subscriber when navigation or detail closure aborts
-its polling channel. Only the authenticated subscriber can release its request;
-other subscribers keep shared work alive. Cancellation before admission is also
-remembered briefly so an in-flight abandoned request cannot recreate work.
-Unpolled subscribers expire after 30 seconds; queued work has a 30-second limit.
-SQLite uses cooperative cancellation and execution deadlines. Interactive work
-has a 60-second budget, expensive work 120 seconds, and exports 600 seconds;
-exhaustion is an explicit error, never a partial successful result. Synchronous
-query callers use the same admission policy. Reports and CSV exports share one
-heavy-work slot, separate from the two interactive workers.
-An export waiting for that slot returns preparation status; the native download
-form retries automatically with the original pinned payload for up to two
-minutes, without occupying another long-running SQL worker.
-CSV rows are buffered into bounded 64-KiB-character chunks after the first row,
-avoiding a thread-pool handoff and network write for every finding.
-
-Initial query polls use 250 ms intervals, then 500 ms and finally two seconds for
-longer preparation. Cached results need no preparation poll. A pinned browser
-that encounters an application restart receives preparation progress and resumes
-automatically rather than displaying a transient index-installation failure.
-
-Finding pages sort/count compact row references before decoding only the
-displayed evidence. Grouped CVE/workload tables likewise defer representative
-CVE metadata and last-seen timestamps until after pagination, preserving SQLite
-JSON scalar semantics. Detail tables reuse the exact distinct/evidence totals
-already computed for their cards rather than repeating grouped count queries.
-This applies to recommendation, machine, grouped-workload, CVE and finding
-details; finding/CVE exports retain the same response values and ordering.
-Detail progress identifies counts, workloads, CVEs, recommendations and evidence
-separately. These query-only changes remain compatible with format-10 indexes.
-The detail panel displays that progress itself; request errors remain visible
-inside the panel and clear its busy state rather than leaving a loading title
-with an error hidden behind the full-screen overlay.
-
-Active recommendation counts are immutable for a pinned snapshot/timestamp.
-Their per-engine cache retains at most two timestamp scopes, shares concurrent
-first reads, and returns copies. Workflow events remain live: their existing
-five-second refresh lists blobs and checks ETags, while a 256-entry LRU avoids
-downloading unchanged event bodies again. New or changed events are read and
-validated; malformed replacements still fail explicitly. Local-index fallback
-notices describe the indexing mode, not a rebuild that appears permanently
-in progress after readiness.
-
-The load-test populator still targets exactly the requested upload count,
-including the new indexes; it emits two fewer derived raw pages. Previously
-published load-test runs are not retroactively changed.
+Published indexes belong to the immutable run. A format-incompatible index is
+built locally; a corrupt index fails verification. Changing persisted query
+projections or index definitions requires a `QUERY_INDEX_VERSION` change.
+Changing only a report calculation does not necessarily change that format.
+Viewer-only models and saved results have their own compatibility identities.
 
 ### Rebuilding indexes without recollection
 
-Use the standalone maintenance command for an **existing exact snapshot**, including
-customer data. Unlike the synthetic populator, it does not call Defender, clone
-identifiers, regenerate summaries, change collection timestamps, or rewrite
-history. It uses the signed-in Azure CLI identity, verifies the selected storage
-account belongs to the selected subscription, and requires separate existing
-history and current-pointer containers.
-
-Replace the resource placeholders with your environment's values. To build and
-publish indexes for the current snapshot:
+The maintenance tool rebuilds indexes for an exact retained snapshot. It does
+not call Defender, change collection timestamps, regenerate findings, or rewrite
+original evidence. Without `--publish`, it only downloads and validates locally:
 
 ```bash
-PYTHONPATH=src .venv/bin/python tools/rebuild_dashboard_indexes.py \
+PYTHONPATH=src python tools/rebuild_dashboard_indexes.py \
   --account "<historyStorageAccountName>" \
   --history-container dvm-history \
-  --current-container dvm-current \
-  --publish
+  --current-container dvm-current
 ```
 
-Omit `--publish` for **local validation only, with no Azure writes**. Add
-`--subscription <subscription-id>` to pin a subscription. Replace the storage
-arguments explicitly for a customer environment; do not use the synthetic
-populator to index customer data. Review the retained collection identity and type
-the exact `account/history-container/current-container` target when prompted.
-Automation can supply the same exact value with `--confirm-target`.
-
-The command downloads and hash-verifies curated files and the retained policy,
-builds the same primary/history indexes used by normal publication, checks actual
-row counts, and validates both compressed databases. Progress uses the existing
-startup diagnostics: download byte counts, individual index names/ordinals,
-ANALYZE, compression, validation, upload byte counts, timings and heartbeats.
-Raw evidence and previous indexes are neither downloaded nor copied.
-
-Each rebuild appends only two indexes, an exact source-manifest copy, and a
-revision manifest beneath
-`runs/YYYY/MM/DD/<original-run-id>/index-rebuilds/<unique-revision-id>/`.
-Existing non-index manifest content and all original evidence paths, hashes,
-counts, timestamps and policy references remain unchanged. The collection
-`runId` stays the same: an index rebuild is **not a new collection**. A separate
-`queryIndexRevision` records the build ID/time, immutable revision-manifest path
-and source-manifest provenance. Normal collection file-count metadata continues
-to describe the original collection; the rebuild report records five uploads,
-including the current pointer.
-
-Before any upload, publication checks the original pointer ETag and requires
-the current evidence to match the rebuilt evidence. New immutable uploads use
-`overwrite=False`; their size/hash metadata is verified before a conditional
-ETag update of **only** the separate `current/manifest.json`. A concurrent
-publication, immutable collision or verification failure prevents the pointer
-switch. Partial immutable uploads remain retained; there is no rollback deletion.
-Avoid overlapping maintenance with other publishers. If a timeout occurs during
-the final pointer upload, inspect the current pointer before retrying.
-
-A local build can be published later **without downloading or rebuilding again**:
+Publication adds `--publish` and requires the exact target confirmation.
+A previously validated local build can be reused:
 
 ```bash
-PYTHONPATH=src .venv/bin/python tools/rebuild_dashboard_indexes.py \
+PYTHONPATH=src python tools/rebuild_dashboard_indexes.py \
   --account "<historyStorageAccountName>" \
   --history-container dvm-history \
   --current-container dvm-current \
   --publish --publish-existing output/index-rebuilds/rebuild-<local-build-id>
 ```
 
-The saved target, subscription, revision ID and original pointer ETag are checked
-again. If another snapshot has been published, rebuild against that snapshot
-instead of changing the saved baseline. `--source-manifest runs/.../manifest.json`
-can build a particular retained snapshot locally; publishing it is allowed only
-when its evidence still matches current. This is not a historical-data activation
-or rollback command.
+The tool checks subscription/account identity, evidence hashes, row counts,
+index validity, and the original pointer ETag. It appends a revision under
+`runs/.../index-rebuilds/<revision>/` and conditionally updates only the current
+pointer. The original run ID and evidence remain unchanged. A separate
+`queryIndexRevision` records the maintenance operation.
 
-The command does not deploy or restart either application. The updated Web App
-discovers the changed manifest during its normal refresh, prepares the new
-revision while retaining the previous ready snapshot, and offers the existing
-reload notice. The dashboard snapshot ID changes even though collection `runId`
-does not. Verify `/api/dashboard/snapshot` includes the report's
-`queryIndexRevision.id` after preparation and reload. An already-open browser
-remains pinned until reload. Updated Function code is still needed for indexes
-on future normal collections, but is not required to run this maintenance command.
-The synthetic populator already builds indexes for its new publication; do not
-run this command concurrently just to repeat that work.
+A concurrent publication, invalid evidence, or target mismatch blocks the
+switch. Partial immutable uploads remain retained. If the final upload times
+out, current-pointer inspection is needed before retrying.
+`--source-manifest` can select an older retained manifest for local work;
+publication still requires matching current evidence. This is not a historical
+data activation tool.
 
-Local output contains sensitive curated data, the policy and both compressed
-indexes; allow several GiB of free disk and retain/protect it accordingly.
-Rebuilds reuse existing Azure evidence, but every revision retains another fixed
-pair of compressed indexes. Size depends on record shape and index format; the
-older format-8 scale fixture below used about 2.13 GiB compressed. This is
-linear additional storage per rebuild, not zero-cost indexing or per-filter
-duplication. No Azure data, containers or application resources are deleted.
+The Web App discovers the new revision through normal metadata refresh; no
+application restart or collection is required. Existing browsers stay on their
+selected snapshot until reload. Local output contains sensitive curated data
+and indexes and can require several GiB of disk.
 
-### Recovering a failed or validated local synthetic population
+### Recovering a synthetic load-test population
 
-The populator's `--resume-local` option reuses a saved local population directory:
+`tools/populate_load_test_data.py --resume-local <saved-population-directory>`
+reuses a failed or validated local synthetic population instead of regenerating
+identifiers and raw pages. `--publish` still requires target confirmation.
 
-```bash
-PYTHONPATH=src .venv/bin/python tools/populate_load_test_data.py \
-  --account "<historyStorageAccountName>" \
-  --history-container dvm-history \
-  --current-container dvm-current \
-  --resume-local output/load-test-data/population-REPLACE_WITH_SAVED_ID \
-  --publish
-```
+This is a synthetic test-data tool, not a customer-data repair operation.
+It refuses already-published or ambiguous publication attempts. Exact customer
+snapshots use the index-rebuild tool above. The two publishers must not overlap.
 
-Replace the final directory name with the failed/validated population directory.
-Do not pass `--source-manifest` or regeneration options. This is **synthetic test
-data recovery**, not the customer index-only command above.
+## Performance checks
 
-If compatible indexes and a verified completed bundle already exist, publication
-reuses them without another index build or seed download. Otherwise it copies
-the exact generated curated files to a new local bundle and rebuilds only the
-indexes, retaining the existing raw files and synthetic run identity. It does
-not clone identifiers, recollect data, regenerate summaries or rewrite the
-original failed directory. A local `manifest.pending.json`, marked incomplete,
-retains sizes, hashes and row counts before index construction; it is never
-published. Recovery validates those hashes before reusing counts. Older failed
-runs without a checkpoint require one streaming count of their retained JSON,
-not extrapolation or summary generation.
+The standalone benchmarks generate isolated local data. They do not establish
+Azure B2 response times, network behavior, managed-identity latency, or capacity
+for a different customer's data shape.
 
-Target/subscription checks, exact-target confirmation, immutable uploads and
-conditional pointer publication still apply. A known changed saved ETag blocks
-publication. Already-published runs, or attempts where publication may have
-completed, are refused; use index-only maintenance for those retained runs.
-Omit `--publish` for local validation only. The command prints a new local report
-directory; that report references the reusable bundle and original raw folder.
-Publish successfully before deploying the matching updated Web App for the
-load test. No Function deployment is required for this standalone workflow.
-
-### Compact format-10 validation with the retained test data
-
-The failed local population was recovered without regenerating findings or raw
-pages: **1,837,575 findings, 4,717,980 finding events and 66,439 recommendation
-events**. Its longer seed-derived identifiers exposed the old 7 GiB limit; the
-earlier generic fixture below was not representative of these record sizes.
-
-The complete format-10 index build and local bundle verification took
-**325.666 seconds** on macOS/Python 3.14:
-
-| Index | Expanded bytes | Compressed bytes |
-|---|---:|---:|
-| Primary | 2,618,769,408 | 554,780,136 |
-| History | 1,215,922,176 | 519,446,761 |
-| Total | 3,834,691,584 | 1,074,226,897 |
-
-That is approximately **3.57 GiB expanded and 1.00 GiB compressed**, within the
-unchanged combined 7 GiB publication limit. The final restored-index check verified
-all nine prepared views and every dataset count, with **zero curated downloads**:
-
-| Local operation | Seconds |
-|---|---:|
-| Primary restore and validation | 2.769 |
-| Executive | 7.510 |
-| Overview | 3.635 |
-| Recommendations | 1.964 |
-| Priority | 2.786 |
-| Workstations | 0.821 |
-| SLA | 7.036 |
-| Trend, including first history restore | 35.794 |
-| Executive snapshot | 13.256 |
-| Help | 0.017 |
-
-These measurements exclude Azure transfer/authentication, Web App startup and
-browser rendering. First-use history/report aggregation remains on demand.
-Remediation outcomes use one grouped pass per period instead of correlated
-device/recommendation scans. The definition is unchanged: a pair must have a
-finding fixed during the period and no finding open at its end. Regression tests
-compare the grouped result with the original SQL, including nullable and
-mixed-type identifiers, fallback recommendation names and timestamp combinations.
-
-The check also pinned the first snapshot while loading a second revision,
-restored both primary/history groups exactly once per snapshot, and verified
-both snapshots' dataset counts. Their combined local cache was **7,670,022,144
-bytes**, below the unchanged **8,589,934,592-byte (8 GiB)** budget.
-
-### Local index scale validation (historical format 8)
-
-A macOS/Python 3.14 synthetic run with 1,837,575 findings, 3,675,150
-lifecycle events, 2,075 devices, 13,222 CVE references and 100 recommendations
-verified exact index counts and the default executive scope:
-
-| Measurement | Result |
-| --- | --- |
-| Bundle construction, including both query indexes | 363.031 s |
-| Primary index restoration and validation | 4.075 s |
-| Executive query after restoration | 6.930 s |
-| Deferred history index restoration and validation | 4.291 s |
-| Compressed primary index | 1,075,275,302 bytes |
-| Compressed history index | 1,209,628,871 bytes |
-| Combined expanded indexes | 5,407,633,408 bytes |
-| Curated JSON reads during restoration/query checks | 0 |
-
-These are local component timings, **not an Azure start-to-ready prediction**:
-they exclude network transfer, managed identity, ASGI startup and browser work.
-The history timing excludes report aggregation. The fixture's history count and
-entity distribution are assumptions, not measurements of customer data.
-The two index artifacts add approximately **2.13 GiB per retained run** in this
-fixture, in addition to curated/raw evidence; they are not as compact as gzipped
-JSON (the fixture's curated datasets were approximately 129 MiB).
-Doubling findings/events from 100,000/100,000 to 200,000/200,000 increased combined
-compressed index bytes by 2.005 times. Growth is linear in this test, but the
-constant storage overhead is significant and should be included in retention
-and transfer planning. The existing cache limits can explicitly reject a
-replacement when old/new indexes plus restoration scratch cannot coexist;
-the previous complete snapshot remains served rather than exceeding the budget.
-
-## Publish the source repository
-
-Review the staged file list before the first commit. Ignore rules exclude
-credentials, environment values, Terraform state and plans, generated data,
-deployment ZIP files, local notes, editor state, and local environments.
+Query-engine scale check:
 
 ```bash
-git init -b main
-git add .
-git status --short
-git diff --cached --check
-git diff --cached --name-only
-git commit -m "Initial"
-gh auth login
-gh repo create <repository-name> --private --source=. --remote=origin --push
+PYTHONPATH=src python tests/benchmark_dashboard_queries.py \
+  --rows 2000000 --events 2000000 --prepare-defaults --all-views \
+  --broad-filters --mixed-lifecycle --enforce-targets
 ```
 
-Create the repository as private first unless public release has completed its
-legal, licensing, security, and organizational reviews. Do not use `git add -f`
-to force environment-specific values or generated data into source control.
+Full-server smoke check:
+
+```bash
+PYTHONPATH=src python tests/benchmark_dashboard_startup.py \
+  --rows 1000 --events 1000 --devices 50 --cves 100 --recommendations 20
+```
+
+Bounded collection finalization:
+
+```bash
+PYTHONPATH=src python tests/benchmark_bounded_finalization.py \
+  --findings 2000000 --budget 900 \
+  --root output/benchmarks/bounded-finalization-2m
+```
+
+Each tool's `--help` describes scale and output options. Results identify the
+run, data shape, timings, resource measurements, and failures. Acceptance
+thresholds in a harness are checks, not enforced service quotas.
+
+## Remaining work and limits
+
+- The recommendation-type classifier treats some end-of-support uninstall
+  recommendations as misconfiguration. Their linked vulnerability findings can
+  therefore be excluded by the default Vulnerability-only scope. This affects
+  count interpretation and remains an unresolved classification issue.
+- Cold preparation, a new snapshot, changed filters, and historical reporting
+  can still require substantial computation. Compatible cache reuse avoids
+  repeated work; it does not make every query free or incremental.
+- Hosting still has finite CPU, memory, and local disk. The cache budget does
+  not cap total process resource use, and not every pair of snapshots will fit.
+- Automated in-app application updates are not implemented. Publication,
+  deployment, and approval remain separate operator activities.
+- Environment-specific alerts, access ownership, state backups, recovery
+  arrangements, and approved SLA targets remain part of the operational handoff.
 
 ## Cleanup boundary
 
-Stop local foreground processes with `Ctrl+C`. Local generated files may be
-removed under the defined sensitive-data handling process.
-
-Local cleanup does not authorize deletion of Azure Storage history. Never
-delete the protected storage account, containers, or retained `raw/`,
-`curated/`, or `runs/` paths as part of cleanup, reset, redeployment, or
-"start over" work.
-
-Only `current/manifest.json` is replaced during normal operation. Retention
-deletion requires a separate, explicit human decision naming the exact eligible
-targets.
+Local test output and snapshots may contain unredacted security data.
+Handling and removal follow the organization's data policy. Local cleanup,
+reset, redeployment, or "start over" never authorizes deletion of retained Azure
+history, containers, or accounts.

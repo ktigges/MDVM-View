@@ -1,3 +1,8 @@
+/**
+ * Last modified: 2026-11-05
+ * Purpose: Verify dashboard queries, metric explanations, and interactions.
+ */
+
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -138,7 +143,8 @@ test("startup polls index preparation without rendering partial findings",async(
   assert.equal(app.query().length,0);
   assert.match(app.elements.get("loadingNotice").innerHTML,/Rebuilding findings index/);
   assert.match(app.elements.get("loadingNotice").innerHTML,/204,000 \/ 1,837,575 rows/);
-  assert.match(app.elements.get("loadingNotice").innerHTML,/Partial findings are not shown/);
+  assert.match(app.elements.get("loadingNotice").innerHTML,/<strong>Preparing dashboard data indexes<\/strong><span>May follow a server restart, first load, or new snapshot\.<\/span>/);
+  assert.doesNotMatch(app.elements.get("loadingNotice").innerHTML,/Complete results will appear|Partial findings are not shown|Completion percentage|remaining time are not reported/);
   app.setSnapshotReady();
   app.flushTimers();await tick();
   assert.equal(app.query().length,1);
@@ -156,7 +162,8 @@ test("startup names shared aggregate preparation without showing partial totals"
   assert.match(notice,/Preparing shared dashboard aggregates: recommendation relationships/);
   assert.match(notice,/61s elapsed/);
   assert.match(notice,/8s in current stage/);
-  assert.match(notice,/Partial findings are not shown/);
+  assert.match(notice,/May follow a server restart, first load, or new snapshot/);
+  assert.doesNotMatch(notice,/Complete results will appear|Partial findings are not shown/);
   assert.equal(app.query().length,0);
 });
 
@@ -179,6 +186,7 @@ test("index restore and preparation errors remain visible while retrying",async(
   }});
   await tick();
   assert.match(app.elements.get("loadingNotice").innerHTML,/retry scheduled/);
+  assert.doesNotMatch(app.elements.get("loadingNotice").innerHTML,/May follow a server restart|<span><\/span>/);
   assert.match(app.elements.get("loadingNotice").innerHTML,/Restoring published data index/);
   assert.match(app.elements.get("loadingNotice").innerHTML,/10.0 MiB/);
   assert.equal(app.query().length,0);
@@ -308,7 +316,8 @@ test("report progress is indeterminate and its elapsed clock does not issue extr
   const notice=app.elements.get("loadingNotice");
   assert.match(notice.innerHTML,/role="progressbar"/);
   assert.match(notice.innerHTML,/Waiting for server response/);
-  assert.match(notice.innerHTML,/Completion percentage and remaining time are not reported/);
+  assert.doesNotMatch(notice.innerHTML,/Completion percentage|completion percentage unavailable|remaining time are not reported/);
+  assert.doesNotMatch(html,/Completion percentage|completion percentage unavailable|remaining time are not reported/);
   assert.doesNotMatch(notice.innerHTML,/aria-valuenow|aria-valuemax/);
   assert.equal(app.elements.get("reportProgressElapsed").textContent,"Elapsed 0:00");
   now+=61000;
@@ -362,7 +371,45 @@ test("shared activity tiles put full-width labels before their counts",()=>{
 test("summary decision tiles put titles above million-record values",async()=>{
   const app=fixture();await tick();
   app.run('renderDecisionMetrics("executiveWorkload",[{value:1836170,label:"Detected findings",detail:"Current detections",target:"overview"}])');
-  assert.match(app.elements.get("executiveWorkload").innerHTML,/<span>Active exposure instances<\/span><strong>1,836,170<\/strong>/);
+  assert.match(app.elements.get("executiveWorkload").innerHTML,/<span class="metric-help">Active exposure instances<\/span><strong>1,836,170<\/strong>/);
+});
+
+test("finding count help explains instances, CVEs, fixes and filtered snapshot scope",async()=>{
+  const app=fixture();await tick();
+  for(const label of ["Finding instances","Finding instances observed","Detected findings","Active finding instances","Active exposure instances"]){
+    app.context.helpLabel=label;
+    const help=app.run("metricHelp(helpLabel)");
+    assert.match(help,/specific software product\/version on one device/);
+    assert.match(help,/100 devices counts as 100 instances, but only 1 distinct CVE/);
+    assert.match(help,/Different affected products or versions on the same device/);
+    assert.match(help,/not a count of attacks or separate fixes/);
+    assert.match(help,/one update can remove many instances/);
+    assert.match(help,/selected snapshot and workspace filters/);
+  }
+  app.run('cards("pivotCards",[[100,"Active finding instances"]])');
+  assert.match(app.elements.get("pivotCards").innerHTML,/title="[^"]*100 devices counts as 100 instances/);
+  assert.match(app.elements.get("pivotCards").innerHTML,/tabindex="0" aria-label="[^"]*100 devices counts as 100 instances/);
+  app.run('renderDecisionMetrics("executiveWorkload",[{value:100,label:"Detected findings",detail:"Current detections",target:"overview"}])');
+  assert.match(app.elements.get("executiveWorkload").innerHTML,/title="[^"]*100 devices counts as 100 instances/);
+  assert.match(app.elements.get("executiveWorkload").innerHTML,/aria-label="[^"]*100 devices counts as 100 instances/);
+  assert.match(html,/<select id="findingsMode" aria-describedby="findingInstancesHelp"/);
+  assert.match(html,/<details class="finding-count-help"><summary>What counts as a finding instance\?<\/summary><p id="findingInstancesHelp">/);
+  assert.match(html,/100 finding instances, 1 distinct CVE, and 100 affected devices/);
+  assert.match(html,/not a sum of repeated scans/);
+  assert.match(html,/<button[^>]*data-new-view="overview" data-findings-mode="findings" title="[^"]*100 devices counts as 100 instances/);
+});
+
+test("active exposure help separates fleet volume, distinct CVEs and per-device counts",async()=>{
+  const app=fixture();await tick();
+  const exposure=app.run('metricHelp("Active exposure instances")');
+  assert.match(exposure,/10,000 instances, 100 distinct CVEs, and 100 affected devices/);
+  assert.match(exposure,/Affected devices and recommendations describe the remediation workload/);
+  assert.match(exposure,/not a severity-weighted risk score/);
+  const cves=app.run('metricHelp("Distinct active CVEs")');
+  assert.match(cves,/combines CVEs across all its matching devices/);
+  assert.match(cves,/an individual device can have fewer/);
+  assert.match(html,/10,000 exposure instances, 100 distinct CVEs, and 100 affected devices/);
+  assert.match(html,/Each device can have a smaller, different set/);
 });
 
 test("report progress respects reduced motion and marks elapsed updates as non-announcing",()=>{

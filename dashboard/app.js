@@ -1,7 +1,7 @@
 /**
  * Author: Kevin Tigges
-* Last modified: 2026-10-08
-* Purpose: Load vulnerability datasets and render the versioned interactive dashboard.
+ * Last modified: 2026-11-05
+ * Purpose: Load vulnerability datasets and render the versioned interactive dashboard.
  */
 
 const presentation=window.VULNERABILITY_VIEW_CONFIG||{};
@@ -15,6 +15,7 @@ const EXPERIMENTAL_ENDPOINTS=new Set(["remediation_tasks","vulnerability_changes
 const SEVERITY_RANK={Critical:4,High:3,Medium:2,Low:1};
 const PENDING_FINDING_STATUSES=new Set(["PendingConfirmation","PendingVerification"]);
 const DETECTED_FINDING_STATUSES=new Set(["Open","Reopened","DetectionReturned"]);
+const FINDING_INSTANCE_HELP="One finding instance is one CVE detected in a specific software product/version on one device. The same CVE in the same product/version on 100 devices counts as 100 instances, but only 1 distinct CVE. Different affected products or versions on the same device can add instances. This is not a count of attacks or separate fixes: one update can remove many instances. Counts reflect the selected snapshot and workspace filters.";
 if("scrollRestoration" in history)history.scrollRestoration="manual";
 window.addEventListener("pageshow",()=>requestAnimationFrame(()=>window.scrollTo(0,0)));
 const state={findings:[],findingEvents:[],recommendationEvents:[],runHistory:[],devices:[],recommendations:[],recommendationMachines:[],remediations:[],summary:[],runs:[],secureScores:[],subscriptions:[],slaPolicy:null,recommendationTracking:new Map(),findingsByRecommendation:new Map(),recommendationMachinesByRecommendation:new Map(),recommendationsById:new Map(),subscriptionInventoryById:new Map(),vulnerabilityDetailsById:new Map(),watchlistCves:new Map(),origin:"Both",severity:filterConfig.defaultSeverity||"All",exposureStatus:"DetectedAndPending",assetClass:"All",subscription:"All",hideNonReporting:Boolean(filterConfig.defaultHideNonReporting),reportingDays:DEFAULT_REPORTING_DAYS,includeDiscoveredOnly:Boolean(filterConfig.defaultIncludeDiscoveredOnly),recommendationTypes:new Set(DEFAULT_RECOMMENDATION_TYPES),recommendationTrackingFilter:"All",recommendationTrackingEnabled:false,recommendationTrackingLocalPreview:false,team:"All",search:"",domains:new Set(DEFAULT_DOMAINS),newPeriod:"day",newPeriodFilter:false,remediationPeriodFilter:false,latestRunChangesOnly:false,newPeriodStart:"",newPeriodEnd:"",statisticsPeriod:"week",reportingEntity:"findings",reportingChange:"Fixed",executiveSnapshotPeriod:"30days",executiveSnapshotStart:"",executiveSnapshotEnd:"",executiveSnapshotSubscription:"All",executiveSnapshotOwner:"All",executiveSnapshotUnit:"findings",selectedRecommendationId:"",detailRecommendationIds:[],selectedEntity:null,selectedCveDialogId:"",pivotSourceLabel:"",snapshotTimeMs:NaN,activeView:"executive"};
@@ -536,8 +537,10 @@ function showRecommendationOutcome(recommendationId,options={}){const allRows=fi
 /** Cards for the dashboard. */
 function exposureLabel(label){return({"Active finding instances":"Active exposure instances","Detected findings":"Active exposure instances","Finding instances":"Exposure instances","Finding instances observed":"Exposure instances observed","Pending findings":"Pending exposure instances"})[label]||label;}
 function metricHelp(label){return({
-  "Distinct active CVEs":"Different CVE IDs with at least one current detection in this filtered snapshot. Each CVE is counted once, even across many devices, products, or versions. Pending evidence is excluded.",
-  "Active exposure instances":"Source-reported device, CVE, software product and version detections with Open, Reopened, or Detection returned status. One CVE can contribute many instances across devices or software versions. Pending and fixed evidence are excluded; this is not a count of unique CVEs or separate patch jobs.",
+  "Exposure instances":FINDING_INSTANCE_HELP,
+  "Exposure instances observed":FINDING_INSTANCE_HELP,
+  "Distinct active CVEs":"Different CVE IDs with at least one current detection in this filtered snapshot. Each CVE is counted once, even across many devices, products, or versions. A recommendation's total combines CVEs across all its matching devices; an individual device can have fewer because devices do not all have the same CVEs. Pending evidence is excluded.",
+  "Active exposure instances":`Source-reported current detections, not a count of unique CVEs. ${FINDING_INSTANCE_HELP} For scale, 100 CVEs each detected in one product/version on 100 devices means 10,000 instances, 100 distinct CVEs, and 100 affected devices. Affected devices and recommendations describe the remediation workload; instances describe how widely vulnerabilities are present, not a severity-weighted risk score. Active totals include Open, Reopened, and Detection returned statuses; pending and fixed evidence are excluded.`,
   "Pending exposure instances":"Previously detected exposures awaiting confirmation or verification after absence from collection evidence. They are excluded from active totals and are not yet confirmed fixed.",
   "CVEs with pending evidence":"Different CVE IDs represented by pending exposure evidence. The same CVE can also be active on another device, product, or version, so active and pending CVE counts can overlap.",
   "Workloads with detections":"Distinct workloads with at least one active exposure in the current filters. A workload is a device unless configured VM scale-set or workload grouping combines multiple instances. Pending-only workloads are excluded.",
@@ -692,7 +695,7 @@ function renderSecureScore(){
   $("secureScoreCard").innerHTML=score?`<div class="secure-score-heading"><span>MICROSOFT SECURE SCORE</span><strong>${esc(score.DataOrigin||"Current")} evidence</strong></div><div class="secure-score-body"><div class="score-ring" style="--score:${Math.max(0,Math.min(100,percent))}"><strong>${percent.toFixed(1)}%</strong><span>attained</span></div><div class="secure-score-detail"><h3>${fmt(score.CurrentScore)} of ${fmt(score.MaxScore)} points</h3><p>${delta>=0?`${delta.toFixed(1)} points above`:`${Math.abs(delta).toFixed(1)} points below`} the reported tenant average of ${average.toFixed(1)}%.</p><small>Updated ${esc(new Date(score.CreatedDateTime||score.SnapshotTimeUtc).toLocaleDateString())}</small></div></div>`:`<div class="secure-score-heading"><span>MICROSOFT SECURE SCORE</span></div><div class="secure-score-empty"><strong>Not available</strong><p>Secure Score was not present in this snapshot.</p></div>`;
 }
 /** Render decision metrics for the dashboard. */
-function renderDecisionMetrics(id,items){$(id).innerHTML=items.map(item=>`<button type="button" class="decision-metric" data-target="${esc(item.target)}"${item.anchor?` data-anchor="${esc(item.anchor)}"`:""}${item.severity?` data-severity="${esc(item.severity)}"`:""}${metricHelp(item.label)?` title="${esc(metricHelp(item.label))}"`:""} aria-label="${esc(`${exposureLabel(item.label)}: ${item.value}. ${metricHelp(item.label)} View details`)}"><span>${esc(exposureLabel(item.label))}</span><strong>${typeof item.value==="number"?fmt(item.value):esc(item.value)}</strong><small>${esc(item.detail)}</small>${item.delta?`<small class="metric-delta ${esc(item.delta.tone)}">${esc(item.delta.text)}</small>`:""}<span class="metric-action">View details &rarr;</span></button>`).join("");$(id).querySelectorAll(".decision-metric").forEach(button=>button.addEventListener("click",()=>{if(button.dataset.severity){state.severity=button.dataset.severity;$("severityFilter").value=state.severity;}document.querySelector(`.story-nav button[data-view="${button.dataset.target}"]`)?.click();if(button.dataset.anchor)requestAnimationFrame(()=>document.getElementById(button.dataset.anchor)?.scrollIntoView({block:"start"}));}));}
+function renderDecisionMetrics(id,items){$(id).innerHTML=items.map(item=>`<button type="button" class="decision-metric" data-target="${esc(item.target)}"${item.anchor?` data-anchor="${esc(item.anchor)}"`:""}${item.severity?` data-severity="${esc(item.severity)}"`:""}${metricHelp(item.label)?` title="${esc(metricHelp(item.label))}"`:""} aria-label="${esc(`${exposureLabel(item.label)}: ${item.value}. ${metricHelp(item.label)} View details`)}"><span${metricHelp(item.label)?' class="metric-help"':""}>${esc(exposureLabel(item.label))}</span><strong>${typeof item.value==="number"?fmt(item.value):esc(item.value)}</strong><small>${esc(item.detail)}</small>${item.delta?`<small class="metric-delta ${esc(item.delta.tone)}">${esc(item.delta.text)}</small>`:""}<span class="metric-action">View details &rarr;</span></button>`).join("");$(id).querySelectorAll(".decision-metric").forEach(button=>button.addEventListener("click",()=>{if(button.dataset.severity){state.severity=button.dataset.severity;$("severityFilter").value=state.severity;}document.querySelector(`.story-nav button[data-view="${button.dataset.target}"]`)?.click();if(button.dataset.anchor)requestAnimationFrame(()=>document.getElementById(button.dataset.anchor)?.scrollIntoView({block:"start"}));}));}
 /** Recommendation impact rows for the dashboard. */
 function recommendationImpactRows(recommendations,findings=filteredFindings()){
   const exposureRows=findings.filter(row=>detected(row)||pending(row)),byRecommendation=new Map();
@@ -978,7 +981,7 @@ function dashboardIndexPlanMarkup(progress,expanded=false){
 
 function showDashboardVisualProgress(title,message,phase,progress=null){
   const expanded=$("loadingNotice").querySelector("[data-index-plan]")?.open;
-  $("loadingNotice").innerHTML=`<span class="loading-spinner" aria-hidden="true"></span><div class="loading-notice-content"><strong>${esc(title)}</strong><span>${esc(message)}</span><div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="${esc(phase)}; completion percentage unavailable"><span class="report-progress-indicator"></span></div><div class="report-progress-meta"><span id="reportProgressPhase">${esc(phase)}</span><span id="reportProgressElapsed" aria-live="off"></span></div>${dashboardIndexPlanMarkup(progress,expanded)}<small>Completion percentage and remaining time are not reported by the server.</small></div>`;
+  $("loadingNotice").innerHTML=`<span class="loading-spinner" aria-hidden="true"></span><div class="loading-notice-content"><strong>${esc(title)}</strong>${message?`<span>${esc(message)}</span>`:""}<div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="${esc(phase)}"><span class="report-progress-indicator"></span></div><div class="report-progress-meta"><span id="reportProgressPhase">${esc(phase)}</span><span id="reportProgressElapsed" aria-live="off"></span></div>${dashboardIndexPlanMarkup(progress,expanded)}</div>`;
   updateDashboardProgressElapsed();
 }
 
@@ -1214,7 +1217,7 @@ async function startSnapshotDashboard(){
       const status=snapshot.preparation||{};
       showDashboardVisualProgress(
         status.status==="error"?"Data preparation failed; retry scheduled":"Preparing dashboard data indexes",
-        "Complete results will appear automatically. Partial findings are not shown.",
+        status.status==="error"?"":"May follow a server restart, first load, or new snapshot.",
         dashboardPreparationText(status),
         status.progress,
       );

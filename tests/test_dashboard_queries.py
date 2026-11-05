@@ -1,3 +1,7 @@
+"""Last modified: 2026-11-05.
+Purpose: Verify snapshot-pinned query counts, filtering, evidence, and exports.
+"""
+
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 from contextlib import contextmanager
@@ -391,6 +395,38 @@ def test_machine_active_totals_exclude_pending_but_keep_all_evidence_and_distinc
     assert sum(row["OpenFindings"] for row in overview_export) == 185
     assert sum(row["PendingFindings"] for row in overview_export) == 150
     assert sum(row["EvidenceRows"] for row in overview_export) == 335
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_recommendation_distinct_cves_are_union_not_per_device_count(tmp_path, prepared):
+    data = datasets(0)
+    data["findings"] = [
+        finding(i, DeviceId="device-0", DeviceName="endpoint-0", RecommendationId="rec-0",
+                CveId=f"CVE-2026-{i:04}", SoftwareVersion="1")
+        for i in range(2057)
+    ] + [
+        finding(2057 + i, DeviceId="device-1", DeviceName="endpoint-1", RecommendationId="rec-0",
+                CveId=f"CVE-2026-{400 + i:04}", SoftwareVersion="2")
+        for i in range(1712)
+    ]
+    data["devices"] = data["devices"][:2]
+    query_engine = engine(tmp_path, data)
+    if prepared:
+        query_engine.read_model.prepare({})
+    result = query_engine.query({
+        "view": "detail", "selection": {"type": "recommendation", "id": "rec-0"},
+    })
+    assert result["detail"]["counts"]["activeCves"] == 2112
+    assert result["detail"]["counts"]["activeFindings"] == 3769
+    machines = {row["DeviceId"]: row for row in result["tables"]["pivotTable"]["items"]}
+    assert machines["device-0"]["DetectedCVEs"] == machines["device-0"]["OpenFindings"] == 2057
+    assert machines["device-1"]["DetectedCVEs"] == machines["device-1"]["OpenFindings"] == 1712
+    assert result["tables"]["pivotCveTable"]["total"] == 2112
+    assert [2112, "Distinct active CVEs"] in result["cards"]["pivotCards"]
+    machine = query_engine.query({
+        "view": "detail", "selection": {"type": "machine", "id": "device-0"},
+    })
+    assert machine["detail"]["counts"]["activeCves"] == 2057
 
 
 def test_machine_related_recommendations_preserve_scope_counts_and_navigation(tmp_path):

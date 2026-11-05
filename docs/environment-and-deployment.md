@@ -1,461 +1,101 @@
-# Environment and deployment plan
+# Environment boundaries
 
-> **Last modified:** 2026-11-05
-> **Purpose:** Define local, test, and Azure deployment boundaries, resources, and production-readiness gates.
+The same Python application runs locally and in Azure. Configuration determines
+the identity, data source, storage target, and enabled features. Separate
+environments need separate resource names and state; changing `.env` does not
+create a new Azure environment.
 
 ## Operating model
 
-Development and Azure deployment are separate activities:
-
-- Local live testing calls Defender with the developer's Azure identity and writes only local files.
-- Replays use retained raw pages and make no Defender or Azure calls.
-- Storage integration tests use one stable development storage account; they do not redeploy infrastructure.
-- Production uses managed identities, scheduled collection, protected storage, and an authenticated web application.
-
-The application code and data formats remain the same in every environment. Identity, storage names, schedules, and hosting settings change through configuration.
-
-## Infrastructure tool
-
-Use Terraform as the only infrastructure source of truth. The active configuration
-creates a new greenfield resource group, protected history account, containers,
-and optional Function resources. Existing populated accounts remain outside that
-state and are not imported or deleted.
-
-The supplied Terraform configuration stores state locally at
-`infra/terraform/terraform.tfstate` on the deployment workstation. Protect,
-retain, and back up that file separately from the protected DVM history
-account. Organizations can configure a shared remote state backend, but backend
-provisioning, access control, migration, and recovery are outside this
-deployment documentation.
-
-### Terraform variables
-
-The Terraform implementation needs these inputs:
-
-| Variable | Purpose |
-|---|---|
-| `subscription_id` | Target Azure subscription |
-| `tenant_id` | Microsoft Entra tenant containing Defender |
-| `resource_group_name` | New environment resource group |
-| `location` | Function and monitoring region; set explicitly |
-| `environment` | Development, test, or production naming and tags |
-| `history_storage_account_name` | Globally unique new protected history account |
-| `history_container_name` | `dvm-history` |
-| `current_container_name` | `dvm-current` |
-| `function_runtime_storage_account_name` | Separate storage for the Functions host and Durable task hub |
-| `function_app_name` | Globally unique Function App name |
-| `function_instance_memory_in_mb` | Deprecated Flex setting, accepted but unused; the Dedicated collector uses one fixed B2 worker with Always On |
-| `deploy_function` | Creates Function, identity, permissions, and monitoring when `true` |
-| `collection_schedule` | Production NCRONTAB schedule |
-| `recommendation_enrichment_mode` | `targeted` for scheduled runs; `full` only for an explicit complete relationship refresh |
-| `vulnerability_collection_mode` | `auto` for daily deltas with safe full-baseline fallback |
-| `full_collection_weekday` | Weekly full vulnerability-state reconciliation day |
-| `tags` | Ownership, environment, application, and cost metadata |
-
-The greenfield history account and its two containers use Terraform `prevent_destroy`. Existing populated accounts such as the current development account remain separate and are not referenced by this new state. Use `docs/greenfield-deployment.md` for the staged commands.
-
-## Local live testing
-
-Local live collection requires:
-
-- Python 3.12 and the project virtual environment. Both Azure runtimes are
-  configured for Python 3.12; use newer versions only for separately validated
-  local development.
-- A developer identity authenticated through Azure CLI or another supported developer credential
-- Defender permissions and device-group visibility
-- `AUTH_MODE=local`
-- `DEFENDER_API_BASE_URL=https://api.security.microsoft.com`
-- `STORAGE_ACCOUNT_NAME` left empty when Azure Storage must not be changed
-
-When Azure CLI lacks a required delegated Graph scope, local collection may instead use a dedicated app registration:
-
-```dotenv
-# LOCAL DEVELOPMENT ONLY. NEVER DEPLOY OR COMMIT THESE VALUES.
-AUTH_MODE=client_secret
-ALLOW_LOCAL_CLIENT_SECRET=true
-AZURE_TENANT_ID=<tenant-id>
-AZURE_CLIENT_ID=<local-collector-application-id>
-AZURE_CLIENT_SECRET=<local-secret>
-```
-
-Grant that app registration the required Defender application permissions and Microsoft Graph `SecurityEvents.Read.All`, then grant tenant admin consent. Store the secret only in local environment variables such as `.env` or `local.settings.json`, and keep those values out of source control. Azure-hosted execution rejects this mode and uses managed identity.
-
-Check access before downloading a full snapshot:
-
-```bash
-vulnerability-view show-config
-vulnerability-view preflight
-```
-
-Collect live data without reading or writing Azure Storage:
-
-```bash
-vulnerability-view collect-live --local-only --enrichment targeted
-vulnerability-view validate
-python -m http.server 8000 --directory dashboard
-```
-
-This path calls Defender, creates `output/raw/<run-id>` and `output/history/<run-id>`, and rewrites the local dashboard JSON and CSV exports. It does not create, update, or deploy an Azure resource.
-
-After one live collection, most application changes can be tested without another Defender call:
-
-```bash
-vulnerability-view simulate-scheduled-run --from-raw latest --local-only
-vulnerability-view validate
-```
-
-Use the replay path for normalization, lifecycle, SLA, export, and dashboard work. Run a new live collection only when fresh source data or API behavior is needed.
-
-## Local Function testing
-
-The current Function is a timer wrapper around the same `collect-live` command used by the CLI. It is not yet a Durable Functions orchestration. Test it in two stages.
-
-### Test the Function workload
-
-This is the fastest check and does not require the Functions host:
-
-```bash
-vulnerability-view simulate-scheduled-run --from-raw latest --local-only
-vulnerability-view simulate-scheduled-run --enrichment targeted
-```
-
-The first command tests processing without network calls. The second uses the local developer credential, calls Defender, reads prior history from Azure, uploads a new completed run, and advances the development current manifest.
-
-### Test the Functions host
-
-Azure Functions Core Tools v4 and Azurite are prerequisites. They are not currently installed in this development environment.
-
-1. Copy `local.settings.example.json` to `local.settings.json`.
-2. Replace the tenant and development history-account placeholders.
-3. Authenticate the developer identity in a separate terminal.
-4. Start Azurite for `AzureWebJobsStorage=UseDevelopmentStorage=true`.
-5. Start the Functions host with `func start`.
-6. Invoke the manual scheduled-policy trigger once from another terminal:
-
-   ```bash
-   curl -i -X POST http://localhost:7071/admin/functions/dataprep_manual_snapshot \
-     -H 'Content-Type: application/json' \
-     -d '{"input":null}'
-   ```
-
-7. Verify one completed run and stop the host.
-
-The local Functions host uses `AUTH_MODE=local`; managed identity cannot be exercised from a workstation. Azurite stores only Functions host state. The collection itself uses the real Defender API, `dvm-history`, and `dvm-current` configured in `local.settings.json`.
-
-Values in `local.settings.json` are injected as environment variables and take precedence over matching `.env` values.
-
-### Validate the local host run
-
-```bash
-vulnerability-view status --azure
-vulnerability-view restore-current
-vulnerability-view validate
-```
-
-Confirm that the current run ID changed, the manifest is complete, and all referenced files are available before moving to Azure hosting.
-
-## Storage integration testing
-
-Provision one development storage account and keep it stable. Configure its name in `.env`, then replay an existing local run without calling Defender:
-
-```bash
-vulnerability-view simulate-scheduled-run --from-raw latest
-vulnerability-view status --azure
-```
-
-This writes a new immutable run under `raw/`, `curated/`, and `runs/`, then advances `dvm-current/current/manifest.json`. It changes stored development data but does not change the storage account, containers, role assignments, or other Azure resources.
-
-For a complete local-history migration, `vulnerability-view backfill-history` uploads every immutable run first and advances the current manifest only after the newest run uploads successfully.
-
-Use a development account that is separate from production. Never point local integration tests at production storage.
-
-## Azure resource inventory
-
-| Resource | Purpose | Current repository status |
+| Environment | Data and identity | Writes |
 |---|---|---|
-| Resource group per environment | Ownership, access, cost, and deployment boundary | Supplied by the operator |
-| ADLS Gen2 history account | Immutable raw pages, curated snapshots, policies, and run manifests | Implemented in greenfield Terraform |
-| `dvm-history` container | Append-only dated history | Implemented with `prevent_destroy` |
-| `dvm-current` container | Replaceable current manifest pointer | Implemented with `prevent_destroy` |
-| Function runtime storage | Function host state and deployment packages; separate from retained DVM history | Implemented when `deploy_function=true` |
-| User-assigned managed identity | Defender access and Storage Blob Data Contributor for the collector | Implemented when `deploy_function=true` |
-| Dedicated Linux Function App | Scheduled collector, separate B2 plan with one fixed worker and Always On | Implemented when `deploy_function=true` |
-| Application Insights | Function diagnostics, failures, and dependency timing | Implemented when `deploy_function=true` |
-| Linux Web App and plan | Hosts the dashboard and a same-origin API that reads current data from private ADLS | Implemented as an optional B2 Terraform stage |
-| Web App managed identity | Read-only access to `dvm-current` and referenced curated blobs | Implemented with Storage Blob Data Reader |
-| Microsoft Entra authentication | Restricts dashboard and API access to authorized users or groups | Implemented with Easy Auth and an assignment-required Enterprise Application; assignments are managed manually in Entra |
-| Log Analytics | Function operational logs, metrics, failures, and dependency timing | Implemented when `deploy_function=true` |
+| Local replay or synthetic evaluation | Local files; no cloud credential needed for replay | Local generated output |
+| Local live collection with `--local-only` | Authorized developer credential; real Defender, Graph, and Azure inventory calls | Local raw and curated files, not Azure Storage |
+| Local Azure-backed viewer | Developer credential with approved blob access | Reads the published snapshot; enabled features must be reviewed separately |
+| Hosted collector | Collector managed identity | New immutable evidence and completed current pointer |
+| Hosted dashboard | Separate Web App managed identity; users sign in through Entra | Evidence reads plus explicitly enabled workflow, branding, and viewer-cache writes |
 
-The retained-history account is a protected data resource. Function runtime storage and web hosting can be replaced without replacing or deleting DVM history.
+Local collection without `--local-only` can publish to configured Azure Storage.
+It is not an isolated test merely because it runs on a workstation.
+Sample files and snapshots contain unredacted security and device data.
 
-Existing environments that use `dvm-raw` remain valid when `STORAGE_CONTAINER_NAME=dvm-raw` is set explicitly. Do not delete that container. Moving to `dvm-history` requires copying every historical blob, verifying the copy, and changing the configured container only after the current manifest and all referenced files are available in the new container.
+## Infrastructure and state
 
-## Dashboard data path
+Terraform defines the protected foundation, collector, and Web App. The stages
+are cumulative. After the Web App exists, later infrastructure plans use
+`webapp`, not a lower stage that would remove application resources.
 
-The implemented FastAPI server hosts the static dashboard and `/api/data/*` on the same origin. In local mode it reads `dashboard/data`. When hosted in Azure, the complete path:
+Environment values are in uncommitted `infra/terraform/main.tfvars.json`.
+Local application settings are in `.env`; local Functions host settings are
+in `local.settings.json`. Terraform does not read either local runtime file.
+The [configuration reference](configuration-reference.md) explains overlap
+and precedence.
 
-1. Authenticates the user with Microsoft Entra ID.
-2. Uses the server credential to read `dvm-current/current/manifest.json`.
-3. Reads only the curated blobs referenced by that completed manifest.
-4. Verifies blob sizes and SHA-256 checksums before serving data.
-5. Serves the dashboard and data API from the same origin.
-6. Caches the verified completed run briefly without copying or modifying historical blobs.
+The supplied backend stores state locally at
+`infra/terraform/terraform.tfstate`. State and its backup are part of the
+deployment handoff. Recreating the values file or cloning the repository does
+not recover state. A shared remote backend needs its own provisioned storage,
+access controls, migration, and recovery procedure; the project does not set
+one up automatically.
 
-The first item is supplied by App Service Authentication. The application now has a second fail-closed check controlled by `DASHBOARD_AUTH_ENABLED`, but that flag does not configure the Azure authentication provider. Locally, keep the flag `false`; the same server uses the developer credential and can read the development history account directly:
+## Environment separation
 
-```bash
-DASHBOARD_DATA_SOURCE=azure ./start-app.sh
-curl http://localhost:8000/api/status
-```
+Development, test, and production have their own:
 
-The Web App uses these application settings:
+- Resource group and Terraform state.
+- Protected history and separate Function runtime storage accounts.
+- Function App, Web App, plans, and managed identities.
+- Entra application and user/group assignments.
+- Collection schedule, approved policy, and monitoring.
 
-```text
-DASHBOARD_DATA_SOURCE=azure
-DASHBOARD_CACHE_SECONDS=300
-DASHBOARD_AUTH_ENABLED=true
-DASHBOARD_DATA_BROWSER_ENABLED=false
-DASHBOARD_DATA_BROWSER_ROLE=Data.Evidence.Reader
-AUTH_MODE=managed_identity
-AZURE_CLIENT_ID=<web-identity-client-id>
-STORAGE_ACCOUNT_NAME=<history-account>
-STORAGE_CONTAINER_NAME=dvm-history
-STORAGE_CURRENT_CONTAINER_NAME=dvm-current
-```
+The history account is a protected data resource. Replacing a Function or
+Web App does not replace that account. Existing retained containers remain
+protected even if newer deployments use different naming defaults.
 
-Its startup command is:
+## Current hosted design
 
-```bash
-python -m uvicorn vulnerability_view.dashboard_server:app --host 0.0.0.0 --port 8000
-```
+The collector is a Python Durable Functions application on a separate Linux
+Dedicated B2 plan, with one worker and Always On. The timer or manual starter
+requests a workflow; bounded collection work and retained processing checkpoints
+support continuation after interruptions. Dedicated hosting does not prevent
+maintenance, deployment, process, or resource-limit restarts.
 
-Grant the web identity Storage Blob Data Reader on the history account. Do not grant contributor rights. Configure App Service Authentication before enabling `DASHBOARD_AUTH_ENABLED`; otherwise every request fails with HTTP 401. UI development does not require App Service deployment and keeps the flag disabled. Deploy the Web App only for Entra authentication, managed-identity, network, and hosted integration testing.
+The dashboard is a FastAPI application on a separate Linux App Service plan.
+The default is B2 with one Uvicorn worker. Easy Auth handles Entra sign-in;
+the application also checks the trusted principal. Users and groups receive
+Enterprise Application roles outside Terraform.
 
-When the curated Data evidence browser is enabled, Terraform sets
-`DASHBOARD_DATA_BROWSER_ROLE=Data.Evidence.Reader`. A tenant administrator
-assigns that role to authorized users or groups. The evidence API is read-only
-and exposes only whitelisted normalized datasets.
+The Web App reads retained evidence. Its separate workflow and viewer-cache
+permissions do not grant writes to the history or current-pointer containers.
+The full runtime sequence is in [Application flow](application-flow.md).
 
-### User and group access
+Existing Flex-hosted collectors need the reviewed
+[hosting migration](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments).
+Deploying a new code package alone does not change hosting.
 
-The Enterprise Application display name is `DVM Viewer`; the app registration
-uses the same name. After apply, Terraform outputs
-`dashboard_enterprise_application_object_id` and
-`dashboard_entra_client_id` identify it. Easy Auth and Enterprise Application
-assignment perform different jobs:
+## Deployment handoff
 
-- Easy Auth signs users in and injects the trusted identity header consumed by
-  FastAPI.
-- The Enterprise Application has **Assignment required** enabled, so Entra
-  issues access only to assigned users and groups.
-- Terraform does not create groups or manage Enterprise Application user/group
-  assignments. A tenant administrator assigns existing users or groups to
-  `Dashboard.Viewer`.
-- When the hidden evidence browser is enabled, the administrator also assigns
-  `Data.Evidence.Reader` to that group.
-- Shared recommendation status is dashboard-local coordination. Any assigned
-  dashboard user can read and update it; it does not update Defender.
+The successor needs the authoritative state, protected environment values,
+repository access, deployment permissions, and the administrators who manage
+Entra assignments. The [deployment guide](../DEPLOY.md) defines permissions
+and steps; the [operations guide](operations-and-configuration.md) covers
+ongoing checks.
 
-Manage assignments at **Microsoft Entra ID > Enterprise applications > DVM
-Viewer > Users and groups**. Assignment and group membership remain managed in
-Microsoft Entra ID outside Terraform.
-Group-based Enterprise Application assignment requires the applicable
-Microsoft Entra ID licensing. If it is unavailable, assign individual users
-the `Dashboard.Viewer` role at the same **Users and groups** page.
-The person running Terraform needs permission to create applications and
-service principals, in addition to Azure permission to create the Web App and
-its storage role assignments.
+An operational handoff also records:
 
-Set `collector_management_group_id` to the management group ID, not its display
-name or full resource path. The Function Terraform stage grants its managed
-identity Reader once at that management-group scope. The collector then
-inventories every nested subscription, including subscriptions added below the
-management group later. This is separate from the Web App's storage-reader
-role. The Terraform deployer needs permission to create role assignments at the
-management-group scope.
+- The latest completed run and any active or failed collection.
+- Installed collector and dashboard versions.
+- The policy version and approved SLA targets.
+- Schedule, expected freshness, alert recipients, and escalation ownership.
+- Storage growth and available Web App disk/compute capacity.
+- How state and operational records are backed up and recovered.
 
-The browser must not receive storage account keys, SAS tokens, or direct access to the private history container.
+These are environment records, not source-controlled customer details.
 
-## Environment boundaries
+## What remains environment-specific
 
-Development, test, and production need separate values for:
-
-- Resource group
-- History storage account
-- Function runtime storage account
-- Function App
-- Web App
-- Managed identities
-- Application Insights instance
-- Current manifest pointer
-- SLA policy approval and version
-
-Use the same Terraform modules and application packages for each environment. Keep environment-specific values in uncommitted variable files and Function application settings rather than editing source files.
-
-## Deployment sequence
-
-Use the three cumulative Terraform stages:
-
-1. **Foundation:** protected history storage and containers.
-2. **Function:** collector plan and app, runtime storage, identity, permissions,
-   and monitoring.
-3. **Web App:** dashboard plan and app, read-only identity, authentication,
-   settings, and role assignments.
-
-The foundation changes rarely. Application code can be deployed repeatedly
-without modifying retained storage.
-
-Before applying a Terraform infrastructure change, review it with:
-
-```bash
-terraform fmt -check
-terraform validate
-terraform plan -out=<environment>.tfplan -var-file=<environment>.tfvars
-```
-
-The current Terraform provisions the protected storage foundation and, when
-`deploy_function=true`, the Dedicated Linux Function on a fixed B2 plan, separate runtime
-storage, managed identity, permissions, and monitoring. The Function remains a
-synchronous pilot rather than a Durable Functions orchestration.
-
-For existing Flex deployments, follow the [hosting migration procedure](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments).
-Code deployment alone does not change the hosting plan. Dedicated hosting
-removes consumption-driven scale-in but does not guarantee uninterrupted runs.
-
-### Existing-environment viewer update and second-tenant test
-
-For an environment that already has the Function, Web App, Terraform state and
-a published dataset:
-
-1. After the release has been promoted from `main` to the customer branch
-   `latest`, update the customer's `latest` checkout with
-   `git pull --ff-only origin latest`. Preserve the environment's existing
-   uncommitted settings and Terraform state; do not copy another tenant's
-   settings, data targets or state.
-2. Refresh the local dependencies, even if the deployment menu already imports
-   successfully:
-
-   ```bash
-   .venv/bin/python -m pip install -e ".[dev]"
-   ```
-
-   On Windows PowerShell:
-
-   ```powershell
-   .\.venv-win\Scripts\python.exe -m pip install -e ".[dev]"
-   ```
-
-   The PowerShell menu creates `.venv-win` on first use; the command above is for
-   updating an existing environment.
-3. Sign in to the target tenant and select its subscription:
-
-   ```bash
-   az login --tenant "<tenantId>"
-   az account set --subscription "<subscriptionId>"
-   az account show --query "{tenantId:tenantId,subscriptionId:id,name:name}"
-   ```
-
-4. Confirm `infra/terraform/main.tfvars.json` and the Terraform backend/state
-   belong to that environment. Start `./infra/deployment-menu.sh` or
-   `.\infra\deployment-menu.ps1`.
-5. Run menu **2**, review the plan, and apply only the intended infrastructure
-   changes. This adds the private `dvm-viewer-cache` container to the existing
-   storage account, the Web App's container-scoped access and
-   `DASHBOARD_DERIVED_CACHE_CONTAINER`. Stop if retained storage or evidence
-   containers would be deleted or replaced. Allow new role assignments time to
-   propagate. FTP and Web Deploy publishing basic authentication should remain
-   disabled for both applications.
-6. Run menu **4** to deploy/verify the Web App. This viewer update does not
-   require deploying the Function, invoking collection or running the manual
-   index-rebuild command.
-7. Leave the first startup running until `/api/health` reports
-   `dashboardReady: true`. Startup automatically restores compatible published
-   indexes or builds missing indexes from the existing immutable datasets. It
-   also prepares missing aggregates, the search projection, history and default
-   view results, then saves completed artifacts in the viewer-cache container.
-   An empty cache can require substantial one-time preparation; do not repeatedly
-   restart the application while it is advancing.
-8. Sign in as an assigned dashboard viewer. Confirm the expected run and finding
-   counts, navigate all nine views, change first-seen/severity filters, open a
-   large recommendation detail and download a small filtered CSV.
-9. After publication finishes, `/api/diagnostics` should show no cache-publication
-   error or pending query jobs. Perform one controlled Web App restart:
-
-   ```bash
-   az webapp restart --resource-group "<resourceGroupName>" --name "<WebAppName>"
-   ```
-
-   Verify readiness and the same counts again. Compatible artifacts should be
-   restored rather than rebuilt. New snapshots or incompatible index versions
-   still need their own preparation; this is snapshot reuse, not delta indexing.
-
-Use the same sequence in a second tenant only if it already has its own deployed
-environment and published dataset. For a brand-new tenant, follow the
-[greenfield checklist](greenfield-deployment.md), configure tenant-specific
-resource names and permissions, then use menu **1** for the complete
-infrastructure/Function/Web App deployment. A new environment also needs an
-initial collection (or an explicitly approved test-data publication) before the
-viewer can prepare data. Answer **N** to the collection prompt when testing an
-existing published snapshot; collect only when a new dataset is intended.
-
-### Function pilot deployment
-
-Follow `docs/greenfield-deployment.md` and `infra/deploy.sh`:
-
-1. Plan and apply the new resource group and protected history storage.
-2. Set `deploy_function=true`, then plan and apply the Function resources and permissions.
-3. Publish the Function package with the deployment helper.
-4. Verify host readiness and timer discovery.
-5. Run local preflight, then explicitly confirm one live Function invocation.
-
-The existing timer wrapper proves identity, packaging, Defender access, history reads, and durable publication. Before production use, replace the long synchronous collection with bounded Durable Functions activities, retries, concurrency control, and missed-run alerting.
-
-The exact commands use the `tf` prefix:
-
-```bash
-./infra/deploy.sh tfplan foundation
-./infra/deploy.sh tfapply foundation
-./infra/deploy.sh tfplan function
-./infra/deploy.sh tfapply function
-./infra/deploy.sh tfdeploy function
-./infra/deploy.sh tfverify function
-```
-
-Web App hosting recommendations are documented in
-`docs/web-app-deployment-recommendations.md`.
-
-## Deployed Function operation
-
-The normal path is the UTC timer configured by `collection_schedule`. Operators
-also have a guarded one-shot path for initial validation or an intentional
-out-of-band snapshot:
-
-```bash
-CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
-./infra/deploy.sh tfverify function
-```
-
-Both paths execute `collect-live`, create a new immutable run, and update only
-the current manifest after successful publication. Do not invoke a one-shot run
-while a scheduled invocation is active. Change the recurring schedule through
-the Terraform value and a reviewed `tfplan function`/`tfapply function`, not by
-editing the Function App setting out of band.
-
-## Production readiness gates
-
-Production deployment requires all of the following:
-
-- The synchronous collector is either proven to stay within its execution
-  and memory limits, with interruption risk accepted, or replaced with bounded
-  Durable Functions activities.
-- Function package deployment, retry behavior, concurrency control, and missed-run alerting are tested.
-- The collector managed identity has Defender application permissions with tenant admin consent.
-- The Function identity has write access to the history account without delete permissions in application code.
-- The web service and managed identity can read current curated data without exposing storage credentials.
-- Entra authentication and user/group authorization are tested.
-- Development, test, and production parameter files use separate resource names and identities.
-- The production SLA policy is adopted and versioned.
-- Backup, soft-delete, network-access, monitoring, and cost settings are reviewed.
-- A Terraform plan confirms that protected history is not managed, replaced, or deleted.
-
-Passing local tests proves the application behavior. It does not make the current Function reference or hosted dashboard production-ready.
+The code supplies publication checks, authentication, progress reporting, and
+cache verification. The deployment record supplies the approved collection scope,
+SLA policy, access assignments, monitoring recipients, cost ownership, and recovery
+arrangements. Those are operating decisions, not additional performance features
+waiting to be built.

@@ -1,13 +1,12 @@
 # Infrastructure operations and `deploy.sh` reference
 
-> **Last modified:** 2026-10-08
-> **Purpose:** Provide identical Windows, macOS, and Linux operations while explaining what the legacy `infra/deploy.sh` wrapper does, which tools and identities are used, and when to plan, apply, package, verify, invoke, or remove an application stage.
+This reference covers the deployment CLI, legacy Bash wrappers, cumulative
+Terraform stages, and collector hosting migration. Installation is in the
+[deployment guide](../DEPLOY.md); application behavior is in the
+[runtime reference](../docs/application-flow.md).
 
-The supported platform-neutral interface is
-`python -m vulnerability_view.operations_cli`. The Bash
-scripts remain available for compatibility. Use the repository-level
-[Azure deployment guide](../DEPLOY.md) for the complete greenfield procedure and
-permissions model.
+`python -m vulnerability_view.operations_cli` is the shared interface.
+The Bash scripts remain compatibility wrappers.
 
 The interactive `deployment-menu.sh` and `deployment-menu.ps1` launchers are a
 maintained pair over the same operations CLI. Every menu option, command
@@ -38,7 +37,7 @@ The Operations and diagnostics submenu includes a `FULL`-confirmed complete
 vulnerability baseline and recommendation-relationship reconciliation. Normal
 scheduled collection uses deltas between weekly full vulnerability baselines.
 
-Select **7 → 13** to export the latest published snapshot as a verified local
+Select **7 → 12** to export the latest published snapshot as a verified local
 ZIP, without starting a collection, deploying code, or changing Azure Storage.
 The signed-in Azure CLI identity needs blob-read access to both history and
 current-pointer containers. See [snapshot export](../docs/operations-and-configuration.md#export-the-latest-published-snapshot-for-analysis)
@@ -50,8 +49,10 @@ loads summary metrics first, then requests snapshot-pinned server-side table
 pages and details. Its verified compressed downloads and SQLite indexes are
 disposable local cache files. Each worker retains up to two snapshots within
 an 8 GiB local budget; allow sufficient App Service local disk. A cold cache
-is prepared during worker startup, before browser traffic is accepted. All nine
-default navigation views, including Reporting, are ready at that point.
+is prepared in the background while the authenticated shell can load. Data
+queries wait for snapshot readiness. With the Terraform-configured persistent
+viewer cache, compatible artifacts and all nine default views, including
+Reporting, are restored or prepared before the snapshot is advertised as ready.
 Analytical facts are separate from compressed original evidence. Allow up to
 30 minutes for cold startup (`WEBSITES_CONTAINER_START_TIME_LIMIT=1800`).
 New snapshots are prepared before selection; allow space for the ready and
@@ -307,11 +308,11 @@ managed-identity runtime-storage settings remain before reporting success.
 
 ### Collector hosting and upgrading existing Flex deployments
 
-The collector now uses a separate Linux Dedicated B2 App Service plan with one
+The collector uses a separate Linux Dedicated B2 App Service plan with one
 fixed worker and Always On. No autoscale policy is provisioned. This removes
 consumption-driven scale-in; it does not prevent maintenance, deployment, or
 failure-related restarts. Billing is continuous rather than per execution.
-The schedule and append-only publication contract are unchanged. Collection now
+The schedule and append-only publication contract are unchanged. Collection
 uses checkpointed Durable activities rather than one invocation carrying the
 whole run. The packaged host uses `functionTimeout: "-1"` and isolated workers
 have no wall-clock kill timer. Large processing stages can run to completion

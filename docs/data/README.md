@@ -1,526 +1,193 @@
-# Data structure, collection runs, and history
+# Data structure and retention
 
-> **Last modified:** 2026-10-12
-> **Purpose:** Define collected data, run processing, retention, change detection, and SLA calculations.
-
-For the direct runtime sequence that maps each API call to its raw file,
-curated file, and dashboard load behavior, start with
-[Application flow](../application-flow.md). This document is the deeper data
-contract and retention reference.
-
-## Collection flow
-
-1. Download current Defender records and retain each original response page as compressed source evidence.
-2. Join related records, compare finding keys with the previous run, and calculate lifecycle and SLA results.
-3. Create a versioned history bundle and, when configured, upload it to immutable ADLS paths before advancing the current manifest.
-4. Rewrite the local JSON and curated CSV presentation files used by the dashboard and validation tools.
+This reference defines the stored evidence, dataset fields, and lineage.
+[Application flow](../application-flow.md) covers API calls and processing;
+[LOGIC.md](../../LOGIC.md) covers lifecycle, priority, and SLA calculations.
 
 ## Durable retention requirement
 
-Historical vulnerability and SLA data must not depend on the local filesystem of an application or Function instance.
+Retained vulnerability history belongs in Azure Storage, not a Function or
+Web App's temporary filesystem. Local bundles support development and replay
+but do not provide hosted retention.
 
 ### No-delete rule
 
-The application never deletes retained Azure Storage data. Paths under `raw/`, `curated/`, and `runs/` are append-only. A request to start over, reset, rebuild, clean up, or redeploy creates a new run; it does not remove prior history. Only `current/manifest.json` is replaceable.
+Retained `raw/`, `curated/`, and `runs/` paths are append-only and use
+`overwrite=False`. Application code does not delete historical evidence or
+configure lifecycle deletion. A reset, rebuild, cleanup, redeployment, or
+request to start over does not authorize removal.
 
-The storage account must be preserved separately when application infrastructure is replaced. No lifecycle deletion policy should be added for retained history without explicit approval for the exact data and retention change.
+The history storage account survives application replacement. Within run
+publication, only `current/manifest.json` in the separate pointer container is
+replaceable. Any destructive exception requires explicit human approval naming
+the operation and exact target.
 
-The `dvm-history` container uses an unlocked 365-day time-based immutability
-policy. During that period Azure prevents changes and deletion of retained
-blobs. The policy remains unlocked while the workflow is validated; locking it
-later is an explicit irreversible operation because a locked policy cannot be
-removed or shortened. The `dvm-current` container is excluded so
-`current/manifest.json` can be replaced after a completed run.
-
-Blob and container soft delete are separately configured for 30 days. Soft
-delete is a recovery window after an eligible deletion, whereas WORM prevents
-the deletion during retention. Soft delete never deletes active data, but the
-retained deleted copy expires after 30 days. WORM expiration does not delete
-history.
-
-Local instance storage can be lost or become inconsistent when:
-
-- The application is redeployed
-- The hosting platform replaces or restarts an instance
-- The application scales to more than one instance
-- A new version starts with a clean filesystem
-- Temporary storage is reclaimed
-- A cleanup process removes local output
-
-Multiple application instances also do not provide one shared, ordered history. One instance might contain files that another instance cannot see.
-
-ADLS Gen2 is the required durable store for retained history. **ADLS means Azure Data Lake Storage Gen2.** It is built on Azure Blob Storage and adds a hierarchical directory structure suitable for organizing dated runs and analytical datasets.
-
-The intended storage rule is:
-
-> A collection run is not durably complete until its run manifest, raw source pages, normalized snapshots, and SLA/history outputs are stored in ADLS.
-
-Local files remain useful for download staging, development, replay caches, and serving the current dashboard, but they are not the authoritative historical record.
-
-The durable bundle is implemented for live CLI and scheduled Function runs when Azure Storage is configured. Raw files are written locally first, then the application uploads raw pages, every curated dataset, the SLA policy, and an immutable run manifest. The current manifest pointer is replaced last.
-
-When Azure Storage is not configured, the same bundle is staged under `output/history/<run-id>`, but it remains local and therefore does not satisfy durable production retention.
-
-```mermaid
-flowchart TD
-    A[Collection run] --> B[Local temporary staging]
-    B --> C[Raw source pages]
-    B --> D[Normalized snapshot]
-    D --> E[SLA and daily summaries]
-    C --> F[ADLS durable run folder]
-    D --> F
-    E --> F
-    F --> G[Mark run durably complete]
-    G --> H[Publish current dashboard files]
-```
+Terraform's default history protection is an unlocked 365-day WORM policy and
+30-day blob/container soft delete. Environment inputs determine the actual
+values. WORM prevents eligible changes/deletion during its protection period;
+soft delete supplies a recovery window after an eligible deletion. Neither
+policy automatically deletes active history at the end of WORM retention.
+Locking the WORM policy is an explicit irreversible choice.
 
 ## Three forms of data
 
-The application keeps the same security information in three different forms because each form has a different purpose.
+| Form | Hosted purpose | Local equivalent |
+|---|---|---|
+| Raw response pages | Original source evidence and replay | `output/raw/<run-id>/` |
+| Curated run bundle | Normalized snapshot, event history, policy, and manifest | `output/history/<run-id>/` |
+| Presentation exports | Local development and compatibility tools, not hosted evidence storage | `dashboard/data/` JSON and `output/curated/` CSV |
 
-| Form | Location | Purpose | Retention behavior |
-|---|---|---|---|
-| Raw source pages | Local `output/raw/<run-id>/`; durable copy in ADLS | Exact API evidence and replay | Uploaded into an immutable dated run when storage is configured |
-| Curated snapshots and SLA history | Local `output/history/<run-id>/`; durable dated snapshots in ADLS | Durable lifecycle, SLA, and historical reporting | Uploaded before the current pointer is replaced |
-| Current dashboard files | `dashboard/data/` and current CSV outputs | Fast browser and reporting access | Every dataset is rewritten; empty datasets clear stale presentation data |
-
-The raw archive is the closest representation of what the services returned. Curated snapshots record what the application calculated for a specific run, including lifecycle and SLA state. Current dashboard files are replaceable presentation copies.
-
-```mermaid
-flowchart LR
-    A[Defender and Graph responses] --> B[Compressed raw pages]
-    B --> C[Normalize and correlate]
-    C --> D[Reconcile finding lifecycle]
-        D --> E[Dated curated and SLA snapshot]
-        E --> F[Current CSV and dashboard JSON]
-        E --> H[ADLS durable history]
-    B --> G[Replay a prior run]
-    G --> C
-```
+Hosted dashboards query verified SQLite indexes. They do not read raw pages
+or require a complete findings JSON download into each browser.
+Published indexes and persistent viewer caches are additional derived data,
+not replacements for retained source evidence.
 
 ## Required ADLS layout
 
-The storage account uses two containers so immutable history policies cannot block current-pointer publication:
-
-- `dvm-history` (configured by `STORAGE_CONTAINER_NAME`): append-only historical evidence
-- `dvm-current` (configured by `STORAGE_CURRENT_CONTAINER_NAME`): replaceable pointer only
-
-The two containers separate immutable history from the replaceable current pointer:
+Two containers separate immutable evidence from the current pointer:
 
 ```text
-raw/
-    YYYY/MM/DD/<run-id>/*.json.gz
+dvm-history:
+  raw/YYYY/MM/DD/<run-id>/*.json.gz
+  curated/YYYY/MM/DD/<run-id>/*.json.gz
+  runs/YYYY/MM/DD/<run-id>/sla-policies.json
+  runs/YYYY/MM/DD/<run-id>/index/dashboard-primary.sqlite3.gz
+  runs/YYYY/MM/DD/<run-id>/index/dashboard-history.sqlite3.gz
+  runs/YYYY/MM/DD/<run-id>/manifest.json
 
-curated/
-    YYYY/MM/DD/<run-id>/findings.json.gz
-    YYYY/MM/DD/<run-id>/finding-events.json.gz
-    YYYY/MM/DD/<run-id>/devices.json.gz
-    YYYY/MM/DD/<run-id>/vulnerabilities.json.gz
-    YYYY/MM/DD/<run-id>/recommendations.json.gz
-    YYYY/MM/DD/<run-id>/recommendation-machines.json.gz
-    YYYY/MM/DD/<run-id>/remediation-activities.json.gz
-    YYYY/MM/DD/<run-id>/daily-summary.json.gz
-    YYYY/MM/DD/<run-id>/collection-runs.json.gz
-    YYYY/MM/DD/<run-id>/reconciliation.json.gz
-    YYYY/MM/DD/<run-id>/secure-scores.json.gz
-    YYYY/MM/DD/<run-id>/subscriptions.json.gz
-
-runs/
-    YYYY/MM/DD/<run-id>/sla-policies.json
-    YYYY/MM/DD/<run-id>/manifest.json
-
-dvm-current container:
-  current/
-      manifest.json
+dvm-current:
+  current/manifest.json
 ```
 
-The dated paths in `dvm-history` are append-only by run ID. `current/manifest.json` in `dvm-current` is replaced only after the dated run is durably complete. It points readers to immutable curated files in `dvm-history`, avoiding a partially replaced set of current files.
+Container names are configurable. Existing retained containers with older names
+remain valid when explicitly configured; a naming change does not authorize
+deleting or replacing them.
 
-Azure Function executions first stage API pages and the checksummed bundle in a
-writable temporary directory under `/tmp`. The temporary directory is deleted
-after the invocation. It is not evidence storage; the upload to `dvm-history`
-is the durable record.
+Hosted collection also retains per-run plans, response checkpoints, and
+processing continuations on immutable run paths. Durable task-hub tables,
+queues, and leases use the **separate Function runtime account**.
+Worker `/tmp` files are disposable caches, not the only copy of completed work.
+
+Optional shared workflow/branding uses a separate `dvm-workflow` container.
+Terraform also enables `dvm-viewer-cache` for compatible completed reporting
+artifacts. Viewer cache writes do not modify evidence or the current pointer.
+The [runtime reference](../application-flow.md#7-web-app-startup-indexing-memory-and-caches)
+explains cache compatibility and limits.
 
 ### Run manifest
 
-Each durable run manifest records:
+The completed manifest records run/snapshot identity, completeness, schema and
+normalization versions, policy version, endpoint results, file paths, dataset
+row counts, sizes, and SHA-256 checksums. Published query indexes also carry
+format and evidence identity.
 
-- Run ID and snapshot time
-- Completion status
-- Endpoint status, row count, page count, duration, and error
-- Schema version
-- Normalization version
-- SLA policy name and version
-- Dataset names, row counts, paths, sizes, and checksums for retained files
-
-The manifest prevents a partial upload from being mistaken for a valid daily snapshot.
-
-### Data retained for SLA continuity
-
-At minimum, every dated finding snapshot must preserve:
-
-- `FindingKey`
-- Device, CVE, product, and version identity
-- `FirstSeenUtc` source metadata
-- `FirstObservedUtc` and `LastObservedUtc`
-- `FirstAbsentUtc` and `ConsecutiveAbsentCount`
-- `EffectiveRemediationUtc`, `ConfirmationRunsCompleted`, and `ConfirmationRunsRequired`
-- `FindingStatus`
-- `FixedUtc`
-- `FixedConfirmedUtc`
-- `VerificationFailedUtc` and `SlaEvidenceStatus`
-- `ReopenedUtc`
-- `SlaPolicyName`
-- `SlaDays`
-- `SlaDueUtc`
-- `SlaStatus`
-- `SnapshotTimeUtc`
-- `CollectionRunId`
-
-The associated policy file or policy version must also be retained. Otherwise, a later policy change could make it impossible to explain why an older report classified a finding as within or outside SLA.
-
-Full dated finding snapshots are required even when daily summary rows are stored. Summary rows answer reporting questions quickly, but the detailed snapshots provide the evidence needed to recalculate, audit, or correct those summaries.
+Files are uploaded and verified before the current pointer advances. Publication
+checks the expected prior pointer ETag. Immutable collisions, corrupt evidence,
+and concurrent pointer changes fail explicitly; incomplete output is not
+selected as a successful snapshot.
 
 ## Live data sources
 
-Most live vulnerability information currently comes from Microsoft Defender for Endpoint REST APIs, not Microsoft Graph.
+Required Defender data establishes the finding baseline. Secure Score and
+Azure subscription inventory are supporting sources. Optional experimental
+remediation-task data is separate from finding-remediation evidence.
 
-### Required Defender endpoints
-
-If any required endpoint fails, the live collection stops.
-
-| Internal dataset | REST path | What is downloaded | How it is used |
-|---|---|---|---|
-| `machine_vulnerabilities` | `/api/vulnerabilities/machinesVulnerabilities` | Current machine, CVE, product, version, severity, and fixing-KB relationships | Drives the creation of device-level findings |
-| `machines` | `/api/machines` | Device identity, platform, version, risk, exposure, Azure metadata, tags, device group, health, and last-seen information | Enriches findings and determines asset classification and subscription |
-| `vulnerabilities` | `/api/vulnerabilities` | CVE metadata, CVSS, exploit evidence, severity, and first-detected information | Enriches findings, priority, watchlists, and SLA input |
-| `recommendations` | `/api/recommendations` | Defender recommendations, product relationships, impact, category, status, and exposed-machine counts | Creates the recommendation workbench and links findings to corrective actions |
-
-### Optional Defender endpoints
-
-Failure of an optional endpoint is recorded but does not stop the required collection.
-
-| Internal dataset | REST path | Current use |
-|---|---|---|
-| `remediation_tasks` | `/api/remediationTasks` | Enriches recommendations and creates remediation-activity rows when the route is available |
-| `vulnerability_changes` | `/api/machines/SoftwareVulnerabilityChangesByMachine` | Downloaded as a compatibility probe but not used by normalization |
-
-These two routes were not found in the public Defender Endpoint API documentation when the implementation was created. They are disabled by default and queried only when `ENABLE_EXPERIMENTAL_ENDPOINTS=true`. They are not required for core findings, lifecycle, SLA, recommendations, devices, or Secure Score.
-
-### Recommendation-machine requests
-
-Vulnerability recommendation memberships are derived from the machine-vulnerability feed already downloaded for findings. The enrichment mode controls additional requests:
-
-- `targeted`: request only non-vulnerability recommendations
-- `full`: request every recommendation with exposed machines
-- `none`: use only derived vulnerability relationships
-- `auto`: targeted daily and full on the configured weekday
-
-Additional requests use:
-
-```text
-/api/recommendations/<recommendation-id>/machineReferences
-```
-
-Derived and requested relationships create the `recommendationMachines` dataset. Failure for one requested recommendation does not stop the collection. The combined endpoint status becomes `PartialSuccess` when any requested relationship fails.
-
-In the measured local tenant, targeted mode reduces separate recommendation requests from 796 to approximately 103 while preserving vulnerability relationships from the core feed.
-
-### Storage protocol
-
-Azure persistence uses `https://<account>.blob.core.windows.net` and `BlobServiceClient`, including for HNS-enabled ADLS Gen2 accounts. This remains compatible with Blob soft delete and Blob events that can make the DFS endpoint reject operations. Immutable history keeps `overwrite=False`; only `current/manifest.json` is replaceable.
-
-### Current Microsoft Graph request
-
-The only Microsoft Graph data currently collected is the latest Microsoft Secure Score:
-
-```text
-GET https://graph.microsoft.com/v1.0/security/secureScores?$top=1
-```
-
-It requires `SecurityEvents.Read.All`. Secure Score is optional, so authentication, permission, or request failures leave the score dataset unavailable without stopping Defender collection.
-
-## Live-run processing
-
-Every new collection begins with a UTC snapshot time and a run ID:
-
-```text
-live-YYYYMMDDTHHMMSSZ
-```
-
-For example:
-
-```text
-live-20260921T050000Z
-```
-
-### Run sequence
-
-```mermaid
-flowchart TD
-    A[Create snapshot time and run ID] --> B[Download required Defender endpoints]
-    B --> C[Download optional endpoints]
-    C --> D[Download machines for exposed recommendations]
-    D --> E[Request latest Graph Secure Score]
-    E --> F[Normalize all successful payloads]
-    F --> G[Load previous live findings]
-    G --> H[Reconcile current and previous keys]
-    H --> I[Build daily summary]
-    I --> J[Create endpoint run-status rows]
-    J --> K[Build curated bundle and manifest]
-    K --> L{ADLS configured?}
-    L -->|Yes| M[Upload immutable run and replace current manifest]
-    L -->|No| N[Keep local raw and history bundles]
-    M --> O[Rewrite current CSV and JSON datasets]
-    N --> O
-```
-
-### Page download and raw archive
-
-Each endpoint is downloaded one page at a time. Machine-vulnerability findings
-default to at most 2,500 rows per page; machine, vulnerability-catalog, and
-recommendation inventories remain capped at 1,000 rows. These bounds apply
-from the first page onward using `$top`. The collector follows `@odata.nextLink`
-when provided; otherwise, a full inventory page advances `$skip` while preserving
-filters until a short or empty page is returned. An exact page-size boundary
-requires a final empty request; the page size is not a total collection limit.
-
-Full collection first downloads the paged machine inventory and applies any
-configured scale-set exclusion. It then retrieves machine-vulnerability findings
-separately for every included distinct Defender machine ID using
-`/api/vulnerabilities/machinesVulnerabilities?$filter=machineId eq '<id>'&$top=2500`
-(or the selected page size). This avoids the unfiltered tenant-wide findings
-query. Device names are logged for identification; the filter uses IDs, not
-names. Scale-set instances are excluded only when `EXCLUDE_SCALE_SETS=true`;
-inactive devices returned by inventory are not automatically excluded.
-Findings outside the returned device inventory cannot be discovered
-through this method; existing lifecycle handling for missing devices is unchanged.
-Each device is fully paged, including devices with zero findings, and progress
-reports completed machines and aggregate rows. A failed device query or findings
-returned for a different device fails the run before publication; no partial
-baseline is presented as complete.
-
-After findings, the collector fetches catalog details only for the distinct
-referenced CVE IDs, in filtered batches of up to 50 with normal paging. It then
-collects recommendations. There is no unfiltered full-catalog download and no
-per-finding repeat lookup. Missing or mismatched CVE detail responses abort
-publication. All findings for included devices are retained; this optimization
-does not impose a finding-count cap. An empty finding set skips catalog requests
-and retains an empty catalog archive so the completed run can still be replayed.
-
-Raw findings page numbers continue across devices rather than restarting and
-overwriting earlier device evidence. An empty inventory produces an explicitly
-derived empty findings archive for replay, not a fabricated API response.
-Live findings request starts are spaced at least 2.5 seconds apart across devices,
-pages, and retries (about 24 requests/minute), counting API response time toward
-that interval. Other consumers of the shared quota can still cause throttling.
-Bounded retries and the Function execution limit still apply. This is not a
-resumable or bulk-export implementation; the Function's raw pages are temporary
-until the completed bundle is uploaded.
-
-Vulnerability deltas default to `pageSize=1000` and follow server continuation
-links. They do not use `$top`, which disables continuation on the delta export API.
-Manual complete collections can select a smaller per-run page size (1-2,500)
-through deployment menu option 5. Its default debug mode instead requests one
-page and stops without archiving or publishing any data. Machine debug first
-discovers one device with `/api/machines?$top=1`, then requests one findings page
-using the same `machineId` filter as full collection (two requests total).
-It follows neither discovery nor findings next links. Catalog debug makes just
-one request. Debug remains capped at 1,000 rows and does not add pacing waits.
-A successful machine debug sample validates one device/page, not
-the whole device-by-device collection.
-Recommendation-machine references and experimental routes have no documented
-manual page-size control; their server-provided next links are followed without
-inventing query parameters. Graph Secure Score intentionally requests only the
-latest score and is not a full inventory.
-
-Malformed pages, repeated continuation URLs, repeated full pages, and responses
-exceeding the requested page size fail collection rather than silently reporting
-a complete snapshot. Request timeouts and transient HTTP failures share a
-five-attempt budget per page.
-
-Every successful page is written immediately as gzip-compressed JSON:
-
-```text
-output/raw/<run-id>/<endpoint>-page-0001.json.gz
-output/raw/<run-id>/<endpoint>-page-0002.json.gz
-```
-
-Recommendation-machine filenames also include the recommendation ID. Secure Score is written as `secure_scores-page-0001.json.gz` when the Graph request succeeds.
-
-Raw pages are written before normalization. If a later transformation fails, the successful source downloads remain available.
-
-### Retry behavior
-
-HTTP 429 and temporary `500`, `502`, `503`, and `504` responses share five total
-attempts per page. For 429, the collector honors the full `Retry-After` delay
-(seconds or HTTP date) and the quota error's `You can send requests again in N
-seconds` message, using the longer delay if both exist. There is no 60-second
-cap on a server-directed 429 wait. Without a valid server delay, 429 uses
-60/120/240/480-second backoff plus small jitter. Invalid `Retry-After` values
-are logged before falling back. Timeouts and 5xx retain their existing shorter
-backoff. Cooldowns consume Function execution time; the four-hour limit still
-applies. Exhausting the attempt budget fails collection without publication.
-
-HTTP 401 and 403 fail immediately with credential or permission guidance.
+The [API table](../application-flow.md#3-exactly-what-the-collection-job-calls)
+defines endpoint scope, full/delta behavior, and enrichment. Successful hosted
+responses are checkpointed before transformation. Missing CVE enrichment can
+produce a warning without losing the underlying finding; malformed evidence
+and failed required finding calls do not.
 
 ## Daily retained data
 
-### Raw run folders are the actual daily snapshots
+Every successful run has its own immutable raw/curated paths and manifest.
+The current pointer selects one completed run. It is not a roll-up that adds
+the same finding again for every scan.
 
-A successful collection normally adds a new folder under `output/raw`. Older run folders are not deleted or modified by application cleanup logic.
-
-This means the raw directory can contain the source evidence for many different days:
-
-```text
-output/raw/
-  live-20260919T050000Z/
-  live-20260920T050000Z/
-  live-20260921T050000Z/
-```
-
-There is currently no automatic local retention or purge policy. Raw folders remain until they are manually removed.
-
-### Current ADLS persistence behavior
-
-When storage is configured, raw pages from the current run folder are copied to ADLS Gen2:
-
-```text
-raw/YYYY/MM/DD/<run-id>/<filename>.json.gz
-```
-
-Uploads use `overwrite=False`. If the exact remote path already exists, a 409 conflict is accepted and the existing object is retained.
-
-The same run also uploads compressed curated datasets under `curated/YYYY/MM/DD/<run-id>/`, the retained SLA policy and manifest under `runs/YYYY/MM/DD/<run-id>/`, and finally replaces `current/manifest.json`.
-
-For live CLI collection and the scheduled Function, an upload failure stops the live pipeline before current local outputs are published. The combined sample build retains its existing synthetic fallback behavior when the live portion fails.
-
-### Curated and dashboard files are not daily append-only snapshots
-
-The CSV and JSON output names do not include the run ID or date. Publishing a dataset writes to the same filenames each time:
-
-```text
-dashboard/data/findings.json
-output/curated/findings.csv
-```
-
-Every configured dataset file is rewritten during publication. Empty or unavailable datasets become `[]` in JSON and an empty CSV file, preventing older data from surviving into a newer snapshot.
-
-This distinction is important:
-
-- A raw run folder is immutable source evidence for one collection.
-- A named dashboard or CSV file is the most recently published nonempty version of that dataset.
-
-### Run summaries
-
-`build-sample` rewrites:
-
-```text
-output/run-summary/latest.json
-output/run-summary/latest.md
-```
-
-Only the latest build summary is kept at these paths. `collect-live` does not write these run-summary files.
+Local presentation exports are different: publication rewrites the configured
+JSON and CSV filenames. Empty or unavailable datasets clear those local files
+rather than leaving an older dataset in place. Hosted Function processing can
+skip these uncompressed local exports after durable publication.
 
 ## Replay behavior
 
-The following commands can rebuild from locally archived pages without calling Defender:
+Replay reads archived responses through current normalization and lifecycle
+logic. Delta archives include reconstructed finding/CVE state so they can be
+replayed without asking Defender to reproduce an older response.
 
-```text
-vulnerability-view collect-live --from-raw latest
-vulnerability-view build-sample --mode live --from-raw latest
-vulnerability-view build-sample --mode combined --from-raw latest
-```
-
-Replay reads all matching gzip pages in the selected run folder and reconstructs the endpoint payloads. Required endpoint pages must exist. Missing optional pages produce optional-unavailable statuses.
-
-The reconstructed payloads pass through the current normalization code. Replaying old raw data after the code changes can therefore produce different curated output from the same source pages. This is intentional: the raw archive preserves evidence while the curated model can improve.
-
-Each archived page retains the complete JSON response from an endpoint call,
-including source fields that the current normalizer does not use. This permits
-later normalization changes without recollecting that run. It does not create
-data for endpoints that were not called; adding a new source endpoint still
-requires a later collection.
+Replay can change calculated output when application logic has changed; it
+does not rewrite the original retained evidence. Local-only replay does not
+call Azure or Defender. Publication/backfill commands have separate write
+behavior and are not ordinary read-only inspection tools.
 
 ## Shared recommendation workflow events
 
-Optional shared recommendation tracking uses the private `dvm-workflow`
-container rather than the retained history or current-pointer containers. Each
-action is a new JSON blob written with `overwrite=False`:
+Each user action appends a JSON event with `overwrite=False`:
 
 ```text
 events/<recommendation-id-sha256>/YYYY/MM/DD/<timestamp>-<uuid>.json
 ```
 
-An event retains `RecommendationId`, `UserStatus`, `MarkedAtRunId`,
+Events retain `RecommendationId`, `UserStatus`, `MarkedAtRunId`,
 `MarkedAtSnapshotUtc`, `UpdatedUtc`, `UpdatedByObjectId`, and
-`UpdatedByDisplayName`. The latest event for a recommendation supplies its
-shared display state. A `Clear` event hides earlier state without deleting
-history.
+`UpdatedByDisplayName`. The authenticated identity comes from Easy Auth, not
+browser-supplied actor fields. `Clear` hides prior display state without
+deleting its history.
 
-Disabling the feature hides the controls and disables its API. The workflow
-container, existing events, managed-identity permission, and application-role
-assignment remain in place so changing the App Service setting can re-enable
-the feature without an infrastructure or package deployment.
+User-marked fixes await newer collection evidence. Status is shared
+coordination, not a Defender assignment, lock, finding transition, or SLA input.
+The [work-status rules](../../LOGIC.md#8-shared-recommendation-work-tracking)
+define confirmation and reassignment.
 
-`InProgress` records the authenticated user's Entra object ID and display name;
-those values come from App Service Authentication rather than browser input. A
-newer run keeps the item **In progress** while active findings remain and
-derives **Confirmed** when none remain. If current collection evidence still
-shows active findings seven days after the last workflow update, the dashboard
-derives **Needs reassignment** and returns the item to the attention queue while
-preserving the prior user and time. Marking it in progress again appends a new
-event and restarts the seven-day window.
-
-`ReadyForValidation` is displayed as **Marked fixed · awaiting collection**
-until a newer run is current. The dashboard derives **Confirmed fixed** when
-that run contains no active live findings for the recommendation, or **Still
-detected after validation** when active findings remain. These events are
-application workflow metadata, not Defender evidence, and they do not alter
-findings, lifecycle reconciliation, or SLA fields.
+Disabling tracking hides its controls/API, not its retained container or events.
+Branding versions are also append-only, under `branding/logos/`.
 
 ## Published datasets
 
-Every dataset contains these lineage fields where applicable:
+Applicable records carry these lineage fields:
 
 | Field | Meaning |
 |---|---|
 | `DataOrigin` | `Live` or `Synthetic` |
-| `ScenarioId` | Identifies the synthetic scenario or live snapshot family |
-| `SnapshotTimeUtc` | Time represented by the normalized observation |
-| `CollectionRunId` | Run that produced the observation |
+| `ScenarioId` | Synthetic scenario or live snapshot family |
+| `SnapshotTimeUtc` | Observation time represented by the record |
+| `CollectionRunId` | Run that produced the record |
 
 ### Findings
 
-Findings are the central dataset. One row represents a device-level vulnerability observation for a specific machine, CVE, product, and version identity.
+One row represents a device/CVE/software-product/version relationship.
+The same CVE on many devices or affected products can produce many instances.
 
 #### Identity and device
 
 | Field | Meaning |
 |---|---|
-| `FindingKey` | Defender row ID, or a deterministic hash when no ID is supplied |
-| `DeviceId`, `DeviceName` | Defender machine identity and display name |
-| `OSPlatform`, `OSVersion` | Device operating system information |
-| `LastSeenUtc` | Last-seen value from machine inventory |
+| `FindingKey` | Defender row ID, or deterministic fallback hash |
+| `DeviceId`, `DeviceName` | Machine identity and display name |
+| `OSPlatform`, `OSVersion` | Operating system |
+| `LastSeenUtc` | Machine inventory last-seen time |
 
 #### Software and vulnerability
 
 | Field | Meaning |
 |---|---|
-| `SoftwareVendor`, `SoftwareName`, `SoftwareVersion` | Affected software identity |
+| `SoftwareVendor`, `SoftwareName`, `SoftwareVersion` | Affected software |
 | `CveId` | CVE identifier |
-| `Severity`, `CvssScore` | Defender severity and CVSS value |
-| `ExploitabilityLevel` | `KnownExploit` or `NoKnownExploit` |
-| `PublicExploitAvailable` | Public exploit evidence from vulnerability metadata |
-| `VerifiedExploitAvailable` | Defender-verified exploit evidence |
-| `ExploitKitAvailable` | Exploit-kit evidence |
+| `Severity`, `CvssScore` | Severity and available CVSS value |
+| `CveMetadataStatus` | Whether referenced CVE details were available |
+| `ExploitabilityLevel` | Known/no-known exploit classification, or unknown metadata |
+| `PublicExploitAvailable` | Public exploit evidence; null if unavailable |
+| `VerifiedExploitAvailable` | Defender-verified exploit evidence; null if unavailable |
+| `ExploitKitAvailable` | Exploit-kit evidence; null if unavailable |
+
+Unknown metadata is not evidence of no exploit or a zero CVSS score.
 
 #### Recommendation and update
 
 | Field | Meaning |
 |---|---|
-| `RecommendationId`, `RecommendationName` | Related Defender recommendation |
-| `SecurityUpdateAvailable` | Whether a fixing KB or related recommendation exists |
+| `RecommendationId`, `RecommendationName` | Linked Defender recommendation |
+| `SecurityUpdateAvailable` | A fixing KB or related recommendation is available |
 | `RecommendedSecurityUpdate` | Fixing KB or recommended version |
 
 #### Asset context
@@ -528,487 +195,208 @@ Findings are the central dataset. One row represents a device-level vulnerabilit
 | Field | Meaning |
 |---|---|
 | `AssetClass` | `AzureCloud`, `TraditionalIT`, or `Unknown` |
-| `AzureResourceId`, `SubscriptionId` | Azure ownership metadata when available |
+| `AzureResourceId`, `SubscriptionId` | Available Azure ownership metadata |
 | `OwnerTeam` | Derived operating queue |
-| `ClassificationReason` | Evidence used to derive the asset class |
-| `AssetCriticality` | Current criticality input to priority scoring |
-| `InternetFacing` | Whether recommendation tags indicate internet exposure |
+| `ClassificationReason` | Evidence used for asset classification |
+| `AssetCriticality` | Priority-score input |
+| `InternetFacing` | Recommendation tag evidence |
 | `DeviceRiskScore`, `DeviceExposureLevel` | Defender device context |
 
 #### Lifecycle
 
 | Field | Meaning |
 |---|---|
-| `FirstSeenUtc` | Defender vulnerability metadata retained for reference |
-| `FirstObservedUtc`, `LastObservedUtc` | First and latest times this collector observed the finding |
+| `FirstSeenUtc` | Source vulnerability metadata, not the collector-owned SLA start |
+| `FirstObservedUtc`, `LastObservedUtc` | First/latest collector observation |
 | `FindingStatus` | `Open`, `PendingConfirmation`, `PendingVerification`, `Fixed`, `Reopened`, `DetectionReturned`, `StaleDevice`, `OutOfScope`, or `Unknown` |
-| `FirstAbsentUtc`, `ConsecutiveAbsentCount` | Evidence accumulated while a fresh, active device no longer reports the finding |
-| `EffectiveRemediationUtc` | First qualified absence used for SLA timing; blank when evidence is insufficient or provisional remediation is revoked |
-| `ConfirmationRunsCompleted`, `ConfirmationRunsRequired` | Evidence progress toward confirmed fixed status |
+| `FirstAbsentUtc`, `ConsecutiveAbsentCount` | Qualified absence evidence |
+| `EffectiveRemediationUtc` | First qualified absence used for SLA; blank when insufficient or revoked |
+| `ConfirmationRunsCompleted`, `ConfirmationRunsRequired` | Confirmation progress |
 | `FixedUtc`, `FixedConfirmedUtc` | Effective remediation time and later confirmation time |
-| `VerificationFailedUtc` | Time a finding returned before pending evidence could be confirmed |
-| `SlaEvidenceStatus` | Detection, pending-confirmation, corroboration, confirmed, or insufficient-evidence qualifier for the SLA outcome |
-| `ReopenedUtc` | Snapshot time when a previously fixed key appeared again |
-| `LifecycleReason` | Explanation for the current lifecycle state |
+| `VerificationFailedUtc` | Return before confirmation |
+| `SlaEvidenceStatus` | Evidence qualifier for the reported SLA result |
+| `ReopenedUtc` | Latest reappearance after confirmed fixed |
+| `LifecycleReason` | Explanation of the current status |
 
 #### SLA and priority
 
 | Field | Meaning |
 |---|---|
-| `SlaPolicyName`, `SlaDays` | Selected policy and allowed days |
-| `SlaPolicyVersion`, `SlaStartUtc` | Versioned policy evidence and collector-owned SLA start |
+| `SlaPolicyName`, `SlaDays` | Selected policy and allowance |
+| `SlaPolicyVersion`, `SlaStartUtc` | Policy version and collector-owned start |
 | `SlaDueUtc` | Calculated due time |
-| `SlaStatus` | Open/fixed and within/outside SLA result |
-| `PriorityScore` | Custom score from 0 through 100 |
-| `PriorityExplanation` | Point-by-point explanation of that score |
+| `SlaStatus` | Within/outside-SLA or unknown result |
+| `PriorityScore` | Application score, 0 through 100 |
+| `PriorityExplanation` | Components of that score |
 
 #### Assignment placeholders
 
-`AssignedTeam`, `AssignedEngineer`, `AssignmentStatus`, and `ExternalTicketId` exist in the finding schema. Live normalization currently leaves them empty and sets `AssignmentStatus` to `NotAssigned`. Synthetic data uses them to demonstrate an added workflow.
+Live normalization leaves `AssignedTeam`, `AssignedEngineer`, and
+`ExternalTicketId` empty and uses `AssignmentStatus=NotAssigned`.
+Synthetic data can populate them for demonstrations. These fields are not
+the shared recommendation workflow store.
 
 ### Finding events
 
-`finding-events` is the append-only lifecycle ledger carried into each new durable run. A new event is added whenever a finding changes state.
+`finding-events.json.gz` carries the retained transition ledger into each new
+run. Events include New, PendingConfirmation, PendingVerification, Fixed,
+Reopened, DetectionReturned, StaleDevice, OutOfScope, Unknown, and Open.
 
-Event types include:
+An event records prior/new state, finding/device/CVE/recommendation identity,
+ownership, policy/SLA result, reason, time, and lineage.
+`EventTimeUtc` is when the collector learned the transition.
+`EffectiveTimeUtc` is when it counts for reporting; a confirmed fix can be
+learned later than its first qualified absence.
 
-- `New`
-- `PendingConfirmation`
-- `PendingVerification`
-- `Fixed`
-- `Reopened`
-- `DetectionReturned`
-- `StaleDevice`
-- `OutOfScope`
-- `Unknown`
-- `Open` when a finding returns from an unconfirmed evidence state
+The ledger preserves repeated fix/reopen cycles even though the current
+finding row has only one latest timestamp for each field.
 
-Each event records the previous and new status, event time, effective time, finding/device/CVE/recommendation identity, ownership dimensions, SLA policy and result, lifecycle reason, and run lineage.
+### Recommendation events and run history
 
-`EventTimeUtc` records when the collector learned about the transition. `EffectiveTimeUtc` records when the transition is counted for reporting. For a confirmed fix, the event is learned on the confirmation run but its effective time is the first qualified absence.
+`recommendation-events.json.gz` retains baseline, activation, inactivity,
+and reopening events. `run-history.json.gz` carries compact run-level metrics
+for findings, CVEs, devices, recommendations, movement, and SLA.
+These are separate from current recommendation inventory and per-endpoint status.
 
-This ledger preserves multiple fixed and reopened cycles that cannot fit in the single current finding row. Daily new, fixed, and reopened movement counts use the event ledger when it is available.
+### Devices and vulnerabilities
+
+`devices.json.gz` retains normalized device inventory, including devices with
+no current finding. Discovery without assessment is not proof of zero
+vulnerabilities.
+
+`vulnerabilities.json.gz` retains referenced CVE detail. Unavailable details are
+identified explicitly; finding evidence remains present.
 
 ### Recommendations
 
-One row represents a Defender recommendation. Important groups are:
+Current recommendation records contain:
 
-- Identity: `RecommendationId`, `RecommendationName`
-- Product: `ProductName`, `Vendor`, `RecommendedVersion`
-- Classification: `Category`, `SubCategory`, `RemediationType`, `RelatedComponent`
-- Scope: `ExposedMachinesCount`, `TotalMachineCount`
-- Risk: `SeverityScore`, `PublicExploitAvailable`, `ActiveAlert`, `HasUnpatchableCve`
-- Impact: `ExposureImpact`, `ConfigScoreImpact`
-- Context: `AssociatedThreats`, `Weaknesses`, `Tags`
-- Optional remediation join: `RemediationTriggered`, task ID, status, priority, target count, and fixed count
+- Identity and product: `RecommendationId`, `RecommendationName`, `ProductName`,
+  `Vendor`, `RecommendedVersion`.
+- Classification: `Category`, `SubCategory`, `RemediationType`, `RelatedComponent`.
+- Scope and risk: `ExposedMachinesCount`, `TotalMachineCount`, `SeverityScore`,
+  `PublicExploitAvailable`, `ActiveAlert`, `HasUnpatchableCve`.
+- Impact/context: `ExposureImpact`, `ConfigScoreImpact`, `AssociatedThreats`,
+  `Weaknesses`, `Tags`.
+- Optional task evidence: `RemediationTriggered`, task ID, status, priority,
+  target count, and fixed count.
 
-Live recommendations represent the current response. The application does not currently maintain a separate lifecycle row for each recommendation across every day.
+The inventory is current state. Recommendation events retain its transitions.
+The [filtering limitation](../../LOGIC.md#2-finding-identity-and-scope) explains
+why some end-of-support uninstall guidance is excluded by Vulnerability-only scope.
 
 ### Recommendation machines
 
-One row connects a recommendation to one affected machine. It contains:
-
-- Recommendation and device IDs
-- Device name and operating system
-- Defender device group name
-- Device exposure and last-seen values
-- Asset class, subscription, Azure resource ID, and owner team
-- Classification reason and lineage fields
-
-This dataset powers recommendation-to-machine pivots. It is current-snapshot data rather than an append-only history.
+Each row connects a recommendation and device with device name/OS/group,
+exposure, last seen, asset class, Azure ownership, classification reason, and
+lineage. Relationships can be derived from findings or collected from the API.
+This is a current-snapshot dataset.
 
 ### Remediation activities
 
-When the optional route is available, one row contains:
-
-- Remediation and recommendation identity
-- Status and priority
-- Created and due dates
-- Target and fixed device counts
-- Calculated progress percentage
-- Requester, completer, completion method, and last-modified time
-- Defender RBAC device-group names
-
-Task completion and finding remediation are separate concepts. A completed task does not by itself change a finding to `Fixed`; finding status is calculated by snapshot reconciliation.
+Optional task rows contain task/recommendation identity, status, priority,
+created/due times, target/fixed counts, progress, requester/completer,
+completion method, last modification, device groups, and lineage.
+Task completion does not by itself make a finding fixed.
 
 ### Daily summary
 
-Daily summary rows are derived from finding lifecycle timestamps. They are not raw daily observations downloaded from Defender.
-
-Each row is grouped by:
-
-- `SummaryDate`
-- `AssetClass`
-- `SubscriptionId`
-- `OwnerTeam`
-- `Severity`
-- `DataOrigin`
-
-Measures include:
-
-- New, fixed, and remaining findings
-- Known-exploit backlog
-- Open and fixed SLA outcomes
-- Assignment-state counts
-- Median days to fix
-
-The default summary window is 90 days ending at the latest snapshot represented in the finding data.
+Derived daily rows group by date, asset class, subscription, owner, severity,
+and origin. Measures include movement, backlog, exploit context, pending
+evidence, SLA outcomes, assignment states, and median time to fix.
+The default window is 90 days through the latest represented snapshot.
+These are calculated results, not raw daily Defender observations.
 
 ### Collection runs
 
-Live collection creates one status row per endpoint or endpoint family. Fields include:
-
-- Run and snapshot times
-- Endpoint name
-- Success, partial-success, optional-unavailable, or failed state
-- Row count
-- Duration and error text
-- Lineage fields
-
-The dashboard uses these rows for freshness and health. The published `collection-runs` file is rewritten for the current build; it is not currently an append-only run ledger.
+Per-endpoint rows record run/snapshot time, endpoint, status, counts, duration,
+error, and lineage. They describe the current collection, not every historical
+invocation. Run manifests and run-history data provide the retained context.
 
 ### Reconciliation
 
-Reconciliation rows summarize monthly severity movement:
+Monthly severity control totals compare previous, new, fixed, reopened, and
+remaining findings:
 
-$$
+```text
 CurrentRemaining = PreviousRemaining + New - Fixed + Reopened
-$$
+```
 
-The dataset contains month, severity, each movement count, current remaining, and a reconciliation flag.
+Direct live processing builds live reconciliation. Combined sample builds
+retain their synthetic reconciliation population. Empty local exports are
+cleared rather than preserving an old file.
 
-Current behavior differs by command:
+### Secure Score and subscriptions
 
-- Synthetic builds create reconciliation rows.
-- Combined builds retain the synthetic reconciliation dataset.
-- Direct live collection does not create a live reconciliation dataset.
-- Because empty or absent datasets are skipped during export, an older `reconciliation` file can remain after a live-only publication.
+Secure Score contains the latest Graph score, maximum/percentage, user counts,
+services, category scores, tenant comparison, and lineage. `$top=1` is one
+current observation, not a collected score time series.
 
-### Secure Score
-
-The Secure Score dataset contains the latest returned score, maximum score, percentage, user counts, enabled services, category scores, all-tenant comparison, and lineage.
-
-Because the request uses `$top=1`, a live run collects only the latest score returned by Graph. The application does not currently build a historical Secure Score series from repeated runs.
+Subscriptions describe configured management-group descendants, or subscriptions
+visible to the collector when no group is configured. Zero-finding subscriptions
+can still appear as inventory; visibility is not proof of vulnerability coverage.
 
 ## Finding identity
 
-The application uses the Defender-provided machine-vulnerability `id` as `FindingKey` when available.
-
-If that ID is absent, the fallback key is a SHA-256 hash of:
+`FindingKey` uses the source machine-vulnerability ID when supplied. Otherwise:
 
 ```text
-machineId | cveId | productName | productVersion
+SHA-256(machineId | cveId | productName | productVersion)
 ```
 
-This produces a deterministic key for comparison and deduplication.
-
-The product version is part of both the Defender example identity and the fallback identity. A software-version change can therefore make one key disappear and another key appear, even when the device and CVE are the same.
-
-## Previous-finding selection
-
-Before reconciliation, the CLI builds a previous-finding list from two places:
-
-1. Live rows already present in `dashboard/data/findings.json` whose snapshot time is earlier than the current run.
-2. The latest earlier `output/raw/live-*` folder, replayed through current normalization.
-
-The two lists are combined and indexed by `FindingKey`. This allows current-state lifecycle fields already present in dashboard data to participate while retaining raw replay as a fallback source.
-
-On the first run, no previous findings exist, so every current finding begins as open.
+A version change can close one identity and create another. Duplicate published
+finding keys fail validation. A CVE appearing on different devices is not a
+duplicate finding.
 
 ## Lifecycle state determination
 
-```mermaid
-stateDiagram-v2
-    [*] --> Open: Key first appears
-    Open --> Open: Key appears again
-    Open --> PendingConfirmation: First qualified absence
-    PendingConfirmation --> Fixed: Second qualified absence
-    Open --> PendingVerification: All device findings disappear
-    PendingVerification --> PendingVerification: Wholesale absence continues
-    PendingVerification --> DetectionReturned: Finding returns
-    PendingConfirmation --> DetectionReturned: Finding returns before confirmation
-    DetectionReturned --> Open: Detection continues
-    Open --> StaleDevice: Absent but device evidence is stale
-    Open --> Unknown: Absent and device inventory is missing
-    Open --> OutOfScope: Device is offboarded or unsupported
-    Fixed --> Fixed: Key remains absent
-    Fixed --> PendingVerification: Absence-derived fix is invalidated by wholesale disappearance
-    Fixed --> Reopened: Same key appears again
-    Reopened --> Reopened: Key remains present
-    Reopened --> Fixed: Key becomes absent
-```
+Current detection, qualified absence, whole-device disappearance, stale/missing
+inventory, return before confirmation, and reopening are different states.
+A missing finding alone does not establish a fix.
 
-### New
-
-A key not present in the previous finding index is treated as a new open finding. `FirstObservedUtc` and the SLA clock start at the collection snapshot. Defender's `firstDetected` value remains in `FirstSeenUtc` as source metadata when available.
-
-### Remaining
-
-A key present in both the current and previous data remains open, or remains reopened if it was already reopened. Its previous `FirstObservedUtc` is preserved and `LastObservedUtc` advances.
-
-### Fixed
-
-A previous key absent from the current finding list is evaluated against the current device inventory.
-
-- Active device seen within 48 hours, first partial absence: `PendingConfirmation`
-- Active and fresh device, second consecutive partial absence: `Fixed`
-- Active and fresh device with all findings absent: `PendingVerification`; a
-  complete device-level disappearance cannot confirm remediation by itself
-- Stale or inactive device: `StaleDevice`
-- Offboarded or unsupported device: `OutOfScope`
-- Device missing from inventory: `Unknown`
-
-At the first qualified partial absence, `EffectiveRemediationUtc` uses
-`FirstAbsentUtc` and immediately determines whether remediation was observed
-within or outside SLA. `SlaEvidenceStatus` remains `PendingConfirmation`. For a
-confirmed fix, `FixedUtc` retains the same effective time and
-`FixedConfirmedUtc` records the later confirming snapshot. If the detection
-returns first, provisional remediation is revoked and retained as a
-`DetectionReturned` lifecycle event.
-
-### Reopened or repeated
-
-If a key previously marked fixed appears again, it becomes `Reopened` and receives the current snapshot time as `ReopenedUtc`.
-
-The current schema stores one `ReopenedUtc` value, not an event list. Multiple fix-and-return cycles for the same key are therefore represented by the current lifecycle row rather than a complete sequence of every transition.
+[LOGIC.md](../../LOGIC.md#6-finding-completion-and-reopening) contains the rules,
+and the [daily workflow examples](../daily-vulnerability-remediation-workflow.md#simple-sla-lifecycle-examples)
+show how effective time and later confirmation differ.
 
 ## SLA tracking
 
-### Current policy
+The policy retained with a run defines that run's targets. The collector-owned
+`FirstObservedUtc` supplies the normal live SLA start. First qualified absence
+can establish an effective outcome while confirmation remains pending.
 
-Policies are read from `config/sla-policies.json`:
-
-| Policy | Condition | Days |
-|---|---|---:|
-| `CriticalKnownExploit` | Critical with known exploit | 4 |
-| `Critical` | Critical | 2 |
-| `High` | High | 7 |
-| `Medium` | Medium | 30 |
-| `Low` | Low | 60 |
-
-If several rules match, the shortest SLA is selected.
-
-`complianceTargetPercent` is a separate optional Executive Snapshot reporting
-target. It does not change any finding due date. The checked-in value is
-`null`, which reports actual compliance without claiming an approved
-percentage target.
-
-### Due date
-
-$$
-SlaDueUtc = FirstObservedUtc + SlaDays
-$$
-
-### Current status
-
-For an open finding:
-
-```text
-as-of time <= due time  → OpenWithinSla
-as-of time > due time   → OpenOutsideSla
-```
-
-For a fixed finding:
-
-```text
-fixed time <= due time  → FixedWithinSla
-fixed time > due time   → FixedOutsideSla
-```
-
-If first-seen time or a matching policy is unavailable, the SLA result is `Unknown`.
-
-### Historical SLA reporting
-
-The daily summary recalculates a finding's effective state at the end of each reporting day using:
-
-- `FirstObservedUtc`
-- `EffectiveRemediationUtc` for SLA outcome and `FixedUtc` for confirmed-fix counts
-- `ReopenedUtc`
-- `SlaDueUtc`
-
-This produces historical counts for open within SLA, open outside SLA, fixed within SLA, and fixed outside SLA.
-
-The summary is reconstructed from lifecycle fields in the published finding rows. It is not a stored event ledger of every daily observation.
-
-### Current SLA limitations
-
-- Collection before this schema used CVE-level `firstDetected`; backfill now reconstructs collector-owned first observation from retained runs.
-- Two qualified absent snapshots are required, but unusual source or scope changes can still require investigation.
-- Only one reopened timestamp is retained.
-- The policy is sample configuration, not an adopted operating policy.
-
-These limitations affect how strongly SLA results can be interpreted.
+Current finding rows retain latest timestamps; event history preserves repeated
+transitions. Historical reports use the available evidence, not an assertion
+that every day was independently observed.
+The [SLA rules](../../LOGIC.md#5-sla-targeting) define policy precedence and dates.
+The checked-in thresholds remain examples until adopted.
 
 ## Command-specific overwrite behavior
 
-### `collect-live`
+| Command/path | Behavior |
+|---|---|
+| `collect-live` | Live collection/replay and lifecycle reconciliation; a new run bundle and current local exports unless explicitly skipped |
+| `build-sample --mode synthetic` | Deterministic local scenarios using retained live CVE references; no live API collection |
+| `build-sample --mode live` | Attempts live output; can retain synthetic output with a recorded warning if live collection is absent/fails |
+| `build-sample --mode combined` | Separate labeled synthetic and live populations; synthetic reconciliation is retained |
+| Hosted scheduled collection in combined mode | Carries seeded synthetic rows forward; does not generate them |
+| Local presentation publication | Rewrites configured JSON/CSV files, including clearing empty datasets |
 
-The command publishes live-only versions of findings, recommendations, recommendation machines, remediation activities, daily summary, collection runs, and Secure Score when those datasets are nonempty.
-
-It does not add synthetic rows or write the `latest` build summary. It creates live reconciliation and durable run records.
-
-### `build-sample --mode synthetic`
-
-The command rewrites nonempty output datasets with deterministic synthetic data, including synthetic daily summary, collection runs, and reconciliation.
-
-It does not call live APIs.
-
-### `build-sample --mode live`
-
-The command starts by constructing synthetic data, then attempts live collection. When live collection succeeds, the in-memory output is replaced with live datasets before publication. When collection fails, synthetic data is retained and the warning is written to the latest run summary.
-
-### `build-sample --mode combined`
-
-The command generates synthetic data, collects or replays live data, reconciles live findings, and appends live rows to these synthetic datasets:
-
-- Findings
-- Recommendations
-- Recommendation machines
-- Remediation activities
-- Daily summary
-- Collection runs
-- Secure Score
-
-Synthetic and live rows are distinguished by `DataOrigin`. They are appended rather than deduplicated across origins because the synthetic scenario and live environment are separate data populations.
-
-The reconciliation dataset remains synthetic in the current combined implementation.
-
-### Output matrix
-
-| Dataset | Raw source retained per live run | Published file rewritten when nonempty | Carries prior lifecycle state | Full daily observation history in published file |
-|---|---:|---:|---:|---:|
-| Findings | Yes | Yes | Yes, through reconciliation | Current state only |
-| Finding events | Derived | Yes | Append-only transitions | Yes |
-| Recommendations | Yes | Yes | No | No |
-| Recommendation machines | Yes | Yes | No | No |
-| Remediation activities | Yes when endpoint available | Yes | No | No |
-| Daily summary | Derived | Yes | Reconstructed from findings | Derived window only |
-| Collection runs | Derived | Yes | No | No |
-| Reconciliation | Derived | Yes | Synthetic currently | No |
-| Secure Score | Yes when available | Yes | No | No |
-
-## Data lineage diagram
-
-```mermaid
-flowchart TD
-    MV[Machine vulnerabilities] --> F[Findings]
-    M[Machines] --> F
-    V[Vulnerability details] --> F
-    R[Recommendations] --> F
-    R --> RR[Recommendation records]
-    RT[Optional remediation tasks] --> RR
-    RT --> RA[Remediation activities]
-    R --> RM[Recommendation machine requests]
-    M --> RM
-    G[Graph Secure Score] --> SS[Secure Score records]
-    PF[Previous findings] --> LC[Lifecycle comparison]
-    F --> LC
-    LC --> CF[Current curated findings]
-    CF --> DS[Daily summary]
-    CF --> REC[Monthly reconciliation]
-    CF --> UI[Dashboard views]
-    RR --> UI
-    RM --> UI
-    RA --> UI
-    DS --> UI
-    SS --> UI
-```
-
-## Important interpretation rules
-
-1. ADLS is the required durable system of record for raw, curated, historical, and SLA data when storage is configured.
-2. Local instance files are temporary staging and current presentation copies, not reliable long-term storage.
-3. The raw archive is the source evidence for each daily run.
-4. Dashboard and CSV files are published views, not immutable daily snapshots.
-5. A missing key requires two consecutive partial absences while the device
-   remains active and fresh before it is fixed. If all findings disappear for
-   the device together, they remain `PendingVerification` until corroborated.
-6. Stale, offboarded, or missing device evidence is reported separately rather than counted as fixed.
-7. A returned fixed key is interpreted as reopened.
-8. SLA history is reconstructed from lifecycle timestamps and dated snapshots, not a separate event stream.
-9. Graph advanced hunting is available but is not part of the current finding pipeline.
-10. Secure Score comes from Graph and is optional.
-11. Empty output datasets clear older current files.
-12. Synthetic and live data remain visibly separated by `DataOrigin`.
-13. Replay applies current transformation logic to previously retained raw evidence.
-
-## Data evidence browser
-
-The diagnostic Data evidence page opens at `/data-evidence` when
-`DASHBOARD_DATA_BROWSER_ENABLED=true`. The browser reads the same verified
-curated bundle used by the dashboard. It does not expose raw Defender pages,
-storage paths, credentials, editing, or deletion.
-
-The dataset dropdown selects which curated evidence to inspect:
-
-| Dropdown value | Displayed evidence | Operational use |
-|---|---|---|
-| Findings | One normalized device, CVE, product, and observation relationship, including status, SLA, ownership, subscription, and priority fields | Why a vulnerability appears in workload, priority, or SLA results |
-| Finding events | Timestamped lifecycle changes such as new, fixed, reopened, stale, or out of scope | What changed over time and which events support a trend |
-| Devices | Normalized Defender device inventory, health, onboarding, risk, exposure, asset class, and Azure resource identity | Why a device appears in asset inventory, reporting-health, subscription, or ownership scope even when it has no current finding rows |
-| Vulnerabilities | CVE-level details, severity, CVSS, exploit evidence, description, and affected-machine counts | What is known about a CVE independently of an individual device finding |
-| Recommendations | Defender recommendation details, exposed-machine counts, remediation state, and estimated score impact | Why a recommendation is prioritized and what action it represents |
-| Recommendation machines | Recommendation-to-device relationships | Which devices are expected to benefit from a recommendation |
-| Remediation activities | Defender remediation-task status, target counts, progress, due dates, and completion details | Whether planned remediation work is active, late, canceled, or completed |
-| Daily summaries | Pre-aggregated daily workload, lifecycle, exploit, and SLA measures | Which daily records support trend and period-comparison charts |
-| Collection runs | Per-endpoint collection status, row count, duration, and error detail | Whether source APIs succeeded and why a snapshot is partial |
-| Reconciliation | Aggregate checks that compare finding states and lifecycle transitions | Whether current and historical finding counts reconcile as expected |
-| Secure Score | Microsoft Graph Secure Score observations and category components | Which score record supports the executive Secure Score display |
-| Azure subscriptions | Subscriptions accessible to the collector identity, including enabled subscriptions with zero findings | Why a subscription appears in the scope selector and whether it currently has findings |
-
-The row count beside a dropdown value is the number of records in that
-dataset, not the number of unique devices or vulnerabilities. Search checks
-the normalized record values, and paging limits how many records are rendered
-at once. Selecting a row shows its complete curated JSON so the displayed
-dashboard value can be compared with the supporting fields.
-
-`DataOrigin` distinguishes `Live` evidence from fictional `Synthetic` scale
-and lifecycle scenarios. `CollectionRunId` and `SnapshotTimeUtc` identify the
-run and observation time. The hidden URI is a convenience, not an
-authorization boundary: App Service Authentication protects the page and
-APIs, and `DASHBOARD_DATA_BROWSER_ROLE` can require an additional app role.
+Sample-build fallback is demonstration behavior, not evidence that a live
+collection succeeded. `DataOrigin` and the run summary identify the result.
+The strict live collector is the appropriate source of live publication status.
 
 ## History maintenance commands
 
-```text
-vulnerability-view backfill-history --local-only
-vulnerability-view backfill-history
-vulnerability-view verify-history latest
-vulnerability-view restore-current
-```
+The [command reference](../command-reference.md) defines replay/backfill,
+verification, and restore options. The [development guide](../development.md#query-index-maintenance)
+covers index-only revisions without recollection.
 
-- `backfill-history --local-only` replays local raw runs chronologically, creates versioned bundles, and verifies them without Azure access.
-- `backfill-history` performs the same rebuild and uploads each run to ADLS; the newest processed manifest becomes current.
-- `verify-history` checks completeness, file size, and SHA-256 for a local bundle.
-- `restore-current` downloads every curated dataset referenced by the ADLS current manifest, verifies integrity, and recreates local dashboard and CSV outputs.
+Backfill can create new immutable bundles and advance the pointer; it is not
+a read-only schema inspection. `restore-current` verifies the selected Azure
+run and recreates local presentation files, without rewriting that evidence.
 
 ## Code map
 
-| Responsibility | File |
-|---|---|
-| Source endpoint definitions and pagination | `src/vulnerability_view/defender_client.py` |
-| Graph Secure Score request | `src/vulnerability_view/secure_score_client.py` |
-| Collection, normalization, and lifecycle comparison | `src/vulnerability_view/live_collector.py` |
-| Finding, recommendation, remediation, and score models | `src/vulnerability_view/models.py` |
-| SLA and priority calculations | `src/vulnerability_view/normalizer.py` |
-| Daily summary and monthly reconciliation | `src/vulnerability_view/summary_builder.py` |
-| Raw local and ADLS paths | `src/vulnerability_view/storage_writer.py` |
-| CSV and JSON publication | `src/vulnerability_view/export_writer.py` |
-| Command-specific mode and overwrite behavior | `src/vulnerability_view/dataprep_cli.py` |
-| Browser data loading and pivots | `dashboard/app.js` |
-| Dashboard API and App Service identity enforcement | `src/vulnerability_view/dashboard_server.py` |
-| Curated data evidence catalog, paging, and role enforcement | `src/vulnerability_view/dashboard_server.py` |
-
-## Maintenance checklist
-
-Update this document whenever a change affects:
-
-- A source endpoint or Graph query
-- A dataset field or meaning
-- Finding-key construction
-- New, fixed, or reopened logic
-- SLA policy or timestamps
-- Raw archive paths or retention
-- Published output overwrite behavior
-- Replay behavior
-- Dashboard use of a dataset
+Models are defined in [models.py](../../src/vulnerability_view/models.py).
+Collection, query, storage, and browser responsibilities are mapped in the
+[runtime source map](../application-flow.md#source-of-truth-implementation).

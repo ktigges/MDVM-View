@@ -1,495 +1,225 @@
 # Operations and monitoring
 
-> **Last modified:** 2026-11-03
-> **Purpose:** Run and monitor collection, confirm publication, manage dashboard access, and understand runtime configuration.
+This guide covers the running application. Installation is in
+[DEPLOY.md](../DEPLOY.md), settings are in the
+[configuration reference](configuration-reference.md), and symptoms are in
+[Troubleshooting](troubleshooting.md).
 
-For initial installation use the [Azure deployment guide](../DEPLOY.md). For a
-local-only first view use [Local evaluation](local-evaluation.md). For
-symptom-led diagnosis use [Troubleshooting](troubleshooting.md).
+Commands below run from the repository root with the project environment
+activated. They use the signed-in Azure CLI identity for management operations;
+the hosted applications use their managed identities.
 
-## Operator quick start
-
-### Check collection status
-
-```bash
-./infra/check-function-logs.sh 1 3 --status-only
-./infra/check-runs.sh 5 --progress
-```
-
-The first command correlates trigger requests, Function traces, publication
-telemetry, and the current manifest read by the collector managed identity. A
-newer published manifest supersedes stale request telemetry and includes its
-finding, file, and issue counts. The second combines that current status with
-retained publication telemetry. Both show UTC together with the local time zone
-of the machine running the command. Do not invoke manually while status is
-`ACTIVE` or `INDETERMINATE`.
-
-The scripts support the macOS system Bash 3.2 and Linux Bash. They can be
-launched directly from zsh; no Homebrew Bash installation is required.
-
-### Run one intentional collection
+## Collection status
 
 ```bash
-CONFIRM_LIVE_COLLECTION=yes ./infra/deploy.sh tfinvoke function
-./infra/check-runs.sh 5 --progress
+python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 3 --status-only
+python -m vulnerability_view.operations_cli check-runs --limit 5 --progress
 ```
 
-Each successful invocation creates a new immutable run and advances only the
-current manifest pointer after validation.
+Status combines workflow progress, telemetry, and publication reported through
+the collector's managed identity. A trigger request can succeed before work
+starts or finishes. The current completed manifest is the publication evidence;
+it includes run identity, time, endpoint results, counts, files, and hashes.
 
-### Inspect Web App startup logs
+`ACTIVE` means work is in progress. `INDETERMINATE` means the available evidence
+does not establish completion or inactivity. Neither is permission to start
+another collection.
 
-In either deployment menu select **7 → 13** (Operations and diagnostics →
-Show Web App startup logs). **14** returns to the deployment menu.
+### Manual collection and recovery
+
+```bash
+python -m vulnerability_view.operations_cli invoke function --confirm
+python -m vulnerability_view.operations_cli check-runs --limit 5 --progress
+```
+
+An intentional new full baseline uses `invoke function --confirm --full`.
+The menu's full operation requires `FULL` confirmation.
+
+There is one Durable collection instance. An active run keeps its original
+scope; retrying a failed run reuses its run ID, timestamp, frozen policy,
+baseline, and verified checkpoints. A full request does not change an already
+active or failing run into a new full collection.
+
+Permission/configuration failures need correction before retry. Runtime state
+and retained checkpoints are not purged as a recovery shortcut. The
+[recovery reference](../infra/README.md#resumable-collection-deployment-and-recovery)
+explains stage boundaries and failed execution replacement.
+
+`PartialSuccess` can mean missing CVE enrichment or optional supporting data.
+It does not mean findings were silently dropped. Endpoint details and
+`CveMetadataStatus` identify the gaps. A failed required finding call or corrupt
+evidence still blocks publication.
+
+## Application updates
+
+The deployment menu keeps Function and Web App updates separate:
+
+| Menu choice | Operation |
+|---|---|
+| 2 | Review/apply cumulative Web App infrastructure |
+| 3 | Deploy and verify Function code |
+| 4 | Deploy and verify Web App code |
+| 5 | Request a collection after active-run checks |
+| 6 | Verify both applications |
+| 7 | Operations and diagnostics |
+
+Equivalent code-only commands:
+
+```bash
+python -m vulnerability_view.operations_cli deploy function
+python -m vulnerability_view.operations_cli verify function
+python -m vulnerability_view.operations_cli deploy webapp
+python -m vulnerability_view.operations_cli verify webapp
+```
+
+Only the affected package needs deployment. Publishing dashboard code does
+not collect new data or restart the collector. Function deployment does not
+start collection; collector updates are made with its active workflow in mind.
+
+Infrastructure changes use a saved, reviewed plan for the highest deployed
+cumulative stage. After the Web App exists, that stage is `webapp`. A code-only
+update does not need Terraform.
+
+## Dashboard startup and cache
+
+The shell can load while the server restores or builds its data indexes.
+The startup notice identifies first load, a restart, or a new snapshot as
+possible reasons. It retains actual stage information, elapsed time, and an
+expandable index checklist.
+
+| Check | Meaning |
+|---|---|
+| `GET /api/health` | Process liveness; `dashboardReady` distinguishes data readiness |
+| `GET /api/dashboard/snapshot` | HTTP 202 during initial preparation; HTTP 200 for a ready snapshot |
+| `GET /api/dashboard/status` | Preparation stage, rows/bytes, timings, errors, and retry state |
+| `GET /api/diagnostics` | Snapshot/cache sizes, active work, preparation, and bounded request timings |
+| `GET /api/status` | Published-source metadata and availability |
+
+Only `/api/health` permits anonymous dashboard API access. The other endpoints
+require normal hosted authentication.
+
+The configured persistent viewer cache restores compatible completed artifacts
+after a restart. Missing compatible entries are built; corrupt entries and
+storage failures are explicit errors. Without persistent caching, additional
+history/search/report work stays on demand after shared preparation.
+
+The current ready snapshot remains served while a replacement is prepared.
+An open browser keeps its `snapshotId` until reload. A newer Storage pointer
+does not prove every viewer has switched to that run.
+
+Each worker has its own disposable local cache, capped at two snapshots and
+8 GiB, with additional temporary disk requirements. More workers multiply this
+work. Cache eviction never deletes retained Azure evidence.
+The [runtime reference](application-flow.md#7-web-app-startup-indexing-memory-and-caches)
+contains the limits and request sequence.
+
+## Logs
+
+Operations submenu **12** exports the latest snapshot; **13** reads Web App
+startup logs; **14** returns to the deployment menu.
 
 ```bash
 python -m vulnerability_view.operations_cli check-webapp-startup-logs
+python -m vulnerability_view.operations_cli check-function-logs --days 2 --limit 25
+python -m vulnerability_view.operations_cli export-function-logs --days 2
 ```
 
-This read-only command uses the Terraform resource group and Web App outputs.
-It shows the latest retained Linux container startup log, preferring a failure
-log when one exists on the latest date. Logs include platform lifecycle events
-and container stdout/stderr, which can help diagnose startup exceptions, port
-timeouts, and HTTP 502/503 responses before the dashboard is ready.
-It is a finite read, not a live stream, and does not restart the app, enable
-logging, or change Azure Storage. It requires an Azure CLI version supporting
-the preview `az webapp log startup show` command; run `az upgrade` if unavailable.
-The signed-in Azure CLI identity needs access to the target Web App's logs.
-An older retained failure does not prove the app is currently failing: check
-the log timestamp. Missing logs or access failures are reported by Azure CLI,
-not treated as proof of health. Logs are **unredacted**; review before sharing.
+The startup-log command reads the latest retained Linux container log, preferring
+failures on the latest date. It does not restart the app or change logging.
+It requires Azure CLI support for `az webapp log startup show`. An older failure
+is not proof of a current outage; timestamps matter.
 
-#### Reading application startup progress
+### Reading application startup progress
 
-After deploying the updated **Web App code** (deployment menu **4**), console
-lines prefixed `[dashboard-startup]` are emitted at INFO independently of
-Uvicorn's application-logger defaults. No Terraform apply, new collection,
-Azure SDK HTTP logging, or customer data export is needed. Each line includes
-UTC time and process ID.
+`[dashboard-startup]` lines include stage starts, completions, failures, and
+timings. Heartbeats report active stage, rows/bytes, and available process or
+resource readings. High CPU during index work is not proof of a hang; low CPU
+and unchanged rows can indicate a wait, not its cause.
+Unavailable counters are reported as unavailable. An abruptly killed process
+cannot log its own termination; platform logs and metrics supply that evidence.
 
-The app logs start/completion timings for manifest and policy reads,
-recommendation-tracking reads, dataset downloads, row loading, SQLite index
-building, and each of the nine default views. A heartbeat every **30 seconds**
-reports the active stage, stage/total elapsed time, rows loaded or bytes
-downloaded where applicable, and resource readings. Logging stops after initial
-preparation; normal browsing and periodic refreshes do not produce heartbeats.
-The startup gate, queries, cache behavior, and Storage retry settings are unchanged.
+Collection traces identify request progress, processing stages, and publication.
+`[processing]` heartbeats establish a live worker, not necessarily advancing
+rows or a successful publication.
 
-| Reading | Interpretation |
+Sanitized collector export and unredacted platform/startup logs are different
+outputs. Diagnostic files still need review under the organization's data
+policy before sharing.
+
+## Export the latest published snapshot for analysis
+
+```bash
+python -m vulnerability_view.operations_cli export-latest-snapshot
+```
+
+The signed-in operator needs Blob Data Reader access to the history and pointer
+containers plus network access. Management-plane Reader alone does not grant
+blob reads.
+
+The exporter reads the current manifest once, fixes the export to that run,
+downloads its referenced raw/curated/policy/index files, and verifies compressed
+size and SHA-256. A successful ZIP and summary are written under a unique
+`output/snapshots/` directory. A failed partial ZIP is removed.
+Azure files and the current pointer are never changed.
+
+The export is the latest **published** run, not an in-progress collection or
+necessarily the run still selected by an open dashboard. It excludes unlisted
+checkpoints, other runs, live workflow state, and Web App timing diagnostics.
+Hashes prove file integrity, not calculation accuracy or performance.
+
+The ZIP contains sensitive, unredacted device and vulnerability data. It is not
+an appropriate public issue attachment.
+
+## Access and identities
+
+The collector identity reads Defender, Graph, and configured Azure inventory
+and publishes retained runs. The dashboard identity reads that evidence.
+Workflow/branding and persistent viewer-cache writes have separate container
+scopes; the dashboard does not get write access to retained run evidence.
+
+Entra application assignments are managed outside Terraform:
+
+| Role | Current purpose |
 |---|---|
-| Increasing `rows` / `downloadedBytes` | Measurable work is advancing, even if the stage has not completed. |
-| `processCpuPercent` | CPU used by this process during the last interval; 100 means one CPU core, not 100% of the App Service plan. High CPU during index/view preparation indicates computation, not proof of a hang. |
-| `rssMiB` | Current process resident memory, where Linux exposes it. |
-| `memoryMiB` / `memoryLimitMiB` | Exposed process-cgroup memory usage/limit, including more than Python heap. Near-limit usage suggests pressure; it does not prove an OOM kill. Parent/plan/shared-worker limits can still apply. |
-| Positive `cpuThrottledSecondsDelta` | The exposed CPU cgroup was throttled during the interval. This is separate from Storage HTTP throttling. |
-| Positive `oomKillsDelta` | The exposed memory cgroup recorded an OOM kill during the interval. |
-| `storageRetry` with `httpStatus=429` or `503` | A pinned dataset download encountered a retryable service response. A 503 may indicate service unavailability, not necessarily throttling. Only existing SDK retries are observed; retries are not added. |
-| Low CPU, unchanged progress, increasing `stageSeconds` | Consistent with waiting on network, identity, disk, locks, or another dependency; not enough by itself to identify which. Use the stage name and platform metrics. |
-| `event=failed` / `outcome=failed` | Preparation failed, not ready. The stage failure includes exception type and available HTTP status/OS error number. |
-| `outcome=ready` | Initial preparation finished; Uvicorn should then report application startup complete. |
-
-Unavailable/unsupported counters are printed as `unavailable`, never as zero.
-Heartbeat scheduling can be delayed by CPU starvation or native code holding
-the interpreter. The app cannot log its own abrupt OOM termination; use platform
-termination logs and App Service metrics if heartbeats stop or process IDs change.
-Storage retry lines cover pinned dataset downloads, not every identity,
-manifest, policy, or tracking request. Stage diagnostics contain no record
-contents, request URLs, or tokens; existing exception/platform logs can still
-contain sensitive information.
-
-### Export the latest published snapshot for analysis
-
-In either deployment menu select **7 → 12** (Operations and diagnostics →
-Export latest published snapshot), or run:
-
-```powershell
-.\.venv-win\Scripts\python.exe -m vulnerability_view.operations_cli export-latest-snapshot
-```
-
-On macOS/Linux use `.venv/bin/python` instead. No application deployment or new
-collection is required. The signed-in Azure CLI identity needs Storage Blob Data
-Reader access to the history and current-pointer containers, plus network access
-to the storage account. Management-plane Reader alone does not grant blob reads.
-
-The command reads `current/manifest.json` once, pins that completed run, and
-streams every referenced raw/curated/policy file to a ZIP under
-`output/snapshots/<UTC-time>-<unique-id>/`. It checks each file's compressed size
-and SHA-256 before publishing the local ZIP; failure removes the partial ZIP and
-returns an error. Repeated exports use new folders. Azure blobs, retained history,
-and the current pointer are never modified.
-
-The ZIP preserves each blob's relative path and contains the pinned
-`manifest.json` plus `export-summary.json` with verified bytes/files and
-manifest-reported dataset row counts. Use these to inspect data coverage,
-schemas, and contents or build a local reporting reproduction. This is the latest
-**published** snapshot, not an in-progress collection; it may differ from the
-snapshot currently cached by a dashboard worker. It excludes unlisted checkpoints/intermediates,
-other run bundles, live collaboration state, and Web App timing diagnostics.
-Publication and hashes prove integrity, not semantic uniqueness or report speed.
-
-**The ZIP contains sensitive, unredacted customer/device/vulnerability data.**
-Keep it in approved local storage and review it before sharing; nothing is
-uploaded automatically.
-
-### Update collector or dashboard code
-
-```bash
-./infra/deploy.sh tfdeploy function
-./infra/deploy.sh tfverify function
-
-./infra/deploy.sh tfdeploy webapp
-./infra/deploy.sh tfverify webapp
-```
-
-Code-only deployments do not require a Terraform plan and do not start a
-collection.
-
-### Change infrastructure or settings
-
-Use the highest already-deployed cumulative stage:
-
-```bash
-./infra/deploy.sh tfplan webapp
-python -m vulnerability_view.operations_cli show webapp
-./infra/deploy.sh tfapply webapp
-```
-
-Never apply a plan that removes protected storage or retained DVM history.
-
-## Authentication for service-to-service access
-
-Managed identity remains the production authentication model. Client-secret authentication is available only as an explicitly acknowledged local-development bridge when Azure CLI cannot obtain the required application permissions.
-
-- Normal local development uses `DefaultAzureCredential` with environment credentials, workload identity, and managed identity explicitly excluded. This allows developer authentication such as Azure CLI or VS Code without silently activating a secret.
-- `AUTH_MODE=client_secret` uses `ClientSecretCredential` only when `ALLOW_LOCAL_CLIENT_SECRET=true` is also set.
-- Client-secret mode refuses to start when Azure host markers are present.
-- Azure-hosted execution uses `ManagedIdentityCredential` only.
-- `AUTH_MODE=auto` selects local credentials off Azure and managed identity when Azure managed-identity host variables are present.
-- `AUTH_MODE=local`, `AUTH_MODE=client_secret`, and `AUTH_MODE=managed_identity` allow explicit credential selection.
-- `AZURE_CLIENT_ID` identifies the user-assigned managed identity when hosted. It is not a secret.
-
-A managed identity endpoint exists only on an Azure host. Local development cannot obtain a real managed-identity token. Local tests verify credential selection with mocks, while real local Azure access uses the developer identity. This preserves the same authorization requirements without retaining an application secret.
-
-The collector managed identity receives:
-
-- Defender application permissions and tenant admin consent
-- Storage Blob Data Contributor on the required storage scope
-
-## Configuration layers
-
-### Configuration sources
-
-| Location | Used by | Commit to source control |
-|---|---|---|
-| `.env` | Direct local CLI commands | No |
-| `local.settings.json` | Local Azure Functions host; values become process environment variables | No |
-| `local.settings.example.json` | Safe template for local Functions testing | Yes |
-| Function App settings | Deployed Function bootstrap and runtime configuration | Managed by infrastructure code |
-| Terraform variable files | Azure resource names, regions, identities, and feature selection | Commit non-secret examples only |
-| `config/sla-policies.json` | Versioned SLA rules retained with each run | Yes |
-
-Environment variables override values loaded from `.env`. When the Functions host is running locally, values from `local.settings.json` therefore take precedence over matching `.env` values.
-
-### Application settings
-
-| Setting | Default | Local CLI | Local Functions host | Deployed Function | Purpose |
-|---|---|---|---|---|---|
-| `AUTH_MODE` | `auto` | `local`, `client_secret`, or `auto` | `local` or `client_secret` | `managed_identity` | Selects the credential implementation |
-| `ALLOW_LOCAL_CLIENT_SECRET` | `false` | Must be `true` with client-secret mode | Must be `true` with client-secret mode | Forbidden | Explicit acknowledgement of local-only secret use |
-| `AZURE_TENANT_ID` | Empty | Required with client-secret mode | Required with client-secret mode | Optional metadata | Tenant for the local app registration |
-| `AZURE_CLIENT_ID` | Empty | Required with client-secret mode | Required with client-secret mode | Required for a user-assigned identity | Application or managed-identity client identifier; it is not a secret |
-| `AZURE_CLIENT_SECRET` | Empty | Required with client-secret mode | Required with client-secret mode | Forbidden | Local app-registration secret; store only in local environment variables and keep it out of source control |
-| `DEFENDER_API_BASE_URL` | `https://api.security.microsoft.com` | Required for live collection | Required | Required | Defender API request host |
-| `STORAGE_ACCOUNT_NAME` | Empty | Empty for isolated work; account name for integration tests | Development history account | Production history account | Enables durable history reads and writes |
-| `STORAGE_CONTAINER_NAME` | `dvm-history` | Optional override | Set explicitly | Set explicitly | Immutable raw, curated, policy, and run history |
-| `STORAGE_CURRENT_CONTAINER_NAME` | `dvm-current` | Optional override | Set explicitly | Set explicitly | Current completed-run manifest pointer |
-| `APP_MODE` | `synthetic` | `live`, `synthetic`, or `combined` | `live` | Terraform `app_mode` | Selects data mode for build commands; deployed `combined` mode carries forward explicitly seeded synthetic rows but never generates them |
-| `RECOMMENDATION_ENRICHMENT_MODE` | `targeted` | `targeted` | `targeted` for local host testing | `targeted` | Controls recommendation-machine API calls; full is operator-requested |
-| `VULNERABILITY_COLLECTION_MODE` | `auto` | `auto` | `auto` | `auto` | Initial/weekly full baseline with deltas between reconciliations |
-| `ENABLE_EXPERIMENTAL_ENDPOINTS` | `false` | Keep disabled | Keep disabled unless testing compatibility | Keep disabled unless explicitly authorized | Enables undocumented Defender compatibility probes such as `/api/remediationTasks`; these are not required for core findings, lifecycle, SLA, recommendations, devices, or Secure Score |
-| `FULL_COLLECTION_WEEKDAY` | `6` | Optional | Optional | Required when collection mode is `auto` | Weekly full vulnerability reconciliation day, Monday `0` through Sunday `6` |
-| `COLLECTION_SCHEDULE` | `0 0 5 * * *` | Not used by direct CLI commands | Temporary test schedule | Production NCRONTAB schedule | Timer-trigger schedule |
-| `SYNTHETIC_SEED` | `24017` | Optional | Not needed for live Function test | Not needed | Reproducible sample data |
-| `SYNTHETIC_MONTHS` | `6` | Optional | Not needed for live Function test | Not needed | Sample history depth |
-| `SYNTHETIC_DEVICE_COUNT` | `2500` | Optional | Not needed for live Function test | Not needed | Number of distinct fictional endpoints generated across the sample history; accepted range is 1 through 100,000 |
-| `AZURE_SUBSCRIPTION_ID` | Empty | Operator convenience | Not required by collection | Managed by deployment | Subscription context; the collector does not use it for API calls |
-| `AZURE_RESOURCE_GROUP` | Empty | Operator convenience | Not required by collection | Managed by deployment | Resource group context |
-| `AZURE_LOCATION` | `eastus` | Operator convenience | Not required by collection | Managed by deployment | Deployment region; do not infer it from the resource-group metadata location |
-| `DASHBOARD_DATA_SOURCE` | `local` | `local` or `azure` | Not used | `azure` on the Web App | Selects generated local files or the verified Azure current bundle |
-| `DASHBOARD_STATIC_DIR` | Empty | Usually empty | Not used | `dashboard` | Resolves static assets relative to the Oryx application directory, including compressed build extraction paths |
-| `DASHBOARD_CACHE_SECONDS` | `30` | Optional | Not used | Recommended | Controls how often the Web App checks the current manifest; requested immutable datasets are cached for the active run |
-| `DASHBOARD_AUTH_ENABLED` | `false` | Keep `false` | Not used | `true` only after App Service Authentication is enabled | Requires a trusted App Service Easy Auth principal for every dashboard and API request |
-| `DASHBOARD_DATA_BROWSER_ENABLED` | `false` | Enable only when evidence inspection is needed | Not used | Explicit opt-in | Exposes the read-only curated Data evidence view and its bounded API |
-| `DASHBOARD_DATA_BROWSER_ROLE` | Empty | Usually empty | Not used | Recommended app role such as `Data.Evidence.Reader` | When set, requires that role in the authenticated App Service principal |
-| `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | `false` | Keep disabled | Not used | Explicit opt-in | Enables shared recommendation display-state reads and writes |
-| `DASHBOARD_RECOMMENDATION_TRACKING_ROLE` | `Recommendation.Tracker` | Not used | Not used | Legacy compatibility setting | No longer used; authenticated dashboard access authorizes the local shared workflow API |
-| `DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER` | `dvm-workflow` | Not used | Not used | Private Blob container | Stores append-only recommendation workflow events separately from retained evidence |
-
-## Dashboard presentation configuration
-
-The dashboard keeps data retrieval in the FastAPI service and presentation settings in `dashboard/config.js`. This file requires no build step and controls:
-
-- header branding;
-- primary and accent colors;
-- comfortable or compact density;
-- navigation order and hidden views;
-- whether the top filter workspace starts expanded;
-- default severity, recommendation types, and asset domains;
-- whether authentication status and experimental endpoint diagnostics are shown.
-
-Browser presentation settings are not security controls. Keep `diagnostics.showExperimentalEndpoints` set to `false` for normal users. Collector execution is controlled separately by `ENABLE_EXPERIMENTAL_ENDPOINTS`.
-
-### Curated data evidence
-
-The diagnostic Data evidence page is available only when
-`DASHBOARD_DATA_BROWSER_ENABLED=true`. Enabling it does not add a navigation
-item. An authorized operator who knows the exact URI opens
-`/data-evidence`; ordinary dashboard navigation and Statistics cards do
-not advertise the feature. It provides:
-
-- a whitelist of normalized datasets used by the dashboard;
-- row counts, field discovery, search, and bounded pagination;
-- complete formatted JSON for a selected record;
-- direct evidence links from supported calculated metrics;
-- current data-source and snapshot context.
-
-The browser is read-only and does not expose arbitrary filesystem/blob paths,
-storage credentials, raw Defender responses, or mutation operations. In a
-hosted environment, configure `DASHBOARD_DATA_BROWSER_ROLE` and assign that
-App Service application role only to authorized operators or auditors. A hidden
-URI obscurity is not an authorization boundary; the server enforces both the
-feature flag and optional role.
-
-App Service Authentication protects the diagnostic `/data-evidence` page and
-all `/api/data-browser/*` routes through the same global authentication
-middleware as the rest of the dashboard. The optional data-browser role is an
-additional authorization check after authentication.
-
-### Dashboard user authentication
-
-`DASHBOARD_AUTH_ENABLED` is a server-side feature flag:
-
-- `false` is the default and preserves unrestricted local UI development.
-- `true` is valid only on Azure App Service, detected through `WEBSITE_HOSTNAME`.
-- When enabled, middleware requires and decodes the trusted `X-MS-CLIENT-PRINCIPAL` header injected by App Service Authentication.
-- Missing or malformed identity headers return HTTP 401 before static files or `/api/*` data are served.
-- Local startup with the flag enabled fails immediately because local clients can forge headers and cannot reproduce the App Service trust boundary.
-
-The flag does not enable Easy Auth, create an Entra application, assign users or groups, or configure redirect behavior. Those remain Web App infrastructure settings. Both platform authentication and this application flag must be enabled for hosted enforcement.
-
-The deployed Enterprise Application display name is `DVM Viewer`. After apply,
-Terraform outputs `dashboard_enterprise_application_object_id` and
-`dashboard_entra_client_id` identify it. Manage assignments at **Microsoft
-Entra ID > Enterprise applications > DVM Viewer > Users and groups**.
-Group-based Enterprise Application assignment requires the applicable
-Microsoft Entra ID licensing; if it is unavailable, assign individual users
-the `Dashboard.Viewer` role and any enabled optional roles.
-
-### Shared recommendation tracking
-
-`DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=true` enables recommendation-level
-workflow status for authenticated dashboard users. The
-private `dvm-workflow` container remains deployed when the feature is disabled
-so prior workflow history is not deleted. The Web App managed identity retains
-Storage Blob Data Contributor on that container only. The application does not
-read or write the workflow container while the feature flag is disabled. The
-identity remains a reader on retained history and has no Defender or Graph
-permissions.
-
-The API appends an event for **In progress**, **Fixed**, or **Clear**. It does
-not delete prior events. A fixed recommendation is confirmed only after a newer
-current run reports no active live finding for that recommendation; otherwise
-it is shown as still detected. Synthetic recommendations cannot be updated.
-Tracking is shared dashboard workflow metadata rather than a Defender
-assignment or lock:
-**In progress** remains in the recommendation lists, and another authorized
-tracker can update it. The Recommendations and Prioritize views show the latest
-status, updater, and update time. All work statuses are visible by default; the
-global filter can narrow the dashboard to Needs attention, Untracked / not
-started, In progress, Needs reassignment, Marked fixed / awaiting collection,
-Confirmed fixed, or Still detected after validation. A newer collection clears
-In progress from active work when no live findings remain. If fresh collection
-evidence still shows findings seven days after the last update, the effective
-state becomes Needs reassignment while preserving the prior user and timestamp.
-Finding lifecycle and SLA calculations continue to use collected Defender
-evidence.
-Changing the App Service setting restarts the application and does not require
-republishing the Web App package:
-
-```bash
-az webapp config appsettings set \
-  --resource-group "<resourceGroupName>" \
-  --name "<WebAppName>" \
-  --settings DASHBOARD_RECOMMENDATION_TRACKING_ENABLED=true
-```
-
-Use `false` to hide the controls and make the tracking API unavailable.
-Terraform retains the same value in
-`dashboard_recommendation_tracking_enabled`; update that variable before the
-next Terraform apply so infrastructure configuration does not reverse the
-runtime setting.
-
-### Dashboard server settings
-
-The dashboard runs as a same-origin FastAPI application. Normal browser
-navigation selects a ready snapshot with `GET /api/dashboard/snapshot`, then
-uses `POST /api/dashboard/query` for aggregates and bounded table pages.
-Complete findings and event histories stay on the server. The
-`/api/data/<dataset>.json` routes remain compatibility/full-dataset routes,
-not the ordinary browser loading path.
-
-| Mode | Credential | User authentication | Data location | Intended use |
-|---|---|---|---|---|
-| `DASHBOARD_DATA_SOURCE=local` | None | `DASHBOARD_AUTH_ENABLED=false` | `dashboard/data` | Fast UI development, replay, and offline demonstrations |
-| `DASHBOARD_DATA_SOURCE=azure` locally | Developer credential | `DASHBOARD_AUTH_ENABLED=false` | Current manifest and immutable curated blobs | Production-like data integration testing without deployment |
-| `DASHBOARD_DATA_SOURCE=azure` in App Service | Web App managed identity | `DASHBOARD_AUTH_ENABLED=true` plus App Service Authentication | Current manifest and immutable curated blobs | Hosted dashboard |
-
-Azure mode rejects incomplete manifests, streams required curated blobs to
-local disk, verifies compressed sizes and SHA-256, and indexes JSON rows
-without retaining complete finding/event lists in memory. FastAPI startup
-prepares all nine default views before accepting traffic. A background watcher
-detects new snapshots using `DASHBOARD_CACHE_SECONDS` and prepares their default
-views while continuing to serve the previous ready snapshot.
-
-Each Uvicorn process owns a disposable temporary index cache (at most two
-snapshots, 8 GiB total), bounded response caches, two workspace-query threads,
-and one report thread. Process restart rebuilds the temporary indexes; browser
-refresh does not. Additional processes/instances multiply this work and resource
-use. Data reads/cache eviction never modify retained Azure history; optional
-workflow actions and branding have separate explicit write APIs.
-
-See [Web App startup, memory, caches, and handoff](application-flow.md#7-web-app-startup-indexing-memory-and-caches)
-for exact bounds, invalidation, restart behavior, and diagnostic interpretation.
-
-Available operational endpoints are:
-
-```text
-GET /api/health
-GET /api/auth
-GET /api/diagnostics
-GET /api/status
-GET /api/dashboard/snapshot
-POST /api/dashboard/query
-POST /api/dashboard/export
-GET /api/sla-policy
-GET /api/recommendation-tracking
-PUT /api/recommendation-tracking
-GET /api/data-browser/catalog
-GET /api/data-browser/<dataset>?offset=0&limit=50&query=<text>
-GET /api/data/<dataset>.json
-GET /api/data/cve-details/<cve-id>.json
-```
-
-`GET /api/health` is the only dashboard API that permits anonymous access. App
-Service Health Check uses it to verify that the FastAPI process can respond
-without requiring a user session or forcing an Azure Storage read. All other
-dashboard APIs remain protected by App Service Authentication.
-
-`GET /api/diagnostics` reports bounded request timings, manifest state, and
-legacy data-store activity, plus `dashboardQueries` for retained local
-snapshots, byte usage, active queries, and `preparation` readiness/duration/error
-state. Legacy cached-dataset names are not an inventory of query indexes.
-It requires the same authenticated access as the dashboard and does not expose
-tokens, user identities, query strings, or vulnerability records. During
-initial startup preparation, use App Service logs because the application
-cannot yet serve diagnostics requests.
-
-### Azure Functions host settings
-
-These settings belong to the Functions host rather than the collection library:
-
-| Setting | Local value | Azure value | Purpose |
-|---|---|---|---|
-| `AzureWebJobsStorage` | `UseDevelopmentStorage=true` with Azurite | Identity-based connection to dedicated Function runtime storage | Timer monitor, host state, and extension storage |
-| `FUNCTIONS_WORKER_RUNTIME` | `python` | `python` | Selects the Python worker |
-| `AZURE_FUNCTIONS_ENVIRONMENT` | `Development` | Environment-specific | Host diagnostics and environment behavior |
-
-Function runtime storage is separate from the DVM history account. It can be rebuilt without replacing `dvm-history` or `dvm-current`.
-
-### Bootstrap settings
-
-Keep settings required before other services can be reached in Function application settings:
-
-- `AUTH_MODE=managed_identity`
-- `AZURE_CLIENT_ID` for a user-assigned identity
-- Storage account and container names
-- App Configuration endpoint when introduced
-- `COLLECTION_SCHEDULE`
-- Defender API base URL
-
-These settings change infrequently and can require a Function restart.
-
-## Operational status sources
-
-### ADLS manifests
-
-ADLS manifests are the authoritative application-level run history. They contain:
-
-- Run and snapshot identity
-- Completeness
-- Endpoint statuses and row counts
-- Schema, normalization, and SLA policy versions
-- File inventory, sizes, and SHA-256 checksums
-
-`dvm-current/current/manifest.json` identifies the current completed run. Immutable historical manifests remain under `runs/YYYY/MM/DD/<run-id>/manifest.json`.
-
-### Current curated datasets
-
-The current manifest points to current findings, devices, lifecycle events, recommendations, summaries, collection status, Secure Score, and the Azure subscription inventory accessible to the collector identity. The subscription inventory includes accessible subscriptions with zero current findings so the dashboard can prove collection scope separately from vulnerability workload.
-
-Set `collector_management_group_id` to the management group ID. During the
-Function Terraform stage, Terraform grants the collector managed identity
-**Reader** once at that scope. The collector uses the management-group
-descendants API to inventory subscriptions in that group and nested groups,
-including subscriptions added later.
-
-```json
-"collector_management_group_id": "target-management-group-id"
-```
-
-The identity running Terraform must have permission to create role assignments
-at the management-group scope, such as Owner, Role Based Access Control
-Administrator, or User Access Administrator. If organizational policy requires
-out-of-band RBAC management, leave the value empty and have an authorized
-operator grant the assignment explicitly:
-
-```bash
-COLLECTOR_PRINCIPAL_ID="$(cd infra/terraform && terraform output -raw collector_identity_principal_id)"
-az role assignment create \
-  --assignee-object-id "$COLLECTOR_PRINCIPAL_ID" \
-  --assignee-principal-type ServicePrincipal \
-  --role Reader \
-  --scope /providers/Microsoft.Management/managementGroups/<management-group-id>
-```
-
-With either method, set `AZURE_MANAGEMENT_GROUP_ID` for the Function, deploy the
-updated collector, and run a new collection. Historical bundles remain
-unchanged; the new run publishes `subscriptions.json.gz` and updates
-`current/manifest.json` only after successful validation.
-
-### Function platform telemetry
-
-When deployed, Azure Functions monitoring should capture execution failures, duration, retries, and dependencies. Use sampled OpenTelemetry/Application Insights only for platform diagnostics. It should not become the vulnerability history store.
-
-## Local operational interface
-
-Show effective non-secret configuration:
-
-```text
-vulnerability-view show-config
-```
-
-Show local datasets, lifecycle counts, local raw/history runs, and recent manifests:
-
-```text
-vulnerability-view status
-vulnerability-view status --runs 30
-```
-
-Add one low-cost Azure read of the current manifest:
-
-```text
-vulnerability-view status --azure
-```
-
-The report never prints credential values. It reports whether a legacy secret is present but not used.
+| Dashboard Viewer | Open the dashboard and protected APIs |
+| Data Evidence Reader | Use the optional read-only curated evidence browser |
+| Dashboard Administrator | Upload organization branding when enabled |
+| Recommendation Tracker | Retained compatibility role; enabled shared tracking currently permits authenticated dashboard users |
+
+Assignment-required sign-in and the application's principal checks are separate
+controls. The hosted app does not use a workstation's Azure CLI session.
+Hosted client-secret collection is rejected; the explicit local-only bridge
+and its permissions are in the [configuration reference](configuration-reference.md).
+
+Easy Auth's application credential has a two-year lifetime with an annual
+Terraform rotation trigger. Renewal is part of the deployment maintenance
+process, not an in-app update.
+
+## Shared recommendation status and branding
+
+Tracking is optional and separate from Defender. Append-only workflow events
+record who changed a recommendation and when. A user-marked fix remains
+awaiting collection until a newer run supports it; it does not itself close
+findings or change SLA evidence. The latest status is shared, not a lock or
+exclusive assignment. [LOGIC.md](../LOGIC.md#8-shared-recommendation-work-tracking)
+defines effective states, confirmation, and reassignment.
+
+Branding uploads are role-restricted PNG files, up to 2 MB and 4096 pixels per
+dimension. New versions are retained under the workflow container's
+`branding/logos/` path. Previous versions are not deleted.
+
+Hosted settings are maintained through Terraform values so a later apply
+does not undo a one-off portal/CLI change. Presentation and default filters are
+in `dashboard/config.js`; their definitions belong in the
+[configuration reference](configuration-reference.md#8-dashboard-presentation).
+
+## Operational handoff
+
+The environment record needs the installed versions, latest completed run,
+any active/failed workflow, approved policy, schedule, access owners, monitoring
+contacts, and protected state/configuration backups. These are not supplied
+by a repository clone.
+
+Application replacement, local cleanup, or a request to start over does not
+authorize deleting Azure history. The [data reference](data/README.md)
+defines the retained-data boundary.

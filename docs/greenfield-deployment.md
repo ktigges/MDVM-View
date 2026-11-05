@@ -1,83 +1,22 @@
-# Greenfield Azure deployment
+# Greenfield deployment checklist
 
-> **Last modified:** 2026-10-08
-> **Purpose:** Create and validate a new protected Azure environment from Windows PowerShell, macOS, or Linux in three reviewed Terraform stages.
+This is the short installation sequence. The [deployment guide](../DEPLOY.md)
+contains prerequisites, permission details, network requirements, and recovery
+boundaries. It is not a procedure for replacing an existing environment.
 
-This workflow creates a new environment without changing or deleting any
-existing DVM history. It does not manage or remove storage accounts,
-containers, or populated data outside the reviewed Terraform state.
+## Before deployment
 
-Use this document as the concise operator checklist. The canonical explanation
-of requirements, permissions, resource behavior, package deployment, dashboard
-assignment, and recovery boundaries is the
-[Azure deployment guide](../DEPLOY.md). New evaluators should complete
-[Local evaluation and datasets](local-evaluation.md) only when they need the
-separate local-only development path.
+- Python, Azure CLI, Terraform, and Git are installed and verified.
+- The deployment identity has the documented Azure, Entra, and management-group
+  role-assignment permissions.
+- `infra/terraform/main.tfvars.json` has been copied from the example and all
+  placeholders replaced, including unique names and the actual management-group ID.
+- The target tenant, subscription, region, data policy, and SLA settings are approved.
+- The state file and environment values have a protected backup location.
 
-The `python -m vulnerability_view.operations_cli` commands keep Terraform planning, application,
-deployment, and verification as separate explicit operations.
-
-## Values to set
-
-Environment-specific values are intentionally excluded from source control. Create the
-local variable file from the tracked example, then replace every sample value:
-
-```bash
-cp infra/terraform/main.tfvars.example.json infra/terraform/main.tfvars.json
-```
-
-Keep `main.tfvars.json`, `*.tfvars`, and `*.auto.tfvars*` out of source control.
-Only example files belong in the source repository.
-
-| Value | What to provide |
-|---|---|
-| `subscription_id` | Azure subscription GUID that will own the environment |
-| `tenant_id` | Microsoft Entra tenant GUID containing Defender |
-| `collector_management_group_id` | Management group ID containing the subscriptions to inventory; use the ID, not the display name or full resource path |
-| `resource_group_name` | New resource group name |
-| `location` | Region supported by Linux Dedicated App Service hosting |
-| `web_app_location` | Optional App Service and Web App region; empty uses `location` |
-| `web_app_candidate_locations` | Optional additional customer-approved regions for quota checks |
-| `history_storage_account_name` | Globally unique name for protected ADLS Gen2 history |
-| `function_runtime_storage_account_name` | Globally unique name for replaceable Functions host storage |
-| `function_app_name` | Globally unique Function App name |
-| `function_instance_memory_in_mb` | Deprecated and unused; existing customer values are accepted. Collector capacity is one fixed Dedicated B2 worker |
-| `app_mode` | `combined` for labeled synthetic plus live test data; `live` for production |
-| `collection_schedule` | Six-field NCRONTAB expression in UTC; `0 0 5 * * *` means daily at 05:00 UTC |
-| `history_storage_replication_type` | `LRS`, `ZRS`, `GRS`, or `GZRS` |
-| `storage_soft_delete_days` | Recovery period from 7 through 365 days |
-| `history_immutability_days` | Minimum WORM retention for history blobs; 365 days for this environment |
-| `lock_history_immutability_policy` | Keep `false` until validation is complete; locking cannot be reversed or shortened |
-| `grant_deployer_history_access` | Deprecated compatibility value; must remain `false` because operators receive no protected-history data role |
-| `tags` | Organization ownership, environment, application, and cost tags |
-
-Storage names must contain only lowercase letters and numbers and be 3-24
-characters. The Function App name must be globally unique.
-
-All supplied example resource names use `dvmviewer` as the product prefix.
-
-For **Tenant Root Group**, use the Microsoft Entra tenant GUID as
-`collector_management_group_id`. The matching values for `tenant_id` and
-`collector_management_group_id` are expected because Azure uses the tenant GUID
-as the root management-group ID.
-
-## Required operator permissions
-
-The person running Terraform needs permission to:
-
-- Create resources and Azure role assignments in the subscription.
-- Create the collector Reader assignment at the configured management-group
-  scope.
-- Create Microsoft Entra application-role assignments.
-- Read the WindowsDefenderATP and Microsoft Graph enterprise applications.
-- Grant the managed identity these application permissions:
-  - `Machine.Read.All`
-  - `Vulnerability.Read.All`
-  - `SecurityRecommendation.Read.All`
-  - `SecurityEvents.Read.All`
-
-The Terraform AzureAD provider creates those four assignments during the
-Function stage. No client secret is created or stored.
+The [configuration reference](configuration-reference.md) defines the inputs.
+Terraform controls hosted settings; `.env` controls local commands only.
+Neither environment values nor state belongs in source control.
 
 ## Sign in
 
@@ -87,19 +26,10 @@ az account set --subscription "<subscription-id>"
 az account show --query "{name:name,id:id,tenantId:tenantId}" --output table
 ```
 
-These commands and the deployment menus run as the currently signed-in Azure
-CLI identity. The operator needs the documented deployment permissions in the
-target tenant and subscription. The scripts and deployed application do not
-store that user's credentials or use them for normal application processing.
-After deployment, viewer authentication uses the Entra application/service
-principal and Azure resource and data access uses the Function and Web App
-managed identities.
+The signed-in operator deploys resources. The applications use their managed
+identities after deployment; they do not depend on that operator staying signed in.
 
 ## Streamlined complete deployment
-
-After setting every environment-specific value and signing in to the correct
-tenant and subscription, option 1 in either interactive menu performs the
-complete initial deployment:
 
 ```bash
 ./infra/deployment-menu.sh
@@ -109,130 +39,22 @@ complete initial deployment:
 .\infra\deployment-menu.ps1
 ```
 
-Select `1) Complete initial deployment or update`. The workflow plans and
-shows the cumulative `webapp` Terraform stage, which includes the foundation,
-Function, and Web App. Review the displayed plan and type `APPLY` only when it
-contains the intended deployment resources and no deletion or replacement of
-protected history storage. The workflow then deploys and verifies both code
-packages and offers to run the first live collection.
+Menu option **1** plans the cumulative `webapp` stage, displays the plan,
+requires approval, deploys and verifies both applications, and offers an initial
+collection. Approval of a deployment is not approval to delete protected storage.
 
-Use the three separate stages below instead when the environment requires
-independent review or approval before adding the Function or Web App.
+## Separate stages
 
-## Stage 1: foundation
+Separate review can use the operations CLI instead. Each apply uses the saved,
+reviewed plan:
 
-This creates:
-
-- A new resource group.
-- A protected ADLS Gen2 storage account.
-- A default-enabled Network Security Perimeter with a shared Storage profile,
-  an inbound deployment-subscription rule, and an initial `0.0.0.0/0` IPv4
-  rule.
-- Private `dvm-history` and `dvm-current` containers.
-- Thirty-day blob and container soft delete by default.
-- An unlocked 365-day WORM policy on `dvm-history`; `dvm-current` remains
-  mutable so its manifest pointer can advance.
-
-Historical storage and both containers have Terraform `prevent_destroy`
-protection. Application writes under `raw/`, `curated/`, and `runs/` remain
-append-only. Only `dvm-current/current/manifest.json` is replaceable.
-
-The perimeter initially does not restrict IPv4 source addresses. Microsoft
-Entra authentication and Storage data-plane RBAC still protect every request.
-The organization can replace `0.0.0.0/0` with approved operator CIDRs after
-validation. Azure Policy must allow
-`publicNetworkAccess=SecuredByPerimeter`; an unconditional `Disabled` policy is
-not compatible with this no-VNet deployment.
-
-Soft delete provides a recovery window after an eligible deletion. WORM blocks
-modification and deletion during the retention period. Soft delete does not
-delete active data, but its retained deleted copy expires after the recovery
-window. WORM expiration does not delete history, and this deployment does not
-configure a lifecycle deletion rule.
-
-```bash
-python -m vulnerability_view.operations_cli plan foundation
-python -m vulnerability_view.operations_cli show foundation
-python -m vulnerability_view.operations_cli apply foundation
-python -m vulnerability_view.operations_cli verify foundation
-```
-
-Review the plan before applying. It should contain creates only.
-The verification command confirms that the signed-in deployment identity can
-list the two private containers using Microsoft Entra authentication. Role
-assignment propagation can take several minutes.
-
-## Stage 2: collector Function
-
-Change `deploy_function` to `true`, then run:
-
-```bash
-python -m vulnerability_view.operations_cli plan function
-python -m vulnerability_view.operations_cli show function
-python -m vulnerability_view.operations_cli apply function
-python -m vulnerability_view.operations_cli deploy function
-python -m vulnerability_view.operations_cli verify function
-```
-
-This creates the Dedicated B2 plan with one fixed worker and Always On, separate runtime storage, collector
-managed identity, storage RBAC, Defender/Graph application-role assignments,
-Log Analytics, Application Insights, diagnostics, and the Function App. The
-Function runs at the UTC schedule in `collection_schedule`.
-
-This is a greenfield procedure. Existing Flex deployments require the
-[reviewed hosting migration](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments).
-Dedicated hosting removes consumption-driven scale-in but can still restart
-for maintenance, deployment, or failures.
-
-The deployment helper removes the AzureRM provider's legacy
-`AzureWebJobsStorage` setting before publishing. The Function then uses only
-managed-identity host-storage settings.
-
-To populate a test environment with six months of synthetic history, follow the
-one-time local seed procedure in `DEPLOY.md` after the foundation is created.
-The Function does not generate synthetic data. With `app_mode=combined`, later
-live collections preserve the seeded rows under their `Synthetic` data-origin
-label.
-
-### Deployed collector run options
-
-| Option | Use | Operation |
+| Stage | Resources | Operations |
 |---|---|---|
-| Scheduled timer | Normal unattended collection | The Function runs at the UTC `collection_schedule`; the default is daily at 05:00 UTC. |
-| Guarded one-shot run | Initial validation, recovery from a missed schedule, or an intentional out-of-band snapshot | Run `python -m vulnerability_view.operations_cli invoke function --confirm`. |
-| Schedule change | Change the recurring cadence | Update `collection_schedule`, run and review `tfplan function`, then run `tfapply function`. A code-package deployment is not required for only an application-setting change. |
+| Foundation | Resource group, protected history/pointer/workflow storage, retention controls, network perimeter | `plan`, `show`, `apply`, `verify foundation` |
+| Function | Dedicated B2 collector, runtime storage, identity, permissions, monitoring | `plan`, `show`, `apply`, `deploy`, `verify function` |
+| Web App | Dashboard plan/app, identity, Entra application, authentication, viewer cache | `plan`, `show`, `apply`, `deploy`, `verify webapp` |
 
-The one-shot helper invokes the existing timer function through the Azure
-Functions admin endpoint. It retrieves the host master key into a temporary
-shell variable and does not print or persist it. Prefer the helper over copying
-the key into a command, script, shell history, or operator document.
-
-Every option executes the same `collect-live` path. A successful run writes new
-immutable `raw/`, `curated/`, and `runs/` paths, then replaces only
-`dvm-current/current/manifest.json`. The current synchronous pilot does not have
-an application-level distributed lock. Check Application Insights for an active
-invocation and do not start a one-shot run while the timer is running.
-
-## Stage 3: Web App
-
-The optional cumulative Web App stage creates:
-
-- one Linux App Service plan and Web App using the explicitly approved region and SKU;
-- one user-assigned managed identity with Storage Blob Data Reader;
-- one single-tenant Entra application and Enterprise Application named `DVM Viewer`;
-- `Dashboard.Viewer` and `Data.Evidence.Reader` app roles;
-- assignment-required access for the configured Entra group;
-- App Service Easy Auth with unauthenticated requests redirected to Entra;
-- Azure-backed dashboard settings and a 300-second verified-bundle cache.
-
-Terraform creates the assignment-required `DVM Viewer` Enterprise Application
-but does not create an access group or assign users. A tenant administrator
-assigns authorized existing users or groups to `Dashboard Viewer` and any
-required optional roles through the Enterprise Application.
-
-Group-based Enterprise Application assignment requires the applicable
-Microsoft Entra ID licensing. If it is unavailable, assign individual users
-the `Dashboard.Viewer` role.
+For example:
 
 ```bash
 python -m vulnerability_view.operations_cli plan webapp
@@ -242,86 +64,41 @@ python -m vulnerability_view.operations_cli deploy webapp
 python -m vulnerability_view.operations_cli verify webapp
 ```
 
-After apply, Terraform outputs
-`dashboard_enterprise_application_object_id` and
-`dashboard_entra_client_id` identify `DVM Viewer`. Manage assignments at
-**Microsoft Entra ID > Enterprise applications > DVM Viewer > Users and
-groups**. Confirm the proposed globally unique `web_app_name` before apply.
+After the Web App exists, later infrastructure plans use `webapp` so all
+deployed stages remain included. A dashboard-only code update needs menu
+option **4**, not an infrastructure apply or new collection.
 
-The Web App plan is cumulative and preserves the foundation and Function.
-After the Web App exists, use the `webapp` planning stage for subsequent
-infrastructure changes so Terraform retains all three stages.
+## Access and validation
 
-The application rejects requests that do not contain the trusted Easy Auth
-principal. The Enterprise Application independently prevents unassigned users
-from signing in. If the diagnostic Data evidence endpoint is enabled, authorized
-group members open `/data-evidence`; its API also verifies the
-`Data.Evidence.Reader` role.
+Terraform creates an assignment-required Enterprise Application but does not
+assign users or groups. Entra administrators assign **Dashboard Viewer** and
+any approved optional roles. The [deployment guide](../DEPLOY.md#deploy-the-authenticated-dashboard-web-app)
+covers sign-in and credential renewal.
 
-Easy Auth uses an application credential with a two-year lifetime and an annual
-Terraform rotation trigger. Run and apply a reviewed Web App plan at least
-annually. Terraform then replaces the credential and updates the protected Web
-App setting together, leaving a one-year renewal margin.
-
-## Validation and utilities
-
-Check Defender access locally before invoking a collection:
-
-```bash
-python -m vulnerability_view.operations_cli preflight
-```
-
-This tests the signed-in developer identity. The deployed managed identity is
-tested by invoking the timer workload:
+A manual collection uses:
 
 ```bash
 python -m vulnerability_view.operations_cli invoke function --confirm
-python -m vulnerability_view.operations_cli verify function
+python -m vulnerability_view.operations_cli check-runs --limit 5 --progress
 ```
 
-The confirmation is required because invocation writes a new immutable live
-run and advances the new environment's current manifest.
+The Durable workflow coordinates active work. A successful trigger request is
+not a completed run; status must show progress and a verified publication.
+An active or failed run retains its original scope and identity during recovery.
 
-The Azure portal's timer **Test/Run** operation reaches the same administrative
-invocation surface, but the repository helper is preferred because it makes the
-write confirmation explicit and avoids manually handling the host key.
+Dashboard validation includes ordinary-user sign-in, `dashboardReady`, snapshot
+identity/time, representative queries, and any enabled role-restricted features.
+The shell can load while indexes are still preparing.
 
-For normal development, point the locally running Web App at the new account:
+## Storage boundary
 
-```dotenv
-DASHBOARD_DATA_SOURCE=azure
-STORAGE_ACCOUNT_NAME=<new-history-storage-account>
-STORAGE_CONTAINER_NAME=dvm-history
-STORAGE_CURRENT_CONTAINER_NAME=dvm-current
-```
+The history account survives application replacement. Retained paths are
+append-only; only the separate current manifest pointer is replaceable.
+Soft-delete and WORM settings do not automatically purge history.
 
-Then run `./start-app.sh`. UI, normalization, SLA, and replay work can remain
-local; redeploy only when testing hosted Function behavior.
+The Function runtime account is separate from retained DVM evidence. Existing
+Flex deployments need the [reviewed hosting migration](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments),
+not this greenfield checklist.
 
-## Removing the replaceable Function stage
-
-The helper can remove only the Function stage. It cannot target protected
-history storage or the foundation resource group.
-
-```bash
-python -m vulnerability_view.operations_cli destroy function --confirm
-```
-
-Review the displayed destroy plan before Terraform asks for final approval.
-The history account and its containers have `prevent_destroy` protection and
-are not included in this operation.
-
-## Command reference
-
-| Command | Purpose |
-|---|---|
-| `tfplan foundation` | Save a plan for the resource group and protected storage |
-| `tfapply foundation` | Apply the reviewed foundation plan |
-| `tfverify foundation` | Verify deployer Blob data access to the history account |
-| `tfplan function` | Save a plan for Function infrastructure and permissions |
-| `tfapply function` | Apply the reviewed Function plan |
-| `tfdeploy function` | Build and publish the Function code |
-| `tfverify function` | Verify host readiness, timer discovery, and Azure data |
-| `tfpreflight` | Test Defender routes with the local signed-in identity |
-| `tfinvoke function` | Explicitly invoke one live collection |
-| `tfdestroy function` | Remove only replaceable Function resources |
+Routine teardown is not part of this installation path. Exact destructive
+targets require separate human approval.

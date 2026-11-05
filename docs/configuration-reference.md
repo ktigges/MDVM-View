@@ -1,7 +1,7 @@
-# Complete configuration reference
+# Configuration reference
 
-> **Last modified:** 2026-10-08
-> **Purpose:** List every operator-controlled configuration file and setting used by the collector, dashboard, Terraform, and operational scripts.
+Infrastructure inputs, application settings, and generated hosted values have
+different owners. This page separates them and records their defaults.
 
 For executable workflows and safety guidance, see the
 [Command reference](command-reference.md).
@@ -197,6 +197,7 @@ These can be environment variables or keys in
 | `DASHBOARD_DATA_SOURCE` | `dashboardDataSource` | `local` | `local` reads `dashboard/data`; `azure` reads current manifest and curated blobs |
 | `DASHBOARD_STATIC_DIR` | `dashboardStaticDir` | Empty | Override path for dashboard static assets |
 | `DASHBOARD_CACHE_SECONDS` | `dashboardCacheSeconds` | `30`; zero or greater | Current-manifest cache duration and background snapshot-check interval (minimum one second); unchanged immutable indexes do not expire on this timer |
+| `DASHBOARD_DERIVED_CACHE_CONTAINER` | `dashboardDerivedCacheContainer` | Empty | Optional persistent store for compatible completed indexes and reporting artifacts; Terraform configures `dvm-viewer-cache` for the hosted viewer |
 | `DASHBOARD_AUTH_ENABLED` | `dashboardAuthEnabled` | `false` | Requires App Service Easy Auth identity when enabled |
 | `DASHBOARD_DATA_BROWSER_ENABLED` | `dashboardDataBrowserEnabled` | `false` | Enables read-only Data Evidence surface |
 | `DASHBOARD_DATA_BROWSER_ROLE` | `dashboardDataBrowserRole` | Empty | Optional Easy Auth role required by Data Evidence |
@@ -247,6 +248,7 @@ Terraform input rather than changing the generated setting in the portal.
 | `DASHBOARD_DATA_BROWSER_ENABLED` | `var.dashboard_data_browser_enabled` |
 | `DASHBOARD_DATA_BROWSER_ROLE` | `Data.Evidence.Reader` when enabled |
 | `DASHBOARD_DATA_SOURCE` | Fixed to `azure` |
+| `DASHBOARD_DERIVED_CACHE_CONTAINER` | Separate `dvm-viewer-cache` container; the Web App receives write access scoped to that cache, not retained evidence |
 | `DASHBOARD_RECOMMENDATION_TRACKING_CONTAINER` | Workflow container variable |
 | `DASHBOARD_RECOMMENDATION_TRACKING_ENABLED` | Tracking feature variable |
 | `DASHBOARD_RECOMMENDATION_TRACKING_ROLE` | Legacy compatibility value |
@@ -282,14 +284,11 @@ collection publishes the updated policy.
 
 File: `dashboard/config.js`
 
-While a report view is loading, its banner shows an indeterminate progress bar,
-elapsed request time, and the number of server preparation-status responses.
-These are visual indicators, not a completion percentage or an estimated finish
-time: the current query API reports `preparing` without work-unit totals. The
-elapsed clock resets for a new view/filter request and stops on completion,
-failure, or snapshot expiry. Reduced-motion preferences disable the animation.
-Report computation, query payloads, polling intervals, caching, and timeouts are
-unchanged.
+Loading indicators show elapsed time and indeterminate progress, not an estimated
+finish time. Initial snapshot preparation also supplies a server stage and
+expandable index checklist. A view/filter query has its own request clock and
+preparing responses; those are not percentage-complete measurements.
+Reduced-motion preferences disable animation.
 
 | Setting | Effect |
 |---|---|
@@ -345,7 +344,12 @@ Asset query versions in `dashboard/index.html` control browser cache busting for
 | Setting | Effect |
 |---|---|
 | `version` | Functions host schema version |
-| `functionTimeout` | `04:00:00`: allows up to four hours per execution. Dedicated hosting enables Always On with one fixed B2 worker. Does not change Defender request timeouts/retries or guarantee survival of platform restarts. Deploy Function code to apply timeout changes; check for any `AzureFunctionsJobHost__functionTimeout` app-setting override. Flex-to-Dedicated migration additionally requires an infrastructure apply; see [migration instructions](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments). |
+| `functionTimeout` | `-1`: no host execution deadline on the Always On Dedicated plan. Request/retry budgets and platform restarts still apply. Code deployment updates this setting; an `AzureFunctionsJobHost__functionTimeout` App Setting can override it. Flex-to-Dedicated migration separately requires an infrastructure apply; see [migration instructions](../infra/README.md#collector-hosting-and-upgrading-existing-flex-deployments). |
+| `extensions.durableTask.hubName` | `DvmCollectionV1`; Durable state uses separate Function runtime storage |
+| `extensions.durableTask.maxConcurrentActivityFunctions` | `1`; bounded collector activity execution |
+| `extensions.durableTask.maxConcurrentOrchestratorFunctions` | `1`; bounded orchestrator execution |
+| `extensions.durableTask.overridableExistingInstanceStates` | `NonRunningStates`; active collection is not replaced |
+| `extensions.durableTask.storageProvider.connectionName` | `AzureWebJobsStorage`; never point at retained DVM history |
 | `logging.applicationInsights.samplingSettings.isEnabled` | Enables Application Insights sampling |
 | `logging.applicationInsights.samplingSettings.excludedTypes` | Telemetry types excluded from sampling |
 | `extensionBundle.id` | Functions extension bundle |
