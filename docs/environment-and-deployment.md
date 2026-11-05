@@ -363,7 +363,8 @@ a published dataset:
    storage account, the Web App's container-scoped access and
    `DASHBOARD_DERIVED_CACHE_CONTAINER`. Stop if retained storage or evidence
    containers would be deleted or replaced. Allow new role assignments time to
-   propagate.
+   propagate. FTP and Web Deploy publishing basic authentication should remain
+   disabled for both applications.
 6. Run menu **4** to deploy/verify the Web App. This viewer update does not
    require deploying the Function, invoking collection or running the manual
    index-rebuild command.

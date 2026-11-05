@@ -400,6 +400,8 @@ def test_collector_uses_fixed_dedicated_hosting_without_changing_storage_identit
     assert 'python_version = "3.12"' in collector
     assert 'functions_extension_version                    = "~4"' in collector
     assert "storage_uses_managed_identity                  = true" in collector
+    assert "ftp_publish_basic_authentication_enabled       = false" in collector
+    assert "webdeploy_publish_basic_authentication_enabled = false" in collector
     assert "azurerm_storage_account.function_runtime[each.key].name" in collector
     assert "azurerm_user_assigned_identity.collector[each.key].id" in collector
     assert '"STORAGE_ACCOUNT_NAME"             = azurerm_storage_account.history.name' in collector

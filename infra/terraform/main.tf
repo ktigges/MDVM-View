@@ -449,6 +449,7 @@ resource "azurerm_linux_function_app" "collector" {
   functions_extension_version                    = "~4"
   https_only                                     = true
   public_network_access_enabled                  = true
+  ftp_publish_basic_authentication_enabled       = false
   webdeploy_publish_basic_authentication_enabled = false
 
   identity {
