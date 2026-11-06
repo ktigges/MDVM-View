@@ -17,6 +17,7 @@ from vulnerability_view.collection_workflow import (
     INSTANCE_ID, RunStore, ensure_current_baseline, orchestrate, prepare_run, publish_run, run_prefix, start_collection, verify_file,
 )
 from vulnerability_view.config import Settings
+from vulnerability_view.collection_timing import OperationTotals
 from test_collection_identity import TENANT, OTHER, credential as tenant_credential
 
 
@@ -122,7 +123,7 @@ def test_worker_is_stopped_if_the_supervisor_is_interrupted(monkeypatch):
     assert children[0].returncode != 0
 
 
-@pytest.mark.parametrize("stage", ["prepare", "collect", "process", "verify", "publish"])
+@pytest.mark.parametrize("stage", ["prepare", "collect", "process", "verify", "verify-batch", "publish"])
 def test_original_deadline_kills_a_silent_worker_in_every_stage(monkeypatch, caplog, stage):
     popen = subprocess.Popen
     children = []
@@ -182,6 +183,7 @@ def test_worker_finishing_before_run_deadline_keeps_normal_result(monkeypatch):
 class PlanStore:
     def __init__(self):
         self.files = {}
+        self.timings = OperationTotals()
         self.settings = Settings(storage_account_name="history")
         self.current = self
 
@@ -646,6 +648,142 @@ def test_orchestrator_uses_durable_cooldown_and_separate_file_verification():
     with pytest.raises(StopIteration):
         workflow.send({"published": True})
     assert context.statuses[-1]["phase"] == "completed"
+
+
+def test_new_workflow_batches_verification_and_preserves_legacy_replay():
+    context = OrchestrationContext()
+    context.options["workflowVersion"] = 2
+    workflow = orchestrate(context)
+    next(workflow)
+    reference = {"runId": context.options["runId"], "planPath": "runs/plan.json"}
+    workflow.send(reference)
+    workflow.send({"done": True})
+    activity, value = workflow.send({"done": True, "fileCount": 65})
+    assert activity == "dataprep_verify_batch_v1"
+    assert value["fileIndex"] == 0
+    assert workflow.send({"nextIndex": 32, "verified": True})[1]["fileIndex"] == 32
+    assert workflow.send({"nextIndex": 64, "verified": True})[1]["fileIndex"] == 64
+    assert workflow.send({"nextIndex": 65, "verified": True})[0] == "dataprep_publish"
+
+
+def batch_store(count=65):
+    store = PublicationStore()
+    item = store.manifest["files"][0]
+    store.manifest["files"] = [{**item, "path": f"curated/run/{index}.gz"} for index in range(count)]
+    store.save_manifest()
+    store.files[f"{store.prefix}/prepared.json"] = json.dumps({
+        "manifestPath": f"{store.prefix}/manifest.json", "verificationVersion": 1,
+    })
+    store.history.download_blob = Mock(
+        side_effect=lambda name, **kwargs: SimpleNamespace(chunks=lambda: iter([store.raw])),
+    )
+    return store
+
+
+def test_verification_batches_cover_every_file_and_resume_without_redownload():
+    store = batch_store()
+    next_index = 0
+    while next_index < 65:
+        result = collection_workflow.verify_batch({**store.reference, "fileIndex": next_index}, store)
+        assert 0 < result["nextIndex"] - next_index <= 32
+        next_index = result["nextIndex"]
+    assert store.history.download_blob.call_count == 65
+    frozen = dict(store.files)
+    result = collection_workflow.verify_batch({**store.reference, "fileIndex": 0}, store)
+    assert result["nextIndex"] == 32
+    assert store.files == frozen
+    assert store.history.download_blob.call_count == 65
+    assert publish_run(store.reference, store)["published"] is True
+
+
+def test_batch_publication_rejects_missing_or_conflicting_coverage():
+    store = batch_store(2)
+    collection_workflow.verify_batch({**store.reference, "fileIndex": 0}, store)
+    receipt_path = f"{store.prefix}/verified/batches/000000.json"
+    receipt = json.loads(store.files[receipt_path])
+    receipt["proofs"].pop()
+    store.files[receipt_path] = json.dumps(receipt)
+    with pytest.raises(ValueError, match="verification"):
+        publish_run(store.reference, store)
+    store.pointer.upload_blob.assert_not_called()
+
+
+def test_batch_verification_never_commits_receipt_for_corrupt_bytes():
+    store = batch_store(4)
+    store.raw = b"corrupt"
+    with pytest.raises(ValueError, match="verification"):
+        collection_workflow.verify_batch({**store.reference, "fileIndex": 0}, store)
+    assert not any("/verified/batches/" in name for name in store.files)
+    store.pointer.upload_blob.assert_not_called()
+
+
+def test_verification_batch_limits_bytes_and_handles_an_oversized_file():
+    store = batch_store(3)
+    store.manifest["files"][0]["sizeBytes"] = collection_workflow.VERIFICATION_BYTES + 1
+    store.save_manifest()
+    for index, item in enumerate(store.manifest["files"]):
+        store.append_json(f"{store.prefix}/verified/{index:06d}.json", {
+            key: item[key] for key in ("path", "sha256", "sizeBytes")
+        })
+    assert collection_workflow.verify_batch({**store.reference, "fileIndex": 0}, store)["nextIndex"] == 1
+    assert collection_workflow.verify_batch({**store.reference, "fileIndex": 1}, store)["nextIndex"] == 3
+    store.history.download_blob.assert_not_called()
+
+
+def test_verification_batch_resumes_partial_proofs_but_rejects_wrong_proofs():
+    store = batch_store(4)
+    item = store.manifest["files"][0]
+    path = f"{store.prefix}/verified/000000.json"
+    store.append_json(path, {key: item[key] for key in ("path", "sha256", "sizeBytes")})
+    assert collection_workflow.verify_batch({**store.reference, "fileIndex": 0}, store)["nextIndex"] == 4
+    assert store.history.download_blob.call_count == 3
+    del store.files[f"{store.prefix}/verified/batches/000000.json"]
+    store.files[path] = json.dumps({"path": "wrong"})
+    with pytest.raises(ValueError, match="proof mismatch"):
+        collection_workflow.verify_batch({**store.reference, "fileIndex": 0}, store)
+
+
+def test_verification_batch_caps_parallel_downloads():
+    import threading
+
+    store = batch_store(12)
+    lock = threading.Lock()
+    active = peak = 0
+
+    def download(name, **kwargs):
+        assert kwargs == {"max_concurrency": 1}
+
+        def chunks():
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                time.sleep(0.01)
+                yield store.raw
+            finally:
+                with lock:
+                    active -= 1
+        return SimpleNamespace(chunks=chunks)
+
+    store.history.download_blob = download
+    collection_workflow.verify_batch({**store.reference, "fileIndex": 0}, store)
+    assert 1 < peak <= 4
+    assert active == 0
+
+
+def test_verification_batch_soft_budget_commits_completed_groups(monkeypatch):
+    store = batch_store(12)
+    clock = [0.0]
+    monkeypatch.setattr(collection_workflow.time, "monotonic", lambda: clock[0])
+
+    def download(name, **kwargs):
+        clock[0] = collection_workflow.VERIFICATION_SECONDS + 1
+        return SimpleNamespace(chunks=lambda: iter([store.raw]))
+
+    store.history.download_blob = download
+    assert collection_workflow.verify_batch({**store.reference, "fileIndex": 0}, store)["nextIndex"] == 4
+    assert collection_workflow.verify_batch({**store.reference, "fileIndex": 4}, store)["nextIndex"] == 12
 
 
 def test_orchestration_history_is_bounded_without_changing_frozen_run():

@@ -49,6 +49,7 @@ def test_function_execution_has_no_host_wall_clock_deadline():
 @pytest.mark.parametrize("stage,name", [
     ("prepare", "dataprep_prepare"), ("collect", "dataprep_collect_batch"),
     ("process", "dataprep_process"), ("verify", "dataprep_verify_file"),
+    ("verify-batch", "dataprep_verify_batch_v1"),
     ("publish", "dataprep_publish"),
 ])
 def test_every_hosted_activity_uses_original_deadline_worker_supervision(monkeypatch, stage, name):
@@ -110,7 +111,7 @@ def test_all_function_app_annotations_resolve_on_eager_annotation_runtimes():
         sys.executable, "-c",
         "import function_app; from typing import get_type_hints; "
         "functions = function_app.app.get_functions(); "
-        "assert len(functions) == 12; "
+        "assert len(functions) == 13; "
         "[get_type_hints(f.get_user_function()) for f in functions]",
     ], check=True, capture_output=True, text=True)
 

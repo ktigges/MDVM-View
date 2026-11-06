@@ -15,11 +15,12 @@ import requests
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
 from vulnerability_view import collection_worker
-from vulnerability_view.collection_transport import CheckpointYield, current_checkpoints
+from vulnerability_view.collection_transport import CompletedPhases, CheckpointYield, current_checkpoints
+from vulnerability_view.collection_timing import OperationTotals
 from vulnerability_view.config import Settings
 from vulnerability_view.defender_client import DefenderClient, ENDPOINTS
 from vulnerability_view.storage_writer import archive_raw_page
-from vulnerability_view.collection_workflow import publish_run, verify_file
+from vulnerability_view.collection_workflow import publish_run, verify_batch, verify_file
 from dataclasses import asdict
 from test_collection_identity import TENANT, OTHER, credential as tenant_credential
 
@@ -32,6 +33,7 @@ def collection_credential(monkeypatch):
 class WorkerStore:
     def __init__(self):
         self.files = {}
+        self.timings = OperationTotals()
         self.uploads = []
         self.downloads = 0
 
@@ -70,6 +72,43 @@ class WorkerStore:
         return {"path": name, "sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "sizeBytes": source.stat().st_size}
 
 
+def test_journal_listing_is_one_remote_scan_per_activity_and_tracks_new_pages(tmp_path):
+    store = WorkerStore()
+    prefix = "raw/run/continuations/"
+    for machine in range(2252):
+        store.append(f"{prefix}findings/{machine}/00000001.json", b"{}")
+    store.list_names = Mock(wraps=store.list_names)
+    cache = collection_worker.LocalRequestCache(store, tmp_path, prefix)
+    for machine in range(2252):
+        assert cache.list_names(f"{prefix}findings/{machine}/") == [f"{prefix}findings/{machine}/00000001.json"]
+    cache.append(f"{prefix}findings/0/00000002.json", b"{}")
+    assert len(cache.list_names(f"{prefix}findings/0/")) == 2
+    store.list_names.assert_called_once_with(prefix)
+    assert len(collection_worker.LocalRequestCache(store, tmp_path, prefix).list_names(f"{prefix}findings/0/")) == 2
+    assert store.list_names.call_count == 2
+
+
+def test_completed_phases_restore_cold_and_reject_identity_or_byte_changes(tmp_path):
+    store = WorkerStore()
+    folder = tmp_path / "original"
+    archive_raw_page("machines", 1, b'{"value":[{"id":"one"}]}', "run", root=folder)
+    phases = CompletedPhases(store, "raw/run", folder / "run", {"tenant": TENANT})
+    phases.save("machines", {"RowCount": 1}, [{"id": "one"}])
+    frozen = dict(store.files)
+    cold = CompletedPhases(store, "raw/run", tmp_path / "cold", {"tenant": TENANT})
+    assert cold.load("machines")["payload"] == [{"id": "one"}]
+    assert store.files == frozen
+    wrong = CompletedPhases(store, "raw/run", tmp_path / "other", {"tenant": OTHER})
+    with pytest.raises(ValueError, match="frozen"):
+        wrong.load("machines")
+    (tmp_path / "cold/machines-page-0001.json.gz").write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="integrity"):
+        cold.load("machines")
+    store.files["raw/run/machines-page-0001.json.gz"] = b"corrupt"
+    with pytest.raises(ValueError, match="integrity"):
+        CompletedPhases(store, "raw/run", tmp_path / "another", {"tenant": TENANT}).load("machines")
+
+
 def plan():
     return {
         "runId": "live-20261023T160000Z", "snapshotUtc": "2026-10-23T16:00:00+00:00",
@@ -79,7 +118,7 @@ def plan():
     }
 
 
-@pytest.mark.parametrize("stage", ["prepare", "verify", "publish"])
+@pytest.mark.parametrize("stage", ["prepare", "verify", "verify-batch", "publish"])
 def test_worker_dispatches_supervised_storage_stages_without_loading_a_collection_plan(monkeypatch, tmp_path, stage):
     store = SimpleNamespace(close=Mock(), json=Mock(side_effect=AssertionError("No collection plan for this stage")))
     monkeypatch.setattr(collection_worker.Settings, "load", lambda: Settings())
@@ -91,7 +130,9 @@ def test_worker_dispatches_supervised_storage_stages_without_loading_a_collectio
     if stage == "prepare":
         action.update(request={"runId": action["runId"]}, policy={"policyVersion": "original"})
     callback = Mock(return_value={"stage": stage, "done": True})
-    monkeypatch.setattr(collection_worker, {"prepare": "prepare_run", "verify": "verify_file", "publish": "publish_run"}[stage], callback)
+    monkeypatch.setattr(collection_worker, {
+        "prepare": "prepare_run", "verify": "verify_file", "verify-batch": "verify_batch", "publish": "publish_run",
+    }[stage], callback)
     input_path, output_path = tmp_path / "input.json", tmp_path / "result.json"
     input_path.write_text(json.dumps(action))
     monkeypatch.setattr(collection_worker.sys, "argv", ["worker", str(input_path), str(output_path)])
@@ -164,6 +205,57 @@ def test_worker_collect_uses_frozen_snapshot_and_yields_small_progress(monkeypat
     assert received["raw_only"] is True
     assert received["cve_batch_size"] == 100
     assert received["page_size"] == 2500
+
+
+def test_machine_progress_survives_generic_completion_and_next_start(monkeypatch, tmp_path, caplog):
+    monkeypatch.chdir(tmp_path)
+
+    def collect(*args, **kwargs):
+        report = kwargs["progress_callback"]
+        report("[machine_vulnerabilities] starting device-scoped collection for 2,252 machines")
+        report("[machine_vulnerabilities] complete: 800 rows (100%)")
+        report("[machine_vulnerabilities] machines complete: 100/2,252; 80,000 total rows; 1s elapsed")
+        report("[machine_vulnerabilities] starting download")
+        raise CheckpointYield()
+
+    monkeypatch.setattr(collection_worker, "collect_live", collect)
+    with caplog.at_level(logging.INFO):
+        result = collection_worker.collect_batch(plan(), WorkerStore(), tmp_path / "cache")
+    assert result["machinesCompleted"] == 100
+    assert result["machinesTotal"] == 2252
+    assert result["findingRowsCheckpointed"] == 80000
+    assert "machines complete: 100/2,252" in result["lastProgress"]
+    assert "machines complete: 100/2,252" in caplog.text
+
+
+@pytest.mark.parametrize("message,cached,severity", [
+    ("[recommendation_machines] 66/131 recommendations; 106,496 relationships; 0 unavailable", False, logging.INFO),
+    ("[vulnerabilities] CVE metadata batches processed: 1/1; 0 CVEs unavailable", False, logging.INFO),
+    ("[vulnerabilities] CVE metadata batches processed: 1/1; 3 CVEs unavailable", False, logging.INFO),
+    ("[optional] optional endpoint unavailable: HTTP 404", False, logging.WARNING),
+    ("[optional] optional endpoint unavailable: HTTP 404", True, logging.WARNING),
+    ("[recommendation_machines] recommendation-one unavailable: HTTP 403", False, logging.WARNING),
+    ("[machines] failed: HTTP 403", True, logging.ERROR),
+    ("[machines] failed: while requesting page 2", False, logging.ERROR),
+    ("[machine_vulnerabilities] failed machine 1/2: collection is incomplete", False, logging.ERROR),
+])
+def test_progress_severity_distinguishes_counts_optional_issues_and_failures(
+    monkeypatch, tmp_path, caplog, message, cached, severity,
+):
+    monkeypatch.chdir(tmp_path)
+
+    def collect(*args, **kwargs):
+        current_checkpoints().last_was_cached = cached
+        kwargs["progress_callback"](message)
+        raise CheckpointYield()
+
+    monkeypatch.setattr(collection_worker, "collect_live", collect)
+    with caplog.at_level(logging.INFO):
+        result = collection_worker.collect_batch(plan(), WorkerStore(), tmp_path / "cache")
+    assert result["done"] is False and result["retry"] is False
+    matching = [record for record in caplog.records if record.getMessage() == message]
+    assert len(matching) == 1
+    assert matching[0].levelno == severity
 
 
 def test_delta_worker_restarts_directly_and_commits_the_same_immutable_raw_pages(monkeypatch, tmp_path):
@@ -286,7 +378,7 @@ def test_collection_logs_only_throttled_endpoint_counts_and_errors(monkeypatch, 
     monkeypatch.setattr(collection_worker, "collect_live", collect)
     with caplog.at_level(logging.INFO):
         result = collection_worker.collect_batch(plan(), WorkerStore(), tmp_path / "cache")
-    messages = [record.getMessage() for record in caplog.records]
+    messages = [record.getMessage() for record in caplog.records if not record.getMessage().startswith("[timing]")]
     assert messages == [
         "[collection] runId=live-20261023T160000Z mode=full sinceTime=None baselineRunId=None excludeScaleSets=False",
         "[machines] starting download",
@@ -297,7 +389,9 @@ def test_collection_logs_only_throttled_endpoint_counts_and_errors(monkeypatch, 
         "[machine_vulnerabilities] failed: permission denied",
         "[collection] paused: HTTP 503; retry in 30s; newRequests=0 downloadedRows=0 downloadedBytes=0; [machine_vulnerabilities] failed: permission denied",
     ]
-    assert caplog.records[-2].levelno == logging.ERROR
+    assert [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR] == [
+        "[machine_vulnerabilities] failed: permission denied",
+    ]
     assert result["lastProgress"] == "[machine_vulnerabilities] failed: permission denied"
 
 
@@ -424,7 +518,8 @@ def test_interrupted_local_cache_append_does_not_poison_saved_remote_page(monkey
 
 
 @pytest.mark.parametrize("metadata", ["available", "missing", "recovered_missing", "http_error"])
-def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(monkeypatch, tmp_path, metadata):
+@pytest.mark.parametrize("workflow_version", [1, 2, 3])
+def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(monkeypatch, tmp_path, caplog, metadata, workflow_version):
     monkeypatch.chdir(tmp_path)
     credential = tenant_credential(TENANT)
     monkeypatch.setattr(collection_worker, "create_credential", lambda *args: credential)
@@ -461,7 +556,18 @@ def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(mon
     shutil.copyfile(Path(__file__).resolve().parents[1] / "config/sla-policies.json", config / "sla-policies.json")
     store = WorkerStore()
     frozen = plan()
+    frozen["workflowVersion"] = workflow_version
     cache = tmp_path / "cache"
+    from vulnerability_view import live_collector
+
+    scans = []
+    iter_rows = live_collector._iter_archived_endpoint_rows
+
+    def tracked_rows(folder, endpoint, **kwargs):
+        scans.append(endpoint)
+        return iter_rows(folder, endpoint, **kwargs)
+
+    monkeypatch.setattr(live_collector, "_iter_archived_endpoint_rows", tracked_rows)
     if metadata == "recovered_missing":
         from vulnerability_view import live_collector
 
@@ -477,7 +583,28 @@ def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(mon
                 collection_worker.collect_batch(frozen, store, cache)
         prior_catalog_calls = sum(urlsplit(url).path == "/api/vulnerabilities" for url in requests_sent)
         assert prior_catalog_calls == 4
-    assert collection_worker.collect_batch(frozen, store, cache)["done"]
+    if workflow_version >= 2:
+        checkpoints = collection_worker.RequestCheckpoints
+
+        def bounded(*args, **kwargs):
+            transport = checkpoints(*args, **kwargs)
+            transport.request_limit = 1
+            transport.findings_interval = 0
+            return transport
+
+        monkeypatch.setattr(collection_worker, "RequestCheckpoints", bounded)
+    for attempt in range(30):
+        result = collection_worker.collect_batch(frozen, store, cache)
+        if result["done"]:
+            break
+    assert result["done"]
+    if workflow_version >= 2:
+        if metadata != "recovered_missing":
+            assert attempt > 0
+        assert scans.count("machine_vulnerabilities") == 2
+        assert sum(urlsplit(url).path == "/api/machines" for url in requests_sent) == 1
+    if metadata == "available":
+        assert not any(record.levelno >= logging.ERROR for record in caplog.records)
     if metadata == "recovered_missing":
         assert sum(urlsplit(url).path == "/api/vulnerabilities" for url in requests_sent) == prior_catalog_calls
     original_requests = len(requests_sent)
@@ -534,12 +661,17 @@ def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(mon
     }
     store.append_json(reference["planPath"], {**frozen, "baselineEtag": None})
     store.history = SimpleNamespace(
-        download_blob=lambda name: SimpleNamespace(chunks=lambda: iter([store.read(name)])),
+        download_blob=lambda name, **kwargs: SimpleNamespace(chunks=lambda: iter([store.read(name)])),
     )
     pointer = Mock()
     pointer.download_blob.side_effect = ResourceNotFoundError("first publication")
     store.current = SimpleNamespace(get_blob_client=lambda name: pointer)
-    for index in range(prepared["fileCount"]):
-        verify_file({**reference, "fileIndex": index}, store)
+    if workflow_version >= 2:
+        index = 0
+        while index < prepared["fileCount"]:
+            index = verify_batch({**reference, "fileIndex": index}, store)["nextIndex"]
+    else:
+        for index in range(prepared["fileCount"]):
+            verify_file({**reference, "fileIndex": index}, store)
     assert publish_run(reference, store)["published"] is True
     assert json.loads(pointer.upload_blob.call_args.args[0]) == manifest

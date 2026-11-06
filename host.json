@@ -23,7 +23,8 @@
       "Function.dataprep_collect_batch.User": "Information",
       "Function.dataprep_process.User": "Information",
       "Function.dataprep_publish.User": "Information",
-      "Function.dataprep_verify_file.User": "Information"
+      "Function.dataprep_verify_file.User": "Information",
+      "Function.dataprep_verify_batch_v1.User": "Information"
     },
     "applicationInsights": {"samplingSettings": {"isEnabled": true, "excludedTypes": "Request;Trace;Exception"}}
   },

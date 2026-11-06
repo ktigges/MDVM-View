@@ -133,6 +133,33 @@ def test_delta_pacing_observes_hourly_budget_and_counts_network_bytes(monkeypatc
     assert checkpoints.downloaded_bytes == len(response().content) * 3
 
 
+def test_network_and_pacing_timings_are_separate_and_throttling_is_not_a_failure(monkeypatch, caplog):
+    clock = [0.0]
+    monkeypatch.setattr("vulnerability_view.collection_transport.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("vulnerability_view.collection_transport.time.sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+    checkpoints = RequestCheckpoints(MemoryStore(), "raw/run/requests", {"example.test"})
+
+    def send(status=200):
+        clock[0] += 1
+        value = response()
+        value.status_code = status
+        return value
+
+    for index in range(2):
+        checkpoints.request(
+            f"https://example.test/api/vulnerabilities/machinesVulnerabilities?$skip={index}", send,
+        )
+    with pytest.raises(CheckpointYield):
+        checkpoints.request(
+            "https://example.test/api/vulnerabilities/machinesVulnerabilities?$skip=2", lambda: send(429),
+        )
+    assert checkpoints.network_seconds == 3
+    assert checkpoints.pacing_seconds == 3
+    assert checkpoints.active_seconds == 6
+    assert checkpoints.throttled_requests == checkpoints.deferred_requests == 1
+    assert not any(record.levelno >= 40 for record in caplog.records)
+
+
 def test_device_scoped_resume_skips_completed_bodies_until_all_devices_finish(tmp_path, monkeypatch):
     store = MemoryStore()
     credential = SimpleNamespace(get_token=lambda *args: SimpleNamespace(token="synthetic"))

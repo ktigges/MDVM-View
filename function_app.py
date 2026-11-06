@@ -266,3 +266,8 @@ def dataprep_publish(reference: dict) -> dict:
 @app.activity_trigger(input_name="reference")
 def dataprep_verify_file(reference: dict) -> dict:
     return execute_worker({**reference, "stage": "verify"})
+
+
+@app.activity_trigger(input_name="reference")
+def dataprep_verify_batch_v1(reference: dict) -> dict:
+    return execute_worker({**reference, "stage": "verify-batch"})

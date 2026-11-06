@@ -107,6 +107,107 @@ token audience remains
 
 ## 4. Collector progress, failure, and memory
 
+### Function-only collector performance update
+
+Function version `2026.11.06.5` introduces versioned verification batches and
+completed-phase checkpoints. It requires only Function code deployment (main
+menu **3**), after the active collection reaches a terminal state. No dashboard
+deployment, Terraform apply, new resource, host concurrency increase, or Defender
+request-rate change is required.
+
+New runs verify up to 32 files or 128 MiB per activity, using at most four
+streaming Storage downloads. Larger individual files are handled alone.
+Completed per-file proofs and manifest-bound batch receipts are immutable;
+publication rejects missing, conflicting, or incomplete coverage. Legacy
+orchestration inputs retain the original single-file activity sequence for
+replay compatibility. Retries and continuations preserve the original six-hour
+deadline.
+
+New full runs freeze machine inventory, completed endpoint phases, referenced
+CVE IDs, and locally derived recommendation relationships. Resumes use those
+checkpoints instead of repeating completed Defender work or scanning all
+findings again. Continuation journals are listed once per activity rather than
+once per machine. Local caches are optional: cold resumes restore and validate
+immutable evidence. Processing restores raw files only for normalization and
+bundle validation, and reuses unchanged uploaded raw descriptors.
+
+The Function's progress status reports `machinesCompleted`, `machinesTotal`,
+`findingRowsCheckpointed`, and, after findings finish,
+`findingPagesCheckpointed`. These counts are cumulative; `downloadedRows`,
+`downloadedBytes`, and request counters remain activity-local. Generic device
+startup messages no longer replace cumulative machine milestones.
+
+The two-hour operating target is not guaranteed by these changes. Existing
+Defender pacing remains unchanged; at the reported 2,440 pages it imposes
+approximately 100–102 minutes of request-start spacing before downstream work.
+Production-shaped local tests verify batching and integrity, not Azure latency
+or an end-to-end customer SLA.
+
+### Resume-aware timing markers and log severity
+
+Function version `2026.11.06.6` adds `[timing]` markers. This is also a
+Function-code-only update; existing schedules, infrastructure, dashboard,
+Defender pacing, and the original six-hour deadline remain unchanged.
+
+| Scope | Meaning |
+|---|---|
+| `run` | Original run start through publication, failure, or timeout. |
+| `run_phase` | Prepare, collect, process, verify, and publish wall time, including activity retries, queues, and checkpoint timers. Phase starts survive Durable continuations and failed-instance recovery. |
+| `endpoint` | Cumulative full-collection phase time, rows/pages/machines, compressed bytes, and rows/second. Immutable start markers survive cold resumes. |
+| `processing_stage` | Processing attempt duration and CPU time; `processingStage` identifies normalization, reconciliation, summaries, indexes, or bundle work. |
+| `activity` | Invocation wall time including child startup and log forwarding. Each attempt has its own identifier. |
+| `worker` | Child execution wall time and CPU time after imports. |
+| `verification_batch` | Files covered, cumulative files completed, compressed bytes covered, and batch duration. Previously verified proofs can be reused; coverage is not a new-download count. |
+| `transport` | Activity-local HTTP time, actual pacing waits, request/cache counts, deferred requests, and HTTP 429 counts. Retry timers are included in phase wall time, not pacing time. |
+| `storage` | Activity-local tracked history read/write/list operation durations and counts, including failed attempts. Concurrent operation times can sum to more than wall time. |
+
+Scopes overlap: their durations must not be added together. Activity timings
+reset per attempt; phase and endpoint wall timings do not reset per checkpoint.
+Completed phase replay does not emit another endpoint completion. Master phase
+timings are enabled for new version-3 workflow inputs; older inputs keep their
+original activity/replay sequence.
+
+Normal checkpoint yields and progress counts, including `0 unavailable`, are
+informational. Actual optional endpoint failures and deferred/throttled
+requests are warnings. Required endpoint failures, corrupt evidence,
+publication failures, and the hard timeout remain errors. A two-hour target
+warning is explicitly **not a timeout**. An activity failure is not by itself
+proof that the entire run failed; Durable retries can still recover. Likewise,
+a completed run means publication succeeded, not that every optional endpoint
+was available; manifest statuses and publication warnings remain authoritative.
+
+This query exports correlated timing markers for recent nightly comparisons.
+The `timingId` deduplication prevents the same event in `AppTraces` and
+`FunctionAppLogs` being counted twice. An optional `RunId` filter can narrow it
+to one collection.
+
+```kusto
+union isfuzzy=true AppTraces, FunctionAppLogs
+| where TimeGenerated > ago(2d)
+| where Message contains "[timing]"
+| extend RunId = extract(@"\brunId=([^ ]+)", 1, Message),
+         Scope = extract(@"\bscope=([^ ]+)", 1, Message),
+         Stage = coalesce(extract(@"\bprocessingStage=([^ ]+)", 1, Message),
+                          extract(@"\bstage=([^ ]+)", 1, Message)),
+         Event = extract(@"\bevent=([^ ]+)", 1, Message),
+         TimingId = extract(@"\btimingId=([^ ]+)", 1, Message)
+| where isnotempty(TimingId)
+| summarize arg_max(TimeGenerated, *) by RunId, Scope, Stage, Event, TimingId
+| extend ElapsedSeconds = todouble(extract(@"\belapsedSeconds=([-0-9.]+)", 1, Message)),
+         CpuSeconds = todouble(extract(@"\bcpuSeconds=([0-9.]+)", 1, Message)),
+         NetworkSeconds = todouble(extract(@"\bnetworkSeconds=([0-9.]+)", 1, Message)),
+         PacingSeconds = todouble(extract(@"\bpacingSeconds=([0-9.]+)", 1, Message))
+| project TimeGenerated, RunId, Scope, Stage, Event,
+          ElapsedSeconds, CpuSeconds, NetworkSeconds, PacingSeconds, Message
+| order by TimeGenerated desc
+| take 2000
+```
+
+Telemetry can arrive late. A start marker without a finish marker is not proof
+that a run is currently active. Menu **7 → 1** provides authoritative Durable
+state; **7 → 15** watches current progress. Missing markers from older deployed
+versions do not imply a failed collection.
+
 Check whether a collection is active before invoking manually:
 
 ```bash
