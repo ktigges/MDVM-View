@@ -1,5 +1,7 @@
+import gzip
 import hashlib
 import json
+import os
 import sqlite3
 from contextlib import closing
 from types import SimpleNamespace
@@ -7,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
-from vulnerability_view.dashboard_cache import DashboardDerivedCache
+from vulnerability_view.dashboard_cache import CHUNK_BYTES, DashboardDerivedCache
 from vulnerability_view.storage_writer import DatasetIntegrityError
 from test_dashboard_queries import datasets, engine
 from test_dashboard_read_model import canonical
@@ -50,7 +52,9 @@ class Service:
                     raise OSError("upload interrupted")
                 if name in service.blobs:
                     raise ResourceExistsError("already exists")
-                service.blobs[name] = data if isinstance(data, bytes) else data.read()
+                service.blobs[name] = (
+                    data if isinstance(data, bytes) else data.read() if hasattr(data, "read") else b"".join(data)
+                )
                 service.writes.append(name)
 
             def get_blob_properties(self):
@@ -77,7 +81,7 @@ def test_restart_restores_exact_indexes_and_aggregates_without_source_rows(tmp_p
     primary = hashlib.sha256(original.path.read_bytes()).hexdigest()
     reserve = []
     cache(service).publish(original, {}, reserve=reserve.append)
-    assert reserve and all(value > 0 for value in reserve)
+    assert reserve == [original.path.stat().st_size, 0]
     assert hashlib.sha256(original.path.read_bytes()).hexdigest() == primary
     before = len(service.writes)
     cache(service).publish(original, {})
@@ -154,6 +158,84 @@ def test_interrupted_upload_does_not_publish_a_completion_marker(tmp_path):
     assert not any(name.endswith("/complete.json") for name in service.blobs)
     assert not list(e.root.glob("*.cache-copy"))
     assert not list(e.root.glob("*.publishing.gz"))
+
+
+def test_publication_reserves_only_backup_space_outside_retained_snapshots(tmp_path, monkeypatch):
+    service = Service()
+    e = engine(tmp_path / "retained")
+    e.read_model.prepare({})
+    c = cache(service)
+    original_upload = c._upload_file
+    sources = []
+
+    def upload(container, prefix, source, item, limit):
+        assert not source.is_relative_to(e.root) or source == e.read_model.path({})
+        assert not list(e.root.glob("*.cache-copy"))
+        sources.append(source)
+        original_upload(container, prefix, source, item, limit)
+
+    monkeypatch.setattr(c, "_upload_file", upload)
+    reserved = []
+    c.publish(e, {}, reserve=reserved.append)
+    assert reserved == [e.path.stat().st_size, 0]
+    assert not sources[0].exists()
+
+    source = e.root / "products.sqlite3"
+    extra_database(source, "first")
+    reserved.clear()
+    c.publish_extra(
+        e, "products-v1", source, limit=1024**2, validate=validate_extra, reserve=reserved.append,
+    )
+    assert reserved == [source.stat().st_size]
+    assert not sources[-1].exists()
+
+
+def test_upload_streams_bounded_gzip_chunks_without_local_compressed_file(tmp_path, monkeypatch):
+    service = Service()
+    source = tmp_path / "index.sqlite3"
+    content = os.urandom(3 * CHUNK_BYTES)
+    source.write_bytes(content)
+    item = {"blob": "cache/artifact.sqlite3.gz", "bytes": len(content), "prefix": "cache"}
+    get_blob_client = service.get_blob_client
+    sizes = []
+
+    def checked_blob(name):
+        blob = get_blob_client(name)
+        upload = blob.upload_blob
+        if name == item["blob"]:
+            def checked_upload(data, **kwargs):
+                assert not hasattr(data, "read")
+
+                def chunks():
+                    for chunk in data:
+                        assert not list(tmp_path.glob("*.publishing.gz"))
+                        sizes.append(len(chunk))
+                        yield chunk
+
+                upload(chunks(), **kwargs)
+
+            blob.upload_blob = checked_upload
+        return blob
+
+    monkeypatch.setattr(service, "get_blob_client", checked_blob)
+    cache(service)._upload_file(service, "cache", source, item, len(content) + CHUNK_BYTES)
+    uploaded = service.blobs[item["blob"]]
+    assert gzip.decompress(uploaded) == content
+    assert item["sha256"] == hashlib.sha256(uploaded).hexdigest()
+    assert item["compressedBytes"] == len(uploaded)
+    assert len(sizes) >= 3
+    assert max(sizes) <= 2 * CHUNK_BYTES
+    assert not list(tmp_path.glob("*.publishing.gz"))
+
+
+def test_streamed_compressed_size_limit_does_not_publish_completion(tmp_path):
+    service = Service()
+    source = tmp_path / "index.sqlite3"
+    source.write_bytes(os.urandom(CHUNK_BYTES))
+    item = {"blob": "cache/artifact.sqlite3.gz", "bytes": CHUNK_BYTES, "prefix": "cache"}
+    with pytest.raises(DatasetIntegrityError, match="compressed artifact exceeds"):
+        cache(service)._upload_file(service, "cache", source, item, 1024)
+    assert not service.writes
 
 
 def extra_database(path, value):

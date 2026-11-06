@@ -9,8 +9,62 @@ import pytest
 from azure.core.exceptions import HttpResponseError
 
 from vulnerability_view import dashboard_startup as diagnostics
+from vulnerability_view import dashboard_queries
 from vulnerability_view.dashboard_queries import DashboardQueryEngine
 from test_dashboard_queries import engine
+
+
+def test_query_phases_name_shared_clocks_and_remaining_report_work(tmp_path, monkeypatch):
+    monitor = diagnostics.StartupDiagnostics()
+    observed = []
+    phase = diagnostics.startup_phase
+
+    def observe(name, steps=None):
+        phase(name, steps)
+        plan = monitor.snapshot()["phasePlan"]
+        if plan is not None and name in plan["steps"]:
+            observed.append((name, plan["currentStep"]))
+
+    monkeypatch.setattr(dashboard_queries, "startup_phase", observe)
+    with diagnostics.query_progress(monitor, "trend"):
+        diagnostics.startup_phase("query-scope")
+        query = engine(tmp_path)
+        query.query({"view": "trend", "filters": {}})
+    plan = monitor.snapshot()["phasePlan"]
+    assert plan["steps"] == [
+        "query-workflow", "query-scope", "report-clocks", "report-periods", "report-risk",
+        "report-daily", "report-weekly", "report-history", "query-finalize",
+    ]
+    assert observed == [
+        ("report-clocks", 3), ("report-periods", 4), ("report-risk", 5),
+        ("report-daily", 6), ("report-weekly", 7), ("report-history", 8),
+    ]
+    assert plan["currentStep"] == 8
+    assert plan["totalSteps"] == 9
+
+
+def test_phase_plan_does_not_regress_or_get_replaced_by_nested_report_preparation():
+    monitor = diagnostics.StartupDiagnostics()
+    with diagnostics.query_progress(monitor):
+        diagnostics.startup_phase("snapshot-reports", ["snapshot-indexes", "snapshot-reports", "snapshot-publication"])
+        with diagnostics.startup_stage("prepare-report:trend"):
+            diagnostics.startup_phase("report-clocks")
+            diagnostics.startup_phase("snapshot-indexes")
+        assert monitor.snapshot()["phasePlan"]["currentStep"] == 2
+        diagnostics.startup_phase("snapshot-publication")
+        assert monitor.snapshot()["phasePlan"]["currentStep"] == 3
+
+
+def test_failed_phase_keeps_current_step_and_does_not_advance():
+    monitor = diagnostics.StartupDiagnostics()
+    with pytest.raises(OSError, match="failed"):
+        with diagnostics.query_progress(monitor, "executiveSnapshot"):
+            diagnostics.startup_phase("report-clocks")
+            with diagnostics.startup_stage("query:executiveSnapshot:shared-clocks"):
+                raise OSError("failed")
+    progress = monitor.snapshot()
+    assert progress["phasePlan"]["currentStep"] == 3
+    assert progress["failure"]["stage"] == "query:executiveSnapshot:shared-clocks"
 
 
 @pytest.mark.parametrize("dataset,indexes", [("findings", 21), ("finding-events", 3)])

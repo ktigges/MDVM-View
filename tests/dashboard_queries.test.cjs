@@ -241,6 +241,46 @@ test("workflow preparation has explicit progress instead of a generic blocked re
   assert.match(app.run('dashboardPreparationText({progress:{stage:"query:detail:detail-evidence"}})'),/Preparing Selected item: finding evidence page/);
 });
 
+test("report preparation shows numbered server phases and what remains",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve({
+    snapshotId,status:"preparing",retryAfterSeconds:2,
+    progress:{stage:"query:trend:shared-clocks",elapsedSeconds:30,stageSeconds:12,phasePlan:{
+      steps:["query-workflow","query-scope","report-clocks","report-periods","report-risk","report-daily","report-weekly","report-history","query-finalize"],
+      currentStep:3,totalSteps:9,
+    }},
+  },202);await tick();
+  const markup=app.elements.get("loadingNotice").innerHTML;
+  assert.match(markup,/Step 3 of 9: Calculate finding lifecycle dates/);
+  assert.match(markup,/Next: Summarize reporting periods/);
+  assert.match(markup,/6 phases after this/);
+  assert.match(markup,/aria-current="step"/);
+  assert.match(markup,/Calculate weekly remediation — remaining/);
+  assert.match(markup,/Finalize report response — remaining/);
+  assert.match(markup,/finding lifecycle dates \(first seen, fixed, reopened and SLA due\)/);
+  assert.match(markup,/Phase counts do not estimate remaining time/);
+  assert.doesNotMatch(markup,/aria-valuenow|aria-valuemax|shared-clocks/);
+  assert.match(app.run('dashboardPreparationText({progress:{stage:"query:detail:detail-cves",phasePlan:{steps:["query-scope","detail-cves","query-finalize"],currentStep:2,totalSteps:3}}})'),/Step 2 of 3/);
+});
+
+test("snapshot preparation shows its server phase plan and escapes labels",async()=>{
+  const app=fixture({snapshotStatus:202,preparation:{status:"preparing",progress:{
+    stage:"viewer-cache:publish-primary",phasePlan:{
+      steps:["snapshot-indexes","snapshot-aggregates","snapshot-search","snapshot-reports","snapshot-publication"],
+      currentStep:5,totalSteps:5,
+    },
+  }}});
+  await tick();
+  const markup=app.elements.get("loadingNotice").innerHTML;
+  assert.match(markup,/Step 5 of 5: Save reusable viewer caches/);
+  assert.match(markup,/Final phase/);
+  const escaped=app.run('dashboardPhasePlanMarkup({phasePlan:{steps:["<bad>"],currentStep:1,totalSteps:1},failure:{stage:"failed"}})');
+  assert.match(escaped,/&lt;bad&gt;/);
+  assert.match(escaped,/failed/);
+  assert.doesNotMatch(escaped,/<bad>/);
+  assert.equal(app.run('dashboardPhasePlanMarkup({phasePlan:{steps:["one"],currentStep:2,totalSteps:1}})'),"");
+});
+
 test("initial tracking refresh does not abort and restart the selected report",async()=>{
   const app=fixture({trackingEnabled:true});await tick();
   const initial=app.query()[0];

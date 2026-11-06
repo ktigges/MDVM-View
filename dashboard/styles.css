@@ -310,6 +310,7 @@ main{width:100%;max-width:1600px!important;min-width:0;padding:22px clamp(16px,2
 .dashboard-query-status span{flex:1}
 .dashboard-query-status[role="status"]{background:#edf5fc;color:#234e70;border-bottom-color:#b8d2e8}
 .index-progress-plan{font-size:12px;overflow-wrap:anywhere}.index-progress-plan summary{cursor:pointer}.index-progress-plan ol{max-height:240px;overflow:auto;padding-left:24px}.dashboard-query-status:has(.index-progress-plan){flex-wrap:wrap}
+.report-phase-plan{display:flex;flex-direction:column;gap:6px;max-width:100%;overflow-wrap:anywhere}.report-phase-plan [aria-current="step"]{font-weight:700}
 .query-pending{visibility:hidden!important;pointer-events:none}
 .server-pagination{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 0}
 .server-pagination .page-actions{display:flex;gap:6px;flex-wrap:wrap}

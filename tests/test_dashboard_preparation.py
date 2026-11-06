@@ -10,11 +10,14 @@ from types import SimpleNamespace
 import pytest
 
 from vulnerability_view.config import Settings
+from vulnerability_view import dashboard_snapshots
+from vulnerability_view.dashboard_snapshots import DashboardSnapshots
 from vulnerability_view.dashboard_preparation import DashboardPreparation, initial_filters
 from vulnerability_view.dashboard_queries import DashboardQueryEngine, PREPARED_VIEWS, _cache_filters
 from vulnerability_view.dashboard_server import DashboardQueryRequest, create_app
 from vulnerability_view.dashboard_startup import startup_rows, startup_stage
 from test_dashboard_queries import SNAPSHOT, datasets, engine
+from test_dashboard_cache import Service, cache
 from test_dashboard_query_api import request
 
 
@@ -85,6 +88,46 @@ def test_startup_failure_is_not_reported_as_ready():
     preparation.close()
 
 
+def test_cache_publication_handoff_at_exact_two_snapshot_retention_budget(tmp_path, monkeypatch):
+    pointer = [{"runId": "first", "snapshotTimeUtc": SNAPSHOT}]
+    snapshots = DashboardSnapshots(
+        Settings(dashboard_data_source="azure"), tmp_path, lambda: pointer[0], object, lambda *args: {},
+    )
+    monkeypatch.setattr(
+        dashboard_snapshots, "DashboardQueryEngine",
+        lambda root, snapshot_id, snapshot_time, rows: engine(root, datasets(20), snapshot_id, snapshot_time),
+    )
+    service = Service()
+    derived = cache(service)
+    prepared = []
+
+    def prepare(snapshot):
+        snapshot.engine.read_model.prepare({})
+        if prepared:
+            old = snapshots._entries[prepared[0]]
+            assert old.readers > 0 and snapshot.readers > 0
+            assert preparation.metadata()["snapshotId"] == old.id
+            snapshots.max_bytes = snapshots._local_bytes(old.root.parent)
+        derived.publish(snapshot.engine, {}, reserve=snapshots._check_publication_space)
+        assert snapshot.root.exists()
+        prepared.append(snapshot.id)
+
+    preparation = DashboardPreparation(snapshots, prepare, 300)
+    try:
+        preparation._attempt_refresh()
+        first = preparation.metadata()["snapshotId"]
+        pointer[0] = {"runId": "second", "snapshotTimeUtc": SNAPSHOT}
+        preparation._attempt_refresh()
+        assert preparation.diagnostics()["status"] == "ready"
+        assert preparation.metadata()["snapshotId"] == prepared[1] != first
+        assert snapshots._entries[first].root.exists()
+        assert snapshots._local_bytes(snapshots._entries[first].root.parent) == snapshots.max_bytes
+        assert len([name for name in service.writes if name.endswith("/complete.json")]) == 4
+    finally:
+        preparation.close()
+        snapshots.close()
+
+
 def test_background_initial_failure_is_visible_and_retries():
     attempts = []
     entered, release = Event(), Event()
@@ -144,7 +187,12 @@ def test_shell_health_and_progress_are_responsive_before_indexes_are_ready(tmp_p
                     if path == "/api/health":
                         assert json.loads(body)["dashboardReady"] is False
                     elif path.endswith("/status"):
-                        assert json.loads(body)["progress"]["rows"] == 204000
+                        progress = json.loads(body)["progress"]
+                        assert progress["rows"] == 204000
+                        assert progress["phasePlan"] == {
+                            "steps": ["snapshot-indexes", "snapshot-aggregates"],
+                            "currentStep": 1, "totalSteps": 2,
+                        }
                 status, headers, body = await asyncio.to_thread(request, application, "/api/dashboard/snapshot")
                 assert status == 202
                 assert headers[b"retry-after"] == b"2"

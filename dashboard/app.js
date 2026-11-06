@@ -979,9 +979,42 @@ function dashboardIndexPlanMarkup(progress,expanded=false){
   return `<details class="index-progress-plan" data-index-plan${expanded?" open":""}><summary>${completed} of ${plan.steps.length} index preparation steps complete</summary><ol>${plan.steps.map((name,index)=>`<li>${esc(name)} — ${index<completed?"complete":index===completed?(progress.failure?"failed":"in progress"):"waiting"}</li>`).join("")}</ol></details>`;
 }
 
+function dashboardPhasePlanMarkup(progress,expanded=false){
+  const plan=progress?.phasePlan;
+  if(!Array.isArray(plan?.steps)||!Number.isInteger(plan.currentStep)||plan.currentStep<1||plan.currentStep>plan.steps.length)return "";
+  const labels={
+    "snapshot-indexes":"Restore or build snapshot indexes",
+    "snapshot-aggregates":"Build dashboard reporting aggregates",
+    "snapshot-search":"Restore supporting caches and prepare search",
+    "snapshot-reports":"Prepare shared report views",
+    "snapshot-publication":"Save reusable viewer caches",
+    "query-workflow":"Read recommendation workflow state",
+    "query-scope":"Select findings and date range",
+    "query-results":"Build selected view",
+    "query-recommendations":"Calculate recommendation impact and ranking",
+    "query-summary":"Build summary metrics",
+    "query-sla":"Calculate SLA metrics",
+    "report-clocks":"Calculate finding lifecycle dates",
+    "report-periods":"Summarize reporting periods",
+    "report-risk":"Calculate severity and workload risk",
+    "report-charts":"Build executive workload charts",
+    "report-daily":"Build daily trend",
+    "report-weekly":"Calculate weekly remediation",
+    "report-history":"Build lifecycle history",
+    "detail-workloads":"Load affected workloads",
+    "detail-cves":"Load related CVEs",
+    "detail-recommendations":"Load related recommendations",
+    "detail-evidence":"Load finding evidence",
+    "query-finalize":"Finalize report response",
+  };
+  const label=name=>labels[name]||name,current=plan.currentStep-1,remaining=plan.steps.length-plan.currentStep;
+  return `<div class="report-phase-plan"><strong>Step ${plan.currentStep} of ${plan.steps.length}: ${esc(label(plan.steps[current]))}</strong><span>${remaining?`Next: ${esc(label(plan.steps[current+1]))} · ${remaining} phase${remaining===1?"":"s"} after this`:"Final phase"}</span><details class="index-progress-plan" data-phase-plan${expanded?" open":""}><summary>Preparation phases</summary><ol>${plan.steps.map((name,index)=>`<li${index===current?' aria-current="step"':""}>${esc(label(name))} — ${index<current?"earlier":index===current?(progress.failure?"failed":"in progress"):"remaining"}</li>`).join("")}</ol><small>Cached phases may be skipped. Phase counts do not estimate remaining time.</small></details></div>`;
+}
+
 function showDashboardVisualProgress(title,message,phase,progress=null){
   const expanded=$("loadingNotice").querySelector("[data-index-plan]")?.open;
-  $("loadingNotice").innerHTML=`<span class="loading-spinner" aria-hidden="true"></span><div class="loading-notice-content"><strong>${esc(title)}</strong>${message?`<span>${esc(message)}</span>`:""}<div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="${esc(phase)}"><span class="report-progress-indicator"></span></div><div class="report-progress-meta"><span id="reportProgressPhase">${esc(phase)}</span><span id="reportProgressElapsed" aria-live="off"></span></div>${dashboardIndexPlanMarkup(progress,expanded)}</div>`;
+  const phasesExpanded=$("loadingNotice").querySelector("[data-phase-plan]")?.open;
+  $("loadingNotice").innerHTML=`<span class="loading-spinner" aria-hidden="true"></span><div class="loading-notice-content"><strong>${esc(title)}</strong>${message?`<span>${esc(message)}</span>`:""}${dashboardPhasePlanMarkup(progress,phasesExpanded)}<div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="${esc(phase)}"><span class="report-progress-indicator"></span></div><div class="report-progress-meta"><span id="reportProgressPhase">${esc(phase)}</span><span id="reportProgressElapsed" aria-live="off"></span></div>${dashboardIndexPlanMarkup(progress,expanded)}</div>`;
   updateDashboardProgressElapsed();
 }
 
@@ -1112,7 +1145,7 @@ async function dashboardResponse(response,isCurrent=()=>true){
 function dashboardPreparationText(status){
   const progress=status.progress||{},stage=String(progress.failure?.stage||progress.stage||"waiting-for-data");
   const views={executive:"Summary",overview:"Vulnerabilities",recommendations:"Recommendations",priority:"Prioritize",workstations:"Endpoint assets",sla:"Remediate",trend:"Trends",executiveSnapshot:"Executive snapshot",detail:"Selected item",help:"Help"};
-  const phases={tracking:"recommendation workflow state",header:"activity and filter metadata","scope-counts":"finding counts","recommendation-matching":"recommendation matching","recommendation-impact":"recommendation impact totals","recommendation-ranking":"recommendation ranking","recommendation-details":"recommendation evidence","summary":"summary metrics and run comparison",sla:"SLA metrics","detail-workloads":"affected workloads","detail-cves":"related CVEs","detail-recommendations":"related recommendations","detail-evidence":"finding evidence page"};
+  const phases={tracking:"recommendation workflow state",header:"activity and filter metadata","scope-counts":"finding counts","recommendation-matching":"recommendation matching","recommendation-impact":"recommendation impact totals","recommendation-ranking":"recommendation ranking","recommendation-details":"recommendation evidence","summary":"summary metrics and run comparison",sla:"SLA metrics","shared-clocks":"finding lifecycle dates (first seen, fixed, reopened and SLA due)","period-summaries":"current and previous reporting periods","daily-clocks":"daily finding and remediation trend","weekly-remediation":"weekly remediation totals","workload-and-charts":"workload breakdown and executive charts",report:"report calculations","detail-workloads":"affected workloads","detail-cves":"related CVEs","detail-recommendations":"related recommendations","detail-evidence":"finding evidence page"};
   let action=stage;
   if(stage.startsWith("load-rows:"))action=`Rebuilding ${stage.split(":")[1]} index`;
   else if(stage.startsWith("build-index:")){
@@ -1146,6 +1179,8 @@ function dashboardPreparationText(status){
   else if(stage==="querying-index")action="Querying data indexes";
   else if(stage==="waiting-for-query-worker")action="Waiting for an available query worker";
   const stats=[];
+  const phasePlan=progress.phasePlan;
+  if(Array.isArray(phasePlan?.steps)&&Number.isInteger(phasePlan.currentStep)&&phasePlan.currentStep>0&&phasePlan.currentStep<=phasePlan.steps.length)stats.push(`Step ${phasePlan.currentStep} of ${phasePlan.steps.length}`);
   const plan=progress.indexPlan||progress.failure?.indexPlan;
   if(plan)stats.push(`${plan.completedSteps} / ${plan.totalSteps} index preparation steps complete`);
   if(Number.isFinite(progress.rows)){
@@ -1173,12 +1208,13 @@ function pollDashboardPreparation(){
       const notice=$("dashboardPreparationStatus");
       notice.setAttribute("role",status.status==="error"?"alert":"status");
       const expanded=notice.querySelector("[data-index-plan]")?.open;
+      const phasesExpanded=notice.querySelector("[data-phase-plan]")?.open;
       const newer=status.readySnapshotId&&status.readySnapshotId!==dashboardQuery.snapshot?.snapshotId;
       notice.hidden=status.status==="ready"&&!newer;
       notice.textContent=notice.hidden?"":status.status==="ready"
         ?"A newer complete snapshot is ready. Reload to select it; this page remains pinned to its original snapshot."
         :`${status.readySnapshotId?"Serving the previous complete snapshot. ":""}${dashboardPreparationText(status)}`;
-      if(!notice.hidden&&status.status!=="ready")notice.insertAdjacentHTML("beforeend",dashboardIndexPlanMarkup(status.progress,expanded));
+      if(!notice.hidden&&status.status!=="ready")notice.insertAdjacentHTML("beforeend",dashboardPhasePlanMarkup(status.progress,phasesExpanded)+dashboardIndexPlanMarkup(status.progress,expanded));
     }catch(error){
       if(generation!==dashboardPreparationGeneration)return;
       $("dashboardPreparationStatus").hidden=false;

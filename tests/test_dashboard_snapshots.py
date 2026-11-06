@@ -4,6 +4,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
 
@@ -262,6 +263,37 @@ def test_independent_dataset_downloads_do_not_share_a_global_lock(monkeypatch, t
             finally:
                 release.set()
             assert findings.result(timeout=3) == []
+    finally:
+        snapshots.close()
+
+
+def test_publication_scratch_does_not_evict_pinned_snapshots_or_expand_retention_budget(monkeypatch, tmp_path):
+    pointer = [manifest_for("run-a")]
+    snapshots = azure_snapshots(monkeypatch, tmp_path, pointer, max_bytes=2048)
+    monkeypatch.setattr(dashboard_snapshots.shutil, "disk_usage", lambda path: SimpleNamespace(free=1024**3))
+    try:
+        first = snapshots.current()
+        (first.root / "index").write_bytes(b"a" * 1024)
+        pointer[0] = manifest_for("run-b")
+        second = snapshots.current()
+        (second.root / "index").write_bytes(b"b" * 1024)
+        with snapshots.acquire(first.id), snapshots.acquire(second.id):
+            with pytest.raises(DashboardCacheFull, match="disk budget"):
+                snapshots._check_space(1024)
+            snapshots._check_publication_space(1024)
+            assert first.root.exists() and second.root.exists()
+            monkeypatch.setattr(
+                dashboard_snapshots.shutil, "disk_usage", lambda path: SimpleNamespace(free=128 * 1024**2 + 1023),
+            )
+            with pytest.raises(DashboardCacheFull, match="Insufficient local disk space"):
+                snapshots._check_publication_space(1024)
+            (second.root / "index").write_bytes(b"b" * 1025)
+            with pytest.raises(DashboardCacheFull, match="disk budget"):
+                snapshots._check_publication_space(0)
+            (second.root / "index").write_bytes(b"b" * 1024)
+            monkeypatch.setattr(
+                dashboard_snapshots.shutil, "disk_usage", lambda path: SimpleNamespace(free=1024**3),
+            )
     finally:
         snapshots.close()
 
