@@ -2,6 +2,7 @@ import json
 import asyncio
 import inspect
 import logging
+import subprocess
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -316,10 +317,9 @@ def test_download_no_local_receipt_requires_explicit_id(download_storage):
         operations_cli.download_collection_diagnostics()
 
 
-def test_lost_trigger_response_preserves_receipt_and_does_not_retry(monkeypatch, tmp_path, capsys):
+def test_lost_trigger_response_preserves_receipt_and_does_not_retry(monkeypatch, tmp_path, capsys, configured_function_target):
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
-    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: SimpleNamespace(stdout="secret-host-key"))
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="secret-host-key", stderr=""))
     calls = []
     error = requests.ReadTimeout("Trigger response lost")
 
@@ -341,10 +341,9 @@ def test_lost_trigger_response_preserves_receipt_and_does_not_retry(monkeypatch,
     assert receipt["diagnosticId"] in text
 
 
-def test_receipt_write_failure_does_not_block_manual_trigger(monkeypatch, tmp_path, capsys):
+def test_receipt_write_failure_does_not_block_manual_trigger(monkeypatch, tmp_path, capsys, configured_function_target):
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
-    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: SimpleNamespace(stdout="secret-host-key"))
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="secret-host-key", stderr=""))
     monkeypatch.setattr(Path, "write_text", lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError("Disk denied")))
     calls = []
     monkeypatch.setattr(operations_cli.requests, "post", lambda url, **kwargs: calls.append(url) or SimpleNamespace(status_code=202, raise_for_status=lambda: None))

@@ -5,7 +5,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $RootDirectory = Split-Path -Parent $PSScriptRoot
-$DeploymentMenuVersion = "2026.11.03.3"
+$DeploymentMenuVersion = "2026.11.05.1"
 $RequiredAzureCliExtensions = @("log-analytics")
 
 function Test-PythonCommand {
@@ -212,7 +212,7 @@ function Invoke-LiveCollection {
     Write-Host "Page size controls each request, not the total records collected."
     $pageMax = if ($debugOnly) { 1000 } else { 2500 }
     while ($true) {
-        $pageSize = (Read-Host "Records per page (1-$pageMax; other endpoints cap at 1000) [$pageDefault]").Trim()
+        $pageSize = (Read-Host "Findings per page (1-$pageMax; inventory/debug cap at 1000; delta uses 50000) [$pageDefault]").Trim()
         if (-not $pageSize) {
             $pageSize = $pageDefault
         }
@@ -303,7 +303,9 @@ Operations and diagnostics
   11) Download legacy manual diagnostics (new runs: use progress/log export)
   12) Export latest published snapshot (verified local ZIP; read-only)
   13) Show Web App startup logs (latest retained container log)
-  14) Return to deployment menu
+  14) Stop a named collector run and its Function host (preserves history)
+  15) Watch current collection progress on the console
+  16) Return to deployment menu
 "@
         switch (Read-Host "Select an option") {
             "1" { Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only; Pause-Menu }
@@ -319,8 +321,16 @@ Operations and diagnostics
             "11" { Invoke-OperationsCli download-collection-diagnostics; Pause-Menu }
             "12" { Invoke-OperationsCli export-latest-snapshot; Pause-Menu }
             "13" { Invoke-OperationsCli check-webapp-startup-logs; Pause-Menu }
-            "14" { return }
-            default { Write-Host "Select a number from 1 through 14." }
+            "14" {
+                $runId = (Read-Host "Exact run ID to stop (live-YYYYMMDDTHHMMSSZ)").Trim()
+                if (Confirm-Value -Expected "STOP" -Prompt "Terminate $runId and stop the Function host. History is preserved; deploy/start the host before future collection.") {
+                    Invoke-OperationsCli stop-collection --run-id $runId --confirm
+                }
+                Pause-Menu
+            }
+            "15" { Invoke-OperationsCli check-runs --watch --logs; Pause-Menu }
+            "16" { return }
+            default { Write-Host "Select a number from 1 through 16." }
         }
     }
 }

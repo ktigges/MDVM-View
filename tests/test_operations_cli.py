@@ -14,6 +14,350 @@ import pytest
 from vulnerability_view import operations_cli
 
 
+def test_stop_collection_requires_confirmation_before_any_azure_access(monkeypatch):
+    monkeypatch.setattr(operations_cli, "_values", lambda: pytest.fail("No access before confirmation"))
+    with pytest.raises(ValueError, match="--confirm"):
+        operations_cli.stop_collection(False, "live-20261103T050000Z")
+
+
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_stop_collection_targets_exact_run_then_terminates_and_stops_host(monkeypatch, capsys, mismatch, configured_function_target):
+    run_id = "live-20261103T050000Z"
+    az_calls = []
+    events = []
+
+    def az(*args, **kwargs):
+        az_calls.append(args)
+        if args[:3] == ("functionapp", "keys", "list"):
+            output = "secret-extension-key"
+        elif args[:2] == ("functionapp", "show"):
+            output = "Stopped"
+        else:
+            output = ""
+        return SimpleNamespace(stdout=output)
+
+    monkeypatch.setattr(operations_cli, "_az", az)
+
+    def get(url, **kwargs):
+        events.append("status")
+        assert kwargs["headers"]["x-functions-key"] == "secret-extension-key"
+        value = {"runtimeStatus": "Running" if len(events) == 1 else "Terminated",
+                 "input": json.dumps({"runId": "different-run" if mismatch else run_id})}
+        return SimpleNamespace(status_code=200, json=lambda: value)
+
+    def post(url, **kwargs):
+        events.append("terminate")
+        assert url.endswith("/vulnerability-collection/terminate")
+        assert kwargs["params"]["taskHub"] == "DvmCollectionV1"
+        return SimpleNamespace(status_code=202)
+
+    monkeypatch.setattr(operations_cli.requests, "get", get)
+    monkeypatch.setattr(operations_cli.requests, "post", post)
+    if mismatch:
+        with pytest.raises(RuntimeError, match="does not match"):
+            operations_cli.stop_collection(True, run_id)
+        assert events == ["status"]
+        assert len(az_calls) == 1
+    else:
+        operations_cli.stop_collection(True, run_id)
+        assert events == ["status", "terminate", "status"]
+        assert [call[:2] for call in az_calls] == [
+            ("functionapp", "keys"), ("functionapp", "stop"), ("functionapp", "show"),
+        ]
+        output = capsys.readouterr().out
+        assert "Terminated" in output and "Function host: Stopped" in output
+        assert "secret-extension-key" not in output
+
+
+def test_stop_collection_does_not_stop_host_until_durable_termination_is_confirmed(monkeypatch, configured_function_target):
+    monkeypatch.setattr(operations_cli, "_az",
+                        lambda *args, **kwargs: SimpleNamespace(stdout="key") if args[:3] == ("functionapp", "keys", "list")
+                        else pytest.fail("Must not stop host before termination"))
+    value = {"runtimeStatus": "Running", "input": {"runId": "live-20261103T050000Z"}}
+    monkeypatch.setattr(operations_cli.requests, "get",
+                        lambda *args, **kwargs: SimpleNamespace(status_code=200, json=lambda: value))
+    monkeypatch.setattr(operations_cli.requests, "post",
+                        lambda *args, **kwargs: SimpleNamespace(status_code=202))
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda delay: None)
+    with pytest.raises(RuntimeError, match="not confirmed"):
+        operations_cli.stop_collection(True, "live-20261103T050000Z")
+
+
+def test_console_watch_reports_progress_until_completion_without_querying_telemetry(monkeypatch, capsys, configured_function_target):
+    states = iter(["Running", "Completed"])
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: SimpleNamespace(stdout="host-key"))
+
+    def get(url, **kwargs):
+        assert url == "https://func-test.azurewebsites.net/api/status"
+        assert kwargs["headers"]["x-functions-key"] == "host-key"
+        return SimpleNamespace(status_code=200, json=lambda: {
+            "runId": "baseline",
+            "workflow": {"instanceId": "vulnerability-collection", "state": next(states), "updatedUtc": "now",
+                         "progress": {"phase": "collect", "downloadedRows": 50000, "downloadedBytes": 123456}},
+        })
+
+    monkeypatch.setattr(operations_cli.requests, "get", get)
+    monkeypatch.setattr(operations_cli, "_workspace_context", lambda: pytest.fail("Plain watch must not query telemetry"))
+    monkeypatch.setattr(operations_cli.time, "monotonic", lambda: 0)
+    waits = []
+    monkeypatch.setattr(operations_cli.time, "sleep", waits.append)
+    assert operations_cli.main(["check-runs", "--watch"]) == 0
+    output = capsys.readouterr().out
+    assert "downloaded=50,000 rows" in output
+    assert "downloadedBytes" not in output
+    assert "Completed" in output
+    assert waits == [30]
+
+
+@pytest.mark.parametrize("query_seconds,wait", [(6, 24), (36, 0)])
+def test_console_watch_logs_are_compact_run_scoped_and_refresh_on_cadence(monkeypatch, capsys, query_seconds, wait):
+    run_id = "live-20261106T050835Z"
+    states = iter(["Running", "Completed"])
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {
+        "workflow": {"state": next(states), "progress": {
+            "phase": "process", "runId": run_id, "planPath": "do-not-dump-plan-path",
+        }},
+    })
+    context = ({
+        "subscription_id": "subscription", "function_app_name": "func-test",
+        "_application_insights_resource_id": "/linked-insights",
+    }, "workspace")
+    contexts = []
+    monkeypatch.setattr(operations_cli, "_workspace_context", lambda: contexts.append(True) or context)
+    queries = []
+
+    def query(workspace, subscription, text, *, timespan):
+        assert (workspace, subscription, timespan) == ("workspace", "subscription", "PT24H")
+        assert 'AppRoleName =~ "func-test"' in text
+        assert '_ResourceId =~ "/linked-insights"' in text
+        assert "extend RunId=extract" in text
+        assert f'where RunId == "{run_id}"' in text
+        assert "top 1 by TimeGenerated desc" in text
+        queries.append(text)
+        return [{"TimeGenerated": datetime.now(UTC).isoformat(), "Message": (
+            f"[run] runId={run_id} [processing] runId={run_id} elapsedSeconds=215.5 "
+            f"stage=normalize step=write-dataset section=datasets dataset=findings rows={410000 + len(queries) * 10000}"
+        )}]
+
+    monkeypatch.setattr(operations_cli, "_log_query", query)
+    clock = iter([100, 100 + query_seconds, 100 + max(30, query_seconds)])
+    monkeypatch.setattr(operations_cli.time, "monotonic", lambda: next(clock))
+    waits = []
+    monkeypatch.setattr(operations_cli.time, "sleep", waits.append)
+    assert operations_cli.main(["check-runs", "--watch", "--logs"]) == 0
+    output = capsys.readouterr().out
+    assert "rows=420,000" in output and "rows=430,000" in output
+    assert "stage=normalize step=write-dataset source=current dataset=findings" in output
+    assert "logAge=" in output
+    assert "do-not-dump-plan-path" not in output
+    assert "elapsedSeconds" not in output and "section=" not in output
+    assert output.count(run_id) == 1
+    assert len(queries) == 2 and contexts == [True]
+    assert waits == [wait]
+
+
+@pytest.mark.parametrize("state,timed_out,exit_code", [
+    ("Completed", False, 0), ("Failed", False, 1), ("Completed", True, 1),
+])
+def test_console_watch_telemetry_failure_does_not_override_authoritative_status(monkeypatch, capsys, state, timed_out, exit_code):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {
+        "workflow": {"state": state, "progress": {
+            "phase": "process", "runId": "live-20261106T050835Z", "timedOut": timed_out,
+        }},
+    })
+
+    def unavailable():
+        raise RuntimeError("Telemetry permission denied")
+
+    monkeypatch.setattr(operations_cli, "_workspace_context", unavailable)
+    assert operations_cli.main(["check-runs", "--watch", "--logs"]) == exit_code
+    captured = capsys.readouterr()
+    assert "logs unavailable: Telemetry permission denied" in captured.out
+    if timed_out:
+        assert "TIMED OUT" in captured.out and "six-hour limit" in captured.err
+    elif state == "Failed":
+        assert "Collection failed" in captured.err
+    else:
+        assert "Completed" in captured.out
+
+
+@pytest.mark.parametrize("rows", [[], [{"Message": "missing timestamp"}], [{"TimeGenerated": "2026-11-06T05:19:24Z"}]])
+def test_latest_collection_log_distinguishes_empty_from_invalid_telemetry(monkeypatch, rows):
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: rows)
+    context = ({"function_app_name": "func-test", "subscription_id": "subscription"}, "workspace")
+    if not rows:
+        assert operations_cli._latest_collection_log("live-20261106T050835Z", context) is None
+    else:
+        with pytest.raises(RuntimeError, match="missing its message or timestamp"):
+            operations_cli._latest_collection_log("live-20261106T050835Z", context)
+
+
+def test_watch_logs_require_a_valid_exact_run_id_before_querying(monkeypatch):
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: pytest.fail("Invalid run must not query telemetry"))
+    with pytest.raises(ValueError, match="No valid collection run ID"):
+        operations_cli._latest_collection_log('live-20261106T050835Z" or true', ({}, "workspace"))
+
+
+def test_compact_progress_redacts_sensitive_text_and_terminal_controls():
+    summary = operations_cli._compact_progress(
+        "\x1b[31m[run] runId=live-20261106T050835Z rows=420000 "
+        "Bearer secret-token https://example.test/secret user@example.test"
+    )
+    assert "rows=420,000" in summary
+    assert "secret-token" not in summary and "https://" not in summary and "user@example.test" not in summary
+    assert "\x1b" not in summary and "runId=" not in summary
+
+
+def test_compact_heartbeat_keeps_step_age_without_implying_whole_run_completion():
+    summary = operations_cli._compact_progress(
+        "heartbeat cpuSeconds=230.6 lastProgressAgeSeconds=122.0 "
+        "stage=reconcile step=scan-dataset dataset=findings rows=1839985 complete=True"
+    )
+    assert summary == (
+        "heartbeat stepAge=122s stage=reconcile step=scan-dataset "
+        "dataset=findings rows=1,839,985 stepComplete=True"
+    )
+
+
+@pytest.mark.parametrize("section,source", [("baseline", "baseline"), ("datasets", "current")])
+def test_compact_progress_distinguishes_baseline_and_current_scan_counts(section, source):
+    summary = operations_cli._compact_progress(
+        f"stage=finding-events step=scan-dataset section={section} dataset=findings rows=1530000"
+    )
+    assert summary == f"stage=finding-events step=scan-dataset source={source} dataset=findings rows=1,530,000"
+
+
+def test_watch_logs_flag_requires_watch_before_azure_access(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_values", lambda: pytest.fail("Invalid flags must not access Azure"))
+    assert operations_cli.main(["check-runs", "--logs"]) == 1
+    assert "--logs requires --watch" in capsys.readouterr().err
+
+
+def test_console_watch_interrupt_does_not_stop_collection(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {
+        "workflow": {"state": "Running", "progress": {"phase": "process"}},
+    })
+
+    def interrupt(delay):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(operations_cli.time, "sleep", interrupt)
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: pytest.fail("Watching must never stop the host"))
+    assert operations_cli.main(["check-runs", "--watch"]) == 0
+    assert "collector continues unchanged" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("error_type", [
+    operations_cli.requests.ReadTimeout,
+    operations_cli.requests.ConnectTimeout,
+    operations_cli.requests.ConnectionError,
+])
+def test_console_watch_retries_transient_status_requests_without_touching_collection(monkeypatch, capsys, configured_function_target, error_type):
+    calls = []
+
+    def az(*args, **kwargs):
+        assert args[:3] == ("functionapp", "keys", "list")
+        assert kwargs["timeout"] == 30
+        return SimpleNamespace(stdout="host-key")
+
+    def get(url, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            raise error_type("status connection temporarily unavailable")
+        return SimpleNamespace(status_code=200, json=lambda: {
+            "workflow": {"state": "Completed", "progress": {"phase": "completed"}},
+        })
+
+    monkeypatch.setattr(operations_cli, "_az", az)
+    monkeypatch.setattr(operations_cli.requests, "get", get)
+    waits = []
+    monkeypatch.setattr(operations_cli.time, "sleep", waits.append)
+    assert operations_cli.main(["check-runs", "--watch"]) == 0
+    output = capsys.readouterr().out
+    assert "STATUS UNAVAILABLE" in output and "collector state unknown" in output
+    assert "retry in 30s" in output and "Completed" in output
+    assert "host-key" not in output
+    assert len(calls) == 2 and waits == [30]
+
+
+def test_console_watch_management_timeout_can_be_interrupted_without_restarting(monkeypatch, capsys):
+    def unavailable():
+        raise subprocess.TimeoutExpired(["az", "functionapp", "keys", "list"], 30)
+
+    def interrupt(delay):
+        assert delay == 30
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(operations_cli, "_function_publication_status", unavailable)
+    monkeypatch.setattr(operations_cli.time, "sleep", interrupt)
+    assert operations_cli.main(["check-runs", "--watch"]) == 0
+    output = capsys.readouterr().out
+    assert "STATUS UNAVAILABLE" in output and "collector state unknown" in output
+    assert "Stopped watching" in output
+
+
+def test_console_watch_does_not_retry_permanent_status_errors(monkeypatch, capsys):
+    def denied():
+        raise RuntimeError("Function publication-status lookup failed: access denied")
+
+    monkeypatch.setattr(operations_cli, "_function_publication_status", denied)
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda delay: pytest.fail("Permanent errors must not retry"))
+    assert operations_cli.main(["check-runs", "--watch"]) == 1
+    assert "access denied" in capsys.readouterr().err
+
+
+def test_console_watch_does_not_retry_certificate_errors(monkeypatch, capsys, configured_function_target):
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: SimpleNamespace(stdout="host-key"))
+
+    def invalid_certificate(*args, **kwargs):
+        raise operations_cli.requests.exceptions.SSLError("certificate validation failed")
+
+    monkeypatch.setattr(operations_cli.requests, "get", invalid_certificate)
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda delay: pytest.fail("Certificate errors must not retry"))
+    assert operations_cli.main(["check-runs", "--watch"]) == 1
+    assert "certificate validation failed" in capsys.readouterr().err
+
+
+def test_console_watch_surfaces_failure(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {
+        "workflow": {"instanceId": "vulnerability-collection", "state": "Failed",
+                     "updatedUtc": "now", "progress": {"reason": "HTTP 403"}},
+    })
+    assert operations_cli.main(["check-runs", "--watch"]) == 1
+    captured = capsys.readouterr()
+    assert "HTTP 403" in captured.out
+    assert "Collection failed" in captured.err
+
+
+def test_console_watch_reports_timeout_as_failure_even_when_durable_is_completed(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {
+        "workflow": {"instanceId": "vulnerability-collection", "state": "Completed",
+                     "updatedUtc": "now", "progress": {"phase": "timed_out", "timedOut": True}},
+    })
+    assert operations_cli.main(["check-runs", "--watch"]) == 1
+    captured = capsys.readouterr()
+    assert "TIMED OUT" in captured.out
+    assert "six-hour limit" in captured.err
+
+
+def test_console_status_does_not_report_durable_timeout_as_success(monkeypatch):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {
+        "workflow": {"instanceId": "vulnerability-collection", "state": "Completed",
+                     "updatedUtc": "now", "progress": {"phase": "timed_out", "timedOut": True}},
+    })
+    assert operations_cli.check_function_logs(1, 3, status_only=True) == "TIMED_OUT"
+
+
+def test_console_warns_about_a_stale_active_run_without_claiming_success(capsys):
+    operations_cli._print_workflow_progress({
+        "instanceId": "vulnerability-collection", "state": "Running", "updatedUtc": "now",
+        "progress": {"runId": "live-20261023T160000Z", "phase": "collect"},
+    })
+    output = capsys.readouterr().out
+    assert "two-hour operating target" in output
+    assert "publication is not complete" in output
+
+
 def test_webapp_startup_logs_use_configured_target_and_bounded_commands(monkeypatch, capsys):
     outputs = {"resource_group_name": "rg-test", "web_app_name": "app-test"}
     monkeypatch.setattr(operations_cli, "_tf_output", outputs.__getitem__)
@@ -991,8 +1335,27 @@ def test_function_status_prefers_newer_authoritative_publication(monkeypatch, ca
     assert "stale-request" not in output
 
 
-def test_check_runs_allows_empty_history_before_first_publication(monkeypatch, capsys):
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: f"{name}-test")
+def test_old_publication_never_labels_a_running_durable_collector_idle(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_workspace_context",
+                        lambda: ({"function_app_name": "func-test", "subscription_id": "sub-test"}, "workspace"))
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: [])
+    monkeypatch.setattr(operations_cli, "_application_request_rows", lambda *args, **kwargs: [])
+    monkeypatch.setattr(operations_cli, "_function_telemetry_rows", lambda *args, **kwargs: [])
+    publication = {
+        "published": True, "runId": "live-20261024T005946Z", "snapshotTimeUtc": "2026-10-24T00:59:46Z",
+        "status": "Success", "workflow": {
+            "instanceId": "vulnerability-collection", "state": "Running", "updatedUtc": "now",
+            "progress": {"runId": "live-20261103T050000Z", "phase": "collect", "reason": "HTTP 429"},
+        },
+    }
+    assert operations_cli.check_function_logs(24, 10, False, publication_status=publication) == "ACTIVE"
+    output = capsys.readouterr().out
+    assert "IDLE" not in output
+    assert "authoritative Durable state" in output
+    assert "HTTP 429" in output
+
+
+def test_check_runs_allows_empty_history_before_first_publication(monkeypatch, capsys, configured_function_target):
     monkeypatch.setattr(
         operations_cli,
         "_az",
@@ -1019,8 +1382,7 @@ def test_check_runs_allows_empty_history_before_first_publication(monkeypatch, c
     assert "No retained [publication] trace history was found" in capsys.readouterr().out
 
 
-def test_check_runs_uses_management_plane_telemetry(monkeypatch, capsys):
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: f"{name}-test")
+def test_check_runs_uses_management_plane_telemetry(monkeypatch, capsys, configured_function_target):
     monkeypatch.setattr(
         operations_cli,
         "_az",
@@ -1078,13 +1440,12 @@ def test_check_runs_uses_management_plane_telemetry(monkeypatch, capsys):
     assert "Published files:  115" in output
 
 
-def test_check_runs_surfaces_authoritative_status_failure(monkeypatch):
+def test_check_runs_surfaces_authoritative_status_failure(monkeypatch, configured_function_target):
     monkeypatch.setattr(
         operations_cli,
         "_workspace_context",
         lambda: ({"subscription_id": "subscription-test"}, "workspace-test"),
     )
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: f"{name}-test")
     monkeypatch.setattr(
         operations_cli,
         "_az",
@@ -1961,7 +2322,7 @@ def test_invoke_requires_platform_neutral_confirmation(monkeypatch):
         raise AssertionError("invoke should require explicit confirmation")
 
 
-def test_invoke_distinguishes_trigger_acceptance_from_collection_success(monkeypatch, capsys, tmp_path):
+def test_invoke_distinguishes_trigger_acceptance_from_collection_success(monkeypatch, capsys, tmp_path, configured_function_target):
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     class AcceptedResponse:
         status_code = 202
@@ -1970,11 +2331,6 @@ def test_invoke_distinguishes_trigger_acceptance_from_collection_success(monkeyp
         def raise_for_status():
             return None
 
-    monkeypatch.setattr(
-        operations_cli,
-        "_tf_output",
-        lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name],
-    )
     monkeypatch.setattr(
         operations_cli,
         "_az",
@@ -2003,7 +2359,7 @@ def test_invoke_distinguishes_trigger_acceptance_from_collection_success(monkeyp
     assert "check-runs --limit 10 --progress" in output
 
 
-def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch, tmp_path):
+def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch, tmp_path, configured_function_target):
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     class AcceptedResponse:
         status_code = 202
@@ -2013,11 +2369,6 @@ def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch, tm
             return None
 
     requests = []
-    monkeypatch.setattr(
-        operations_cli,
-        "_tf_output",
-        lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name],
-    )
     monkeypatch.setattr(
         operations_cli,
         "_az",
@@ -2041,10 +2392,9 @@ def test_full_invoke_targets_manual_full_reconciliation_function(monkeypatch, tm
     (False, False, "dataprep_manual_snapshot"),
     (False, True, "dataprep_full_snapshot"),
 ])
-def test_manual_invoke_forwards_page_size_to_correct_trigger(monkeypatch, capsys, tmp_path, debug, full, expected):
+def test_manual_invoke_forwards_page_size_to_correct_trigger(monkeypatch, capsys, tmp_path, debug, full, expected, configured_function_target):
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     calls = []
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
     monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="host-key\n"))
     class AcceptedResponse:
         status_code = 202
@@ -2098,9 +2448,8 @@ def test_invoke_rejects_debug_with_full_before_azure_calls(monkeypatch):
 
 
 @pytest.mark.parametrize("page_size", [None, 1000])
-def test_invoke_forwards_catalog_debug_selection(monkeypatch, page_size):
+def test_invoke_forwards_catalog_debug_selection(monkeypatch, page_size, configured_function_target):
     calls = []
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
     monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="host-key\n"))
     monkeypatch.setattr(operations_cli.requests, "post", lambda url, **kwargs: calls.append(kwargs) or _debug_response("vulnerabilities", 1000))
 
@@ -2230,8 +2579,7 @@ def test_debug_transport_timeout_is_not_reported_as_api_failure_or_retried(monke
     assert len(calls) == 1
 
 
-def test_debug_failed_api_result_returns_failure_exit_code(monkeypatch, capsys):
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
+def test_debug_failed_api_result_returns_failure_exit_code(monkeypatch, capsys, configured_function_target):
     monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="secret-key\n"))
     result = operations_cli.requests.Response()
     result.status_code = 504
@@ -2251,7 +2599,13 @@ def test_debug_failed_api_result_returns_failure_exit_code(monkeypatch, capsys):
     ("https://us.api.security.microsoft.com/", "https://us.api.security.microsoft.com"),
 ])
 def test_function_deploy_synchronizes_base_uri_from_terraform_values(monkeypatch, tmp_path, configured, expected):
-    values = {"subscription_id": "subscription", "function_version": "2026.10.19.3"}
+    values = {
+        "tenant_id": "tenant",
+        "subscription_id": "subscription",
+        "resource_group_name": "rg-test",
+        "function_app_name": "func-test",
+        "function_version": "2026.10.19.3",
+    }
     if configured is not None:
         values["defender_api_base_url"] = configured
     calls = []
@@ -2260,7 +2614,8 @@ def test_function_deploy_synchronizes_base_uri_from_terraform_values(monkeypatch
     monkeypatch.setenv("FUNCTION_VERSION", "2026.10.11.2")
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     monkeypatch.setattr(operations_cli, "_values", lambda: values)
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
+    monkeypatch.setattr(operations_cli, "_tf", lambda *args, **kwargs: pytest.fail("Code-only deployment must not require Terraform"))
+    monkeypatch.setattr(operations_cli, "_azure_json", lambda *args: {"tenantId": "tenant", "id": "subscription"})
     monkeypatch.setattr(operations_cli, "_require", lambda name: name)
     monkeypatch.setattr(operations_cli, "_run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="commit\n"))
     monkeypatch.setattr(operations_cli, "_zip_tree", lambda package, paths: packaged.extend(paths))
@@ -2288,6 +2643,42 @@ def test_function_deploy_synchronizes_base_uri_from_terraform_values(monkeypatch
     ready_index = calls.index(("runtime-ready",))
     assert calls.index(settings) < ready_index
     assert ready_index < next(index for index, call in enumerate(calls) if call[:4] == ("rest", "--method", "post", "--url"))
+    start_index = next(index for index, call in enumerate(calls) if call[:2] == ("functionapp", "start"))
+    upload_index = next(index for index, call in enumerate(calls) if call[:4] == ("functionapp", "deployment", "source", "config-zip"))
+    assert start_index < upload_index < ready_index
+    for call in calls:
+        if call[0] == "functionapp":
+            assert call[call.index("--resource-group") + 1] == "rg-test"
+            assert call[call.index("--name") + 1] == "func-test"
+
+
+@pytest.mark.parametrize("account,message", [
+    ({"tenantId": "other", "id": "subscription"}, "az login --tenant tenant"),
+    ({"tenantId": "tenant", "id": "other"}, "az account set --subscription subscription"),
+    (None, "unexpected response"),
+])
+@pytest.mark.parametrize("operation", ["deploy", "verify", "invoke", "status", "stop"])
+def test_function_code_operations_reject_invalid_account_before_touching_app(monkeypatch, account, message, operation):
+    monkeypatch.setattr(operations_cli, "_values", lambda: {
+        "tenant_id": "tenant", "subscription_id": "subscription",
+        "resource_group_name": "rg-test", "function_app_name": "func-test",
+    })
+    monkeypatch.setattr(operations_cli, "_azure_json", lambda *args: account)
+    monkeypatch.setattr(operations_cli, "_tf", lambda *args, **kwargs: pytest.fail("Code-only deployment must not require Terraform"))
+    monkeypatch.setattr(operations_cli, "_function_storage_settings", lambda *args: pytest.fail("Invalid account must not access the app"))
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: pytest.fail("Invalid account must not modify Azure"))
+
+    with pytest.raises(RuntimeError, match=message):
+        if operation == "deploy":
+            operations_cli.deploy_function()
+        elif operation == "verify":
+            operations_cli.verify("function")
+        elif operation == "invoke":
+            operations_cli.invoke(True)
+        elif operation == "status":
+            operations_cli._function_publication_status()
+        else:
+            operations_cli.stop_collection(True, "live-20261103T050000Z")
 
 
 def test_function_deploy_rejects_base_uri_containing_a_dataset_path(monkeypatch):
@@ -2438,15 +2829,14 @@ def test_new_durable_receipt_does_not_claim_legacy_chunks_exist(monkeypatch, tmp
         operations_cli.download_collection_diagnostics()
 
 
-def test_verify_function_does_not_block_on_published_data_status(monkeypatch, capsys):
-    outputs = {
-        "resource_group_name": "rg-test",
-        "function_app_name": "func-test",
-        "history_storage_account_name": "historytest",
-        "history_container_name": "dvm-history",
-        "current_container_name": "dvm-current",
-    }
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: outputs[name])
+def test_wait_function_host_uses_configured_target_without_terraform(monkeypatch, configured_function_target):
+    calls = []
+    monkeypatch.setattr(operations_cli, "_wait_function_host", lambda *args: calls.append(args))
+    assert operations_cli.main(["wait-function-host"]) == 0
+    assert calls == [("rg-test", "func-test")]
+
+
+def test_verify_function_does_not_block_on_published_data_status(monkeypatch, capsys, configured_function_target):
     monkeypatch.setattr(
         operations_cli,
         "_az",
@@ -2481,8 +2871,7 @@ def test_verify_function_does_not_block_on_published_data_status(monkeypatch, ca
     [{"name": "func-test/dataprep_manual_snapshot"}, {"name": "func-test/dataprep_full_snapshot"}],
     [{"name": name} for name in (*operations_cli.COLLECTOR_FUNCTION_NAMES, "dataprep_debug_page", "dataprep_status")],
 ])
-def test_verify_function_rejects_missing_triggers(monkeypatch, capsys, functions):
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
+def test_verify_function_rejects_missing_triggers(monkeypatch, capsys, functions, configured_function_target):
     monkeypatch.setattr(operations_cli, "_validate_function_runtime_storage_auth", lambda *args: None)
     calls = []
 
@@ -2500,8 +2889,7 @@ def test_verify_function_rejects_missing_triggers(monkeypatch, capsys, functions
 
 
 @pytest.mark.parametrize("functions", [None, {}, ["dataprep_snapshot"], [{"name": None}]])
-def test_verify_function_rejects_invalid_trigger_response(monkeypatch, functions):
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
+def test_verify_function_rejects_invalid_trigger_response(monkeypatch, functions, configured_function_target):
     monkeypatch.setattr(operations_cli, "_validate_function_runtime_storage_auth", lambda *args: None)
     monkeypatch.setattr(
         operations_cli, "_az",
@@ -2513,10 +2901,7 @@ def test_verify_function_rejects_invalid_trigger_response(monkeypatch, functions
         operations_cli.verify("function")
 
 
-def test_verify_function_still_requires_valid_storage_identity(monkeypatch):
-    outputs = {"resource_group_name": "rg-test", "function_app_name": "func-test"}
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: outputs[name])
-
+def test_verify_function_still_requires_valid_storage_identity(monkeypatch, configured_function_target):
     def invalid_storage_identity(resource_group, function_app):
         assert (resource_group, function_app) == ("rg-test", "func-test")
         raise RuntimeError("Function storage identity is invalid")

@@ -22,6 +22,7 @@ ENVIRONMENT_KEYS = (
 )
 
 
+
 def test_dotenv_example_uses_supported_collection_settings():
     dotenv = Path(".env.example").read_text(encoding="utf-8")
 
@@ -158,6 +159,18 @@ def test_collection_mode_rejects_forced_delta_outside_defender_window():
         assert "14-day" in str(error)
     else:
         raise AssertionError("stale forced delta should fail")
+
+
+@pytest.mark.parametrize("requested", [None, "auto", "full", "delta"])
+def test_scale_set_exclusion_always_uses_scoped_snapshot_without_loading_baseline(requested):
+    class UnreadableFindings:
+        def __iter__(self):
+            pytest.fail("Scoped snapshot selection must not scan the baseline")
+
+    settings = Settings(exclude_scale_sets=True)
+    assert _resolve_collection_mode(
+        settings, {"findings": UnreadableFindings()}, requested,
+    ) == ("full", None)
 
 
 def test_synthetic_device_count_can_be_configured(monkeypatch, tmp_path: Path):

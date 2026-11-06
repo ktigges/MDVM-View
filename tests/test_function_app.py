@@ -46,6 +46,28 @@ def test_function_execution_has_no_host_wall_clock_deadline():
     assert host["functionTimeout"] == "-1"
 
 
+@pytest.mark.parametrize("stage,name", [
+    ("prepare", "dataprep_prepare"), ("collect", "dataprep_collect_batch"),
+    ("process", "dataprep_process"), ("verify", "dataprep_verify_file"),
+    ("publish", "dataprep_publish"),
+])
+def test_every_hosted_activity_uses_original_deadline_worker_supervision(monkeypatch, stage, name):
+    request = {
+        "runId": "live-20261106T000000Z", "planPath": "runs/collection-plan.json",
+        "deadlineUtc": "2026-11-06T06:00:00+00:00",
+    }
+    worker = Mock(return_value={"timedOut": True})
+    monkeypatch.setattr(function_app, "execute_worker", worker)
+    handler = async_handler(getattr(function_app, name))
+    assert handler(request) == {"timedOut": True}
+    action = worker.call_args.args[0]
+    assert action["stage"] == stage
+    assert action["deadlineUtc"] == request["deadlineUtc"]
+    if stage == "prepare":
+        assert action["request"] == request
+        assert isinstance(action["policy"], dict)
+
+
 def test_host_logging_suppresses_coordination_noise_but_keeps_collection_progress():
     host = json.loads(Path(function_app.__file__).with_name("host.json").read_text())
     levels = host["logging"]["logLevel"]
@@ -338,12 +360,11 @@ def test_http_debug_returns_timeout_as_failed_api_test(http_debug_context, monke
 
 
 @pytest.mark.parametrize("endpoint", ["machine_vulnerabilities", "vulnerabilities"])
-def test_debug_menu_receives_same_invocations_actual_api_result(http_debug_context, monkeypatch, capsys, endpoint):
+def test_debug_menu_receives_same_invocations_actual_api_result(http_debug_context, monkeypatch, capsys, endpoint, configured_function_target):
     from vulnerability_view import operations_cli
 
     calls, _ = http_debug_context
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: {"resource_group_name": "rg-test", "function_app_name": "func-test"}[name])
-    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: type("Result", (), {"stdout": "host-key\n"})())
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="host-key\n", stderr=""))
     monkeypatch.setattr(operations_cli, "_workspace_context", lambda: pytest.fail("Debug does not require Log Analytics access"))
 
     def post(url, **kwargs):

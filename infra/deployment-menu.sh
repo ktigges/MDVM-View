@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DEPLOYMENT_MENU_VERSION="2026.11.03.3"
+DEPLOYMENT_MENU_VERSION="2026.11.05.1"
 
 resolve_python() {
   if [[ -n "${PYTHON:-}" ]]; then
@@ -102,7 +102,7 @@ invoke_collection() {
   fi
   printf 'Page size controls each request, not the total records collected.\n'
   while true; do
-    printf 'Records per page (1-%s; other endpoints cap at 1000) [%s]: ' "$page_max" "$page_default"
+    printf 'Findings per page (1-%s; inventory/debug cap at 1000; delta uses 50000) [%s]: ' "$page_max" "$page_default"
     read -r page_size
     page_size=${page_size:-$page_default}
     if [[ "$page_size" =~ ^[1-9][0-9]{0,3}$ ]] && (( page_size <= page_max )); then
@@ -185,7 +185,9 @@ Operations and diagnostics
   11) Download legacy manual diagnostics (new runs: use progress/log export)
   12) Export latest published snapshot (verified local ZIP; read-only)
   13) Show Web App startup logs (latest retained container log)
-  14) Return to deployment menu
+  14) Stop a named collector run and its Function host (preserves history)
+  15) Watch current collection progress on the console
+  16) Return to deployment menu
 EOF
     printf 'Select an option: '
     read -r operations_choice
@@ -203,8 +205,16 @@ EOF
       11) run_cli download-collection-diagnostics; pause_menu ;;
       12) run_cli export-latest-snapshot; pause_menu ;;
       13) run_cli check-webapp-startup-logs; pause_menu ;;
-      14) return ;;
-      *) printf 'Select a number from 1 through 14.\n' ;;
+      14)
+        printf 'Exact run ID to stop (live-YYYYMMDDTHHMMSSZ): '
+        read -r stop_run_id
+        if confirm_value "STOP" "Terminate $stop_run_id and stop the Function host. History is preserved; deploy/start the host before future collection."; then
+          run_cli stop-collection --run-id "$stop_run_id" --confirm
+        fi
+        pause_menu ;;
+      15) run_cli check-runs --watch --logs; pause_menu ;;
+      16) return ;;
+      *) printf 'Select a number from 1 through 16.\n' ;;
     esac
   done
 }

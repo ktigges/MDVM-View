@@ -22,7 +22,7 @@ from vulnerability_view.dataprep_cli import main
 from vulnerability_view.defender_client import COLLECTION_PAGE_SIZE, MACHINE_FINDINGS_PAGE_SIZE, DefenderApiError, collection_page_size, probe_defender_page
 from vulnerability_view.storage_writer import download_current_manifest
 from vulnerability_view.collection_workflow import (
-    INSTANCE_ID, RunStore, execute_worker, orchestrate, prepare_run, publish_run, start_collection, verify_file,
+    INSTANCE_ID, execute_worker, orchestrate, start_collection,
 )
 
 
@@ -244,12 +244,8 @@ def dataprep_orchestrator(context):
 
 @app.activity_trigger(input_name="request")
 def dataprep_prepare(request: dict) -> dict:
-    store = RunStore(Settings.load())
-    try:
-        policy = json.loads((Path(__file__).resolve().parent / "config/sla-policies.json").read_text())
-        return prepare_run(request, store, policy)
-    finally:
-        store.close()
+    policy = json.loads((Path(__file__).resolve().parent / "config/sla-policies.json").read_text())
+    return execute_worker({**request, "stage": "prepare", "request": request, "policy": policy})
 
 
 @app.activity_trigger(input_name="reference")
@@ -264,17 +260,9 @@ def dataprep_process(reference: dict) -> dict:
 
 @app.activity_trigger(input_name="reference")
 def dataprep_publish(reference: dict) -> dict:
-    store = RunStore(Settings.load())
-    try:
-        return publish_run(reference, store)
-    finally:
-        store.close()
+    return execute_worker({**reference, "stage": "publish"})
 
 
 @app.activity_trigger(input_name="reference")
 def dataprep_verify_file(reference: dict) -> dict:
-    store = RunStore(Settings.load())
-    try:
-        return verify_file(reference, store)
-    finally:
-        store.close()
+    return execute_worker({**reference, "stage": "verify"})

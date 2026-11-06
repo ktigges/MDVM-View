@@ -8,6 +8,9 @@ Run commands from the repository root unless a section says otherwise.
 |---|---|
 | See whether the collector is active | `python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 3 --status-only` |
 | Show active progress plus managed-identity publication telemetry | `python -m vulnerability_view.operations_cli check-runs --limit 5 --progress` |
+| Watch authoritative collection progress every 30 seconds | `python -m vulnerability_view.operations_cli check-runs --watch` |
+| Watch compact progress with the latest run-correlated log | `python -m vulnerability_view.operations_cli check-runs --watch --logs` |
+| Terminate an exact obsolete run and stop its Function host, preserving history | `python -m vulnerability_view.operations_cli stop-collection --run-id <live-run-id> --confirm` |
 | Inspect recent invocation requests | `python -m vulnerability_view.operations_cli check-function-logs --hours 24 --limit 10` |
 | Inspect retained Function execution, host, and deployment logs over two days | `python -m vulnerability_view.operations_cli check-function-logs --days 2 --limit 25` |
 | Export sanitized Function telemetry over two days | `python -m vulnerability_view.operations_cli export-function-logs --days 2` |
@@ -24,6 +27,12 @@ Run commands from the repository root unless a section says otherwise.
 
 Never manually invoke while the status checker reports `ACTIVE` or
 `INDETERMINATE`.
+
+Redeploying does not cancel Durable work. Use the explicit stop command before
+deploying collection-logic changes over an obsolete active run. It confirms
+termination before stopping the host; deployment starts the host again. No
+Storage evidence or Durable history is deleted. See the
+[stop/deploy/restart sequence](operations-and-configuration.md#stopping-an-obsolete-run-before-deployment).
 
 `verify function` checks managed-identity runtime Storage configuration, the
 deployed collector version, and trigger discovery. It intentionally does not
@@ -253,6 +262,11 @@ history storage. A no-change plan may omit settings that already match Azure.
 | `tfverify webapp` | Checks Web App and Easy Auth redirect |
 
 Code-only deployments do not need `tfplan` or `tfapply`.
+Function deployment and verification target the existing app using
+`resource_group_name` and `function_app_name` from the configured Terraform values
+file, without requiring local Terraform outputs. Both check that the Azure CLI
+tenant and subscription match that file. Deployment starts a stopped Function
+App automatically before uploading; it does not provision infrastructure.
 
 ### Interactive deployment menus
 
@@ -404,7 +418,8 @@ app settings, or the scheduled collector's default page size. The full
 reconciliation action also accepts a per-run page size and retains its `FULL`
 confirmation. The page size is a per-request maximum, not a total inventory cap.
 Complete/full collections now default to **2,500** findings per page (range
-1-2,500); other inventories and delta export remain capped at 1,000. DEBUG
+1-2,500); other inventories remain capped at 1,000, while delta export uses
+50,000 rows per page independently. DEBUG
 retains its 1-1,000 bound and existing defaults. Live machine-findings requests
 are paced about 24/minute across machines, pages, and retries. HTTP 429 honors
 the full server-requested cooldown rather than capping it at 60 seconds.
@@ -412,6 +427,14 @@ Request attempts remain bounded. The Dedicated host has no configured execution
 deadline; Durable activities retain response and processing checkpoints across
 worker interruptions. Recovery preserves the active run's original settings
 instead of silently starting a replacement.
+
+When `EXCLUDE_SCALE_SETS=true`, complete/manual/scheduled collection uses
+device-scoped snapshots even if `auto` or `delta` was requested. Recognized
+scale sets are skipped before findings requests; the tenant-wide delta feed is
+not downloaded. Completed device/page checkpoints are reused on retries.
+Run-to-run changes retain existing confirmation and stale/missing-device rules;
+confirmed absence means **resolved between runs**, not an exact patch time.
+With the flag off, the existing automatic full/delta policy remains unchanged.
 
 Equivalent cross-platform commands:
 
@@ -498,8 +521,14 @@ not raw finding contents or tokens. Debug retains the 10-second connection and
 not the synchronous diagnostic-capture wrapper described below. Use
 `check-runs --progress` for durable phase/state, even before the first publication,
 and `export-function-logs` for support logs. Manual receipts identify accepted
-requests only; an active run is retained and a failed run is resumed. These
-requests do not create new legacy diagnostic chunks.
+requests only; an active run within its six-hour budget is retained and a failed
+run within that budget is resumed. The next trigger starts fresh after timeout
+or an expired failure, without deleting retained evidence. An expired instance
+still marked active is terminated without an overlapping replacement in that
+trigger. `check-runs --watch` reports `timed_out` as failure even when Durable
+labels the orchestration `Completed`. Two-hour console warnings identify slow
+runs; retries and recovery do not reset the six-hour limit. These requests do
+not create new legacy diagnostic chunks.
 
 The following download instructions apply to evidence already captured by the
 previous synchronous collector. Retained evidence remains available by UUID.
@@ -579,6 +608,7 @@ Possible results:
 | `ACTIVE - DO NOT INVOKE ANOTHER RUN` | Fresh collector progress exists; wait |
 | Latest invocation completed | Safe to inspect the published run |
 | `INDETERMINATE` | Start exists without a completion trace, completed request record, or fresh progress; this is uncertainty, not a failure or permission to invoke again |
+| `TIMED_OUT` | The original six-hour run budget expired; retained evidence remains and the next trigger starts fresh |
 | No invocation start | No start was found in the selected time window |
 
 Continuously monitor without modifying Azure:

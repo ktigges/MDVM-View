@@ -108,7 +108,7 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `collection_schedule` | `0 0 5 * * *` | Six-field UTC NCRONTAB timer schedule |
 | `app_mode` | `live`; `live` or `combined` | Controls whether a newly published run contains live rows only or live plus retained labeled synthetic rows |
 | `recommendation_enrichment_mode` | `targeted`; `auto`, `targeted`, `full`, or `none` | Controls recommendation-to-machine API enrichment; `auto` resolves to targeted |
-| `vulnerability_collection_mode` | `auto`; `auto`, `delta`, or `full` | Uses daily deltas with initial, weekly, and stale-state full reconciliation |
+| `vulnerability_collection_mode` | `auto`; `auto`, `delta`, or `full` | Uses daily deltas with initial, weekly, and stale-state full reconciliation unless scale-set exclusion is enabled; exclusion selects device-scoped snapshots for every live run |
 | `enable_experimental_endpoints` | `false` | Enables undocumented Defender compatibility probes |
 | `exclude_scale_sets` | `false` | Opt-in exclusion of Azure scale-set devices from live collection |
 | `full_collection_weekday` | `6`; Monday `0` through Sunday `6` | Full vulnerability reconciliation day when collection mode is `auto` |
@@ -191,7 +191,7 @@ These can be environment variables or keys in
 | `RECOMMENDATION_ENRICHMENT_MODE` | `recommendationEnrichmentMode` | `targeted` | `auto`, `targeted`, `full`, or `none` |
 | `VULNERABILITY_COLLECTION_MODE` | `vulnerabilityCollectionMode` | `auto` | `auto`, `delta`, or `full` |
 | `ENABLE_EXPERIMENTAL_ENDPOINTS` | `enableExperimentalEndpoints` | `false` | Enables undocumented optional endpoint probes |
-| `EXCLUDE_SCALE_SETS` | `excludeScaleSets` | `false` | Set `true` to skip scale-set findings requests in full collection and exclude scale-set devices, findings (including delta baselines/changes), and recommendation-device relationships from new live datasets and raw replays. Matches Azure resource IDs containing `/virtualMachineScaleSets/` (case-insensitive), not device names. Prior findings are excluded before lifecycle reconciliation, not marked fixed. Raw API evidence, retained history, tenant-wide aggregate API counts, and one-page DEBUG probes are unchanged. |
+| `EXCLUDE_SCALE_SETS` | `excludeScaleSets` | `false` | Set `true` to select device-scoped snapshots for all new live runs, overriding `auto`/`delta`. Skips recognized scale-set devices before findings requests and never calls the tenant-wide vulnerability delta endpoint. Excludes their devices, findings, and recommendation-device relationships from new live datasets and raw replays. Matches Azure resource IDs containing `/virtualMachineScaleSets/` (case-insensitive), not device names. Prior scale-set findings are excluded before lifecycle reconciliation, not marked fixed. Reports observed snapshot-to-snapshot changes, not intermediate events. Retained history, tenant-wide inventory/aggregate API calls, and one-page DEBUG probes are unchanged. Existing runs retain their frozen settings. |
 | `FULL_COLLECTION_WEEKDAY` | `fullCollectionWeekday` | `6` | Weekly full vulnerability reconciliation weekday, Monday 0 through Sunday 6 |
 | `COLLECTION_SCHEDULE` | `collectionSchedule` | `0 0 5 * * *` | UTC Functions timer schedule |
 | `DASHBOARD_DATA_SOURCE` | `dashboardDataSource` | `local` | `local` reads `dashboard/data`; `azure` reads current manifest and curated blobs |

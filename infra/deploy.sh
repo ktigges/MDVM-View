@@ -218,81 +218,16 @@ tf_deploy() {
   local stage="${1:-}"
   require_tf_vars
   require_command az
+  if [[ "$stage" == "function" ]]; then
+    require_command python3
+    PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m vulnerability_view.operations_cli deploy function
+    return
+  fi
   require_command zip
 
   local resource_group package
   resource_group="$(tf_output resource_group_name)"
   case "$stage" in
-    function)
-      require_command jq
-      require_command git
-      local function_app function_version version_file defender_base_url
-      defender_base_url="$(jq -r '.defender_api_base_url // "https://api-us3.securitycenter.microsoft.com"' "$TF_VARS")"
-      if [[ ! "$defender_base_url" =~ ^https://[A-Za-z0-9.-]+/?$ ]]; then
-        echo "defender_api_base_url must be an HTTPS base URI without a path or query." >&2
-        return 1
-      fi
-      function_app="$(tf_output function_app_name 2>/dev/null || true)"
-      if ! function_version="$(jq -er '.version | select(type == "string" and test("^[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}\\.[0-9]+$"))' "$ROOT_DIR/function-version.json")"; then
-        echo "Missing or invalid function-version.json; cannot identify the Function release." >&2
-        return 1
-      fi
-      version_file="$ROOT_DIR/build-version.json"
-      package="$ROOT_DIR/function-source.zip"
-      if [[ -z "$function_app" ]]; then
-        echo "Function infrastructure is not present. Run tfplan function and tfapply function first." >&2
-        exit 1
-      fi
-
-      rm -f "$package" "$version_file"
-      jq -n \
-        --arg version "$function_version" \
-        --arg deployedUtc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        --arg commit "$(git -C "$ROOT_DIR" rev-parse HEAD)" \
-        '{version:$version,deployedUtc:$deployedUtc,commit:$commit}' > "$version_file"
-      (
-        cd "$ROOT_DIR"
-        zip -q -r "$package" function_app.py function-version.json host.json requirements.txt pyproject.toml build-version.json src config/sla-policies.json \
-          -x '*/__pycache__/*' '*.pyc'
-      )
-      rm -f "$version_file"
-
-      # AzureRM currently injects a legacy setting that overrides identity-based host storage.
-      az functionapp config appsettings delete \
-        --resource-group "$resource_group" \
-        --name "$function_app" \
-        --setting-names AzureWebJobsStorage \
-        --output none
-      az functionapp restart \
-        --resource-group "$resource_group" \
-        --name "$function_app"
-
-      echo "Waiting 45 seconds for managed-identity storage settings and RBAC to propagate..."
-      sleep 45
-
-      az functionapp deployment source config-zip \
-        --resource-group "$resource_group" \
-        --name "$function_app" \
-        --src "$package" \
-        --build-remote true \
-        --timeout 600 \
-        --output none
-
-      az functionapp config appsettings set \
-        --resource-group "$resource_group" \
-        --name "$function_app" \
-        --settings "COLLECTOR_VERSION=$function_version" "DEFENDER_API_BASE_URL=${defender_base_url%/}" \
-        --output none
-
-      require_command python3
-      PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m vulnerability_view.operations_cli wait-function-host
-
-      az rest \
-        --method post \
-        --url "https://management.azure.com/subscriptions/$(jq -r .subscription_id "$TF_VARS")/resourceGroups/$resource_group/providers/Microsoft.Web/sites/$function_app/syncfunctiontriggers?api-version=2024-04-01" \
-        --output none
-      echo "Function collector version deployed: $function_version"
-      ;;
     webapp)
       local dashboard_version web_app
       web_app="$(tf_output web_app_name 2>/dev/null || true)"
@@ -450,6 +385,12 @@ tf_verify() {
   local stage="${1:-}"
   require_command az
 
+  if [[ "$stage" == "function" ]]; then
+    require_command python3
+    PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m vulnerability_view.operations_cli verify function
+    return
+  fi
+
   local function_app history_account resource_group
   history_account="$(tf_output history_storage_account_name)"
   resource_group="$(tf_output resource_group_name)"
@@ -469,10 +410,6 @@ tf_verify() {
         --url "https://management.azure.com${history_account_id}/blobServices/default/containers?api-version=2023-05-01" \
         --query 'value[].name' \
         --output table
-      ;;
-    function)
-      require_command python3
-      PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m vulnerability_view.operations_cli verify function
       ;;
     webapp)
       local web_app web_url
@@ -522,25 +459,8 @@ tf_invoke() {
     exit 1
   fi
 
-  local function_app host_key resource_group
-  function_app="$(tf_output function_app_name)"
-  resource_group="$(tf_output resource_group_name)"
-  host_key="$(
-    az functionapp keys list \
-      --resource-group "$resource_group" \
-      --name "$function_app" \
-      --query masterKey \
-      --output tsv
-  )"
-  curl --fail-with-body --silent --show-error \
-    --request POST \
-    --header "x-functions-key: $host_key" \
-    --header "Content-Type: application/json" \
-    --data '{"input":null}' \
-    "https://$function_app.azurewebsites.net/admin/functions/dataprep_manual_snapshot"
-  echo
-  echo "Function trigger accepted. This does not confirm collection success."
-  echo "Verify execution and immutable publication with: ./infra/check-runs.sh 10 --progress"
+  require_command python3
+  PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m vulnerability_view.operations_cli invoke function --confirm
 }
 
 usage() {

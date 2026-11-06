@@ -7,7 +7,7 @@ import pytest
 import requests
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
-from vulnerability_view.collection_transport import CheckpointYield, RequestCheckpoints, checkpoint_attempt, checkpoint_requests
+from vulnerability_view.collection_transport import CollectionPages, CheckpointYield, RequestCheckpoints, checkpoint_attempt, checkpoint_requests
 from vulnerability_view.defender_client import ENDPOINTS, DefenderClient
 from vulnerability_view.live_collector import _collect_referenced_catalog
 
@@ -25,6 +25,186 @@ class MemoryStore:
         if name in self.files:
             raise ResourceExistsError("exists")
         self.files[name] = content
+
+    def list_names(self, prefix):
+        return [name for name in self.files if name.startswith(prefix)]
+
+
+def test_delta_resumes_next_page_without_replaying_saved_response_bodies(tmp_path, monkeypatch, caplog):
+    store = MemoryStore()
+    reads = []
+    original_read = store.read
+
+    def read(name):
+        if name in store.files:
+            reads.append(name)
+        return original_read(name)
+
+    monkeypatch.setattr(store, "read", read)
+    endpoint = next(item for item in ENDPOINTS if item.name == "vulnerability_changes")
+    credential = SimpleNamespace(get_token=lambda *args: SimpleNamespace(token="synthetic"))
+    client = DefenderClient("https://example.test", credential)
+    calls = []
+
+    def send(url, **kwargs):
+        if calls:
+            assert not any(name.endswith(".gz") for name in reads), "Resume must not read earlier page bodies"
+        calls.append(url)
+        next_page = len(calls) + 1
+        body = {"value": [{"id": str(len(calls))}]}
+        if len(calls) < 3:
+            body["@odata.nextLink"] = f"https://example.test/api/next?page={next_page}"
+        return response(body=body)
+
+    monkeypatch.setattr(client.session, "get", send)
+    factory = lambda endpoint, url: CollectionPages(store, "raw/run", endpoint, url, tmp_path)
+    first = RequestCheckpoints(store, "raw/run/requests", {"example.test"}, request_limit=1,
+                               delta_interval=0, page_checkpoints=factory)
+    with checkpoint_requests(first), pytest.raises(CheckpointYield):
+        client.collect(endpoint, {"sinceTime": "2026-11-01T00:00:00Z"}, retain_rows=False)
+    reads.clear()
+    second = RequestCheckpoints(store, "raw/run/requests", {"example.test"}, request_limit=1,
+                                delta_interval=0, page_checkpoints=factory)
+    with checkpoint_requests(second), pytest.raises(CheckpointYield):
+        client.collect(endpoint, {"sinceTime": "2026-11-01T00:00:00Z"}, retain_rows=False)
+    reads.clear()
+    third = RequestCheckpoints(store, "raw/run/requests", {"example.test"}, delta_interval=0, page_checkpoints=factory)
+    with checkpoint_requests(third), caplog.at_level("INFO"):
+        rows, status = client.collect(endpoint, {"sinceTime": "2026-11-01T00:00:00Z"}, retain_rows=False)
+    assert rows == []
+    assert status["RowCount"] == status["PageCount"] == len(calls) == 3
+    assert second.cached_requests == third.cached_requests == 0
+    assert third.saved_requests == third.downloaded_rows == 1
+    assert third.downloaded_bytes > 0
+    assert "restored pages=3/3" in caplog.text
+    assert [json.loads(gzip.decompress(path.read_bytes()))["value"][0]["id"]
+            for path in sorted(tmp_path.glob("*.gz"))] == ["1", "2", "3"]
+    reads.clear()
+    complete = RequestCheckpoints(store, "raw/run/requests", {"example.test"}, page_checkpoints=factory)
+    with checkpoint_requests(complete):
+        _, repeated = client.collect(endpoint, {"sinceTime": "2026-11-01T00:00:00Z"}, retain_rows=False)
+    assert repeated["RowCount"] == 3
+    assert complete.new_requests == 0
+    assert len(calls) == 3
+
+
+def test_continuation_checkpoint_is_immutable_and_restoration_checks_integrity(tmp_path):
+    store = MemoryStore()
+    pages = CollectionPages(store, "raw/run", "vulnerability_changes", "https://example.test/start", tmp_path)
+    pages.resume()
+    pages.save("https://example.test/start", None, 1, b'{"value":[{"id":"one"}]}')
+    saved = dict(store.files)
+    repeated = CollectionPages(store, "raw/run", "vulnerability_changes", "https://example.test/start", tmp_path)
+    assert repeated.resume() == (None, 1, 1)
+    assert store.files == saved
+    store.files[pages.pages[0]["path"]] = b"corrupt"
+    with pytest.raises(ValueError, match="integrity"):
+        repeated.restore()
+
+
+def test_continuation_journal_rejects_missing_pages(tmp_path):
+    store = MemoryStore()
+    pages = CollectionPages(store, "raw/run", "vulnerability_changes", "https://example.test/start", tmp_path)
+    pages.save("https://example.test/start", "https://example.test/next", 1, b'{"value":[]}')
+    pages.save("https://example.test/next", None, 2, b'{"value":[]}')
+    del store.files[f"{pages.journal}00000001.json"]
+    with pytest.raises(ValueError, match="gap"):
+        CollectionPages(store, "raw/run", "vulnerability_changes", "https://example.test/start", tmp_path).resume()
+
+
+def test_delta_pacing_observes_hourly_budget_and_counts_network_bytes(monkeypatch):
+    clock = [0.0]
+    waits = []
+    monkeypatch.setattr("vulnerability_view.collection_transport.time.monotonic", lambda: clock[0])
+
+    def sleep(delay):
+        waits.append(delay)
+        clock[0] += delay
+
+    monkeypatch.setattr("vulnerability_view.collection_transport.time.sleep", sleep)
+    checkpoints = RequestCheckpoints(MemoryStore(), "raw/run/requests", {"example.test"})
+    for index in range(3):
+        checkpoints.request(
+            f"https://example.test/api/machines/SoftwareVulnerabilityChangesByMachine?page={index}",
+            lambda: response(),
+        )
+    assert waits == [4.0, 4.0, 4.0]
+    assert checkpoints.downloaded_rows == checkpoints.saved_requests == 3
+    assert checkpoints.downloaded_bytes == len(response().content) * 3
+
+
+def test_device_scoped_resume_skips_completed_bodies_until_all_devices_finish(tmp_path, monkeypatch):
+    store = MemoryStore()
+    credential = SimpleNamespace(get_token=lambda *args: SimpleNamespace(token="synthetic"))
+    machines = [{"id": "one"}, {"id": "two"}, {"id": "empty"}]
+    findings = {
+        "one": [{"id": str(i), "machineId": "one"} for i in range(3)],
+        "two": [{"id": "other", "machineId": "two"}],
+        "empty": [],
+    }
+    calls = []
+    body_reads = []
+    original_read = store.read
+
+    def read(name):
+        if name in store.files and name.endswith(".gz"):
+            body_reads.append(name)
+        return original_read(name)
+
+    monkeypatch.setattr(store, "read", read)
+    for attempt in range(4):
+        body_reads.clear()
+        folder = tmp_path / str(attempt)
+        factory = lambda endpoint, url: CollectionPages(store, "raw/run", endpoint, url, folder)
+        checkpoints = RequestCheckpoints(
+            store, "raw/run/requests", {"example.test"}, request_limit=1,
+            findings_interval=0, page_checkpoints=factory,
+        )
+        client = DefenderClient("https://example.test", credential, lambda *args: None, page_size=2)
+
+        def send(url, **kwargs):
+            assert body_reads == [], "Previous bodies must not be replayed before fetching new work"
+            query = parse_qs(urlsplit(url).query)
+            machine = next(key for key in findings if query["$filter"] == [f"machineId eq '{key}'"])
+            offset = int(query.get("$skip", ["0"])[0])
+            calls.append((machine, offset))
+            return response(body={"value": findings[machine][offset:offset + 2]})
+
+        monkeypatch.setattr(client.session, "get", send)
+        with checkpoint_requests(checkpoints):
+            if attempt < 3:
+                with pytest.raises(CheckpointYield):
+                    client.collect_machine_vulnerabilities(machines)
+                assert body_reads == []
+                assert not folder.exists()
+            else:
+                _, status = client.collect_machine_vulnerabilities(machines)
+    assert calls == [("one", 0), ("one", 2), ("two", 0), ("empty", 0)]
+    assert status["RowCount"] == status["PageCount"] == 4
+    assert status["MachineCount"] == 3
+    assert len(list(folder.glob("machine_vulnerabilities-page-*.json.gz"))) == 4
+    restored = [row for path in sorted(folder.glob("*.gz"))
+                for row in json.loads(gzip.decompress(path.read_bytes()))["value"]]
+    assert restored == findings["one"] + findings["two"]
+
+
+def test_device_resume_still_rejects_repeated_full_pages_across_activities(tmp_path, monkeypatch):
+    store = MemoryStore()
+    credential = SimpleNamespace(get_token=lambda *args: SimpleNamespace(token="synthetic"))
+    factory = lambda endpoint, url: CollectionPages(store, "raw/run", endpoint, url, tmp_path)
+    for attempt in range(2):
+        client = DefenderClient("https://example.test", credential, lambda *args: None, page_size=1)
+        monkeypatch.setattr(client.session, "get", lambda *args, **kwargs: response(body={
+            "value": [{"id": "repeated", "machineId": "one"}],
+        }))
+        checkpoints = RequestCheckpoints(
+            store, "raw/run/requests", {"example.test"}, request_limit=1,
+            findings_interval=0, page_checkpoints=factory,
+        )
+        with checkpoint_requests(checkpoints), pytest.raises(
+            CheckpointYield if attempt == 0 else RuntimeError, match=None if attempt == 0 else "repeated full page",
+        ):
+            client.collect_machine_vulnerabilities([{"id": "one"}])
 
 
 def response(status=200, body=None):

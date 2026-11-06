@@ -406,7 +406,7 @@ def test_delta_uses_page_size_and_follows_opaque_continuation(monkeypatch):
     rows, status = client.collect(ENDPOINTS[5], {"sinceTime": "2026-10-19T00:00:00Z"})
 
     assert parse_qs(urlsplit(urls[0]).query) == {
-        "sinceTime": ["2026-10-19T00:00:00Z"], "pageSize": ["1000"],
+        "sinceTime": ["2026-10-19T00:00:00Z"], "pageSize": ["50000"],
     }
     assert urls[1] == next_link
     assert [row["id"] for row in rows] == [1, 2]
@@ -514,12 +514,22 @@ def test_delta_caps_explicit_page_size_without_mutating_query(monkeypatch):
     client = DefenderClient("https://example.test", Credential())
     urls = []
     monkeypatch.setattr(client, "request", lambda url: urls.append(url) or response({"value": []}))
-    query = {"sinceTime": "2026-10-19T00:00:00Z", "pageSize": "50000"}
+    query = {"sinceTime": "2026-10-19T00:00:00Z", "pageSize": "200000"}
 
     client.collect(ENDPOINTS[5], query)
 
-    assert parse_qs(urlsplit(urls[0]).query)["pageSize"] == ["1000"]
-    assert query["pageSize"] == "50000"
+    assert parse_qs(urlsplit(urls[0]).query)["pageSize"] == ["50000"]
+    assert query["pageSize"] == "200000"
+
+
+def test_delta_accepts_a_full_50000_row_page_without_truncating(monkeypatch):
+    client = DefenderClient("https://example.test", Credential())
+    values = [{"id": str(index)} for index in range(50000)]
+    monkeypatch.setattr(client, "request", lambda url: response({"value": values}))
+    _, status = client.collect(ENDPOINTS[5], {"sinceTime": "2026-10-19T00:00:00Z"}, retain_rows=False)
+    assert status["RowCount"] == 50000
+    assert status["PageCount"] == 1
+    assert status["Status"] == "Success"
 
 
 @pytest.mark.parametrize("value", [0, -1, 2501, True, None, 1.5, "1.5", "abc", ""])
@@ -529,7 +539,7 @@ def test_run_page_size_rejects_invalid_values(value):
 
 
 @pytest.mark.parametrize("page_size", [1, 100, 1000])
-def test_custom_client_page_size_bounds_all_inventory_and_delta_requests(monkeypatch, page_size):
+def test_custom_client_page_size_bounds_inventory_but_delta_has_its_own_size(monkeypatch, page_size):
     client = DefenderClient("https://example.test", Credential(), page_size=page_size)
     urls = []
     monkeypatch.setattr(client, "request", lambda url: urls.append(url) or response({"value": []}))
@@ -540,7 +550,7 @@ def test_custom_client_page_size_bounds_all_inventory_and_delta_requests(monkeyp
     for url in urls:
         query = parse_qs(urlsplit(url).query)
         key = "pageSize" if "SoftwareVulnerabilityChangesByMachine" in url else "$top"
-        assert query[key] == [str(page_size)]
+        assert query[key] == ["50000" if key == "pageSize" else str(page_size)]
 
 
 def test_debug_machine_probe_discovers_one_device_and_ignores_both_continuations(monkeypatch):
@@ -1156,8 +1166,9 @@ def test_scale_set_detection_uses_metadata_not_device_names(field):
     assert not live_collector.is_scale_set_device({"vmMetadata": None})
 
 
-def test_delta_scale_set_exclusion_filters_baseline_and_changes(device_scoped_run):
-    payloads, _, _, _ = device_scoped_run
+def test_delta_request_with_scale_set_exclusion_uses_scoped_snapshot_instead(device_scoped_run):
+    payloads, _, calls, failures = device_scoped_run
+    failures["device-2"] = requests.ReadTimeout("Scale-set findings must never be requested")
     payloads["vulnerability_changes"] = [
         {"machineId": "device-2", "cveId": "CVE-2026-0001", "productName": "Product", "status": "New"},
     ]
@@ -1165,13 +1176,16 @@ def test_delta_scale_set_exclusion_filters_baseline_and_changes(device_scoped_ru
         {"FindingKey": device_id, "DeviceId": device_id, "CveId": "CVE-2026-0001", "SoftwareName": "Product", "FindingStatus": "Open", "DataOrigin": "Live"}
         for device_id in ("device-1", "device-2")
     ]
-    actual, _ = collect_live(
+    actual, statuses = collect_live(
         Settings().defender_api_base_url, Credential(), vulnerability_collection_mode="delta",
         previous_findings=previous, previous_snapshot=datetime(2026, 10, 18, tzinfo=timezone.utc),
         exclude_scale_sets=True,
     )
     assert {row["DeviceId"] for row in actual["findings"]} == {"device-1"}
     assert {row["DeviceId"] for row in actual["devices"]} == {"device-1", "device-3"}
+    assert all("/SoftwareVulnerabilityChangesByMachine" not in url for url in calls)
+    assert all(row["VulnerabilityCollectionMode"] == "full" for row in statuses)
+    assert all("device-2" not in url for url in calls)
 
 
 def test_normalization_excludes_scale_set_findings_and_recommendation_references(device_scoped_run):
@@ -1227,7 +1241,7 @@ def test_delta_collection_keeps_existing_delta_api_and_does_not_query_per_device
     assert all(not urlsplit(url).path.endswith("/machinesVulnerabilities") for url in calls)
     delta_url = next(url for url in calls if "/SoftwareVulnerabilityChangesByMachine?" in url)
     query = parse_qs(urlsplit(delta_url).query)
-    assert query["pageSize"] == ["2"]
+    assert query["pageSize"] == ["50000"]
     assert "$top" not in query
     assert query["sinceTime"] == ["2026-10-18T00:00:00Z"]
     assert all(row["VulnerabilityCollectionMode"] == "delta" for row in statuses)
@@ -1741,6 +1755,7 @@ def test_live_reconciliation_requires_two_fresh_absences_to_confirm_fixed():
     assert fixed["FixedConfirmedUtc"] == "2026-09-18T17:05:09Z"
     assert fixed["ConsecutiveAbsentCount"] == 2
     assert fixed["SlaEvidenceStatus"] == "Confirmed"
+    assert "resolved between runs" in fixed["LifecycleReason"]
 
 
 def test_live_reconciliation_does_not_fix_wholesale_device_disappearance():

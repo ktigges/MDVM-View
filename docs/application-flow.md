@@ -129,9 +129,13 @@ reconciliation, event, summary, history, and bundle stages. A new worker resumes
 from the previous completed stage; an interrupted stage repeats that stage,
 not necessarily the whole collection.
 
-The Dedicated Function host uses `functionTimeout: "-1"`. This removes the
-configured execution deadline, not platform restarts or resource limits.
-Network timeouts and retry budgets still apply.
+The Dedicated Function host uses `functionTimeout: "-1"`. Activity supervisors
+enforce a six-hour limit from the original run timestamp, including collection,
+waits, retries, processing, verification, and publication. Recovery and continuation
+do not reset it. Two-hour warnings report slow runs; expiry stops workers and
+reports a timeout. The next trigger starts fresh without deleting expired run
+evidence. Network timeouts, retry budgets, platform restarts, and resource limits
+still apply.
 
 ## 5. What files are created
 

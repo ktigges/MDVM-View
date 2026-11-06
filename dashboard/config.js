@@ -28,7 +28,7 @@ window.VULNERABILITY_VIEW_DEFAULTS = {
 };
 
 window.VULNERABILITY_VIEW_CONFIG = {
-  version: "2026.11.05.4",
+  version: "2026.11.05.3",
   revision: "2026-11-05T18:12:40Z",
   branding: {
     eyebrow: "VULNERABILITY VIEW",

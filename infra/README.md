@@ -314,10 +314,12 @@ consumption-driven scale-in; it does not prevent maintenance, deployment, or
 failure-related restarts. Billing is continuous rather than per execution.
 The schedule and append-only publication contract are unchanged. Collection
 uses checkpointed Durable activities rather than one invocation carrying the
-whole run. The packaged host uses `functionTimeout: "-1"` and isolated workers
-have no wall-clock kill timer. Large processing stages can run to completion
-instead of failing at an application-imposed 20-minute deadline. Individual API
-request timeouts, retry budgets, and cooperative collection yields remain.
+whole run. The packaged host uses `functionTimeout: "-1"`; isolated activity
+workers instead enforce one six-hour deadline from the original run timestamp.
+Preparation, collection, waits, retries, processing, verification, and publication
+share that budget. There is no separate 20-minute processing limit. Console
+warnings begin at two hours. Individual API request timeouts, retry budgets, and
+cooperative collection yields remain.
 
 ### Resumable collection deployment and recovery
 
@@ -326,9 +328,20 @@ all triggers. Existing Dedicated environments with the Terraform-provisioned
 runtime Blob, Queue, and Table data roles do not need a different hosting tier.
 Apply the cumulative infrastructure stage first if upgrading an older hosting
 configuration. Do not replace or delete either Storage account or its contents.
+Code-only Function deployment and verification use the configured resource group
+and Function App names, not local Terraform outputs, and validate the Azure CLI
+tenant/subscription first. A stopped app is started automatically before upload;
+missing local state is not a reason to reapply infrastructure.
 Deploy when the old collector is idle. Pages lost from an older synchronous
 worker's temporary disk cannot be recovered by this update; restart-safe
 checkpoints begin with the first run of the new collector.
+
+Redeployment does not terminate a Durable instance. For an obsolete multi-day
+run, use `python -m vulnerability_view.operations_cli stop-collection --run-id <exact-live-run-id> --confirm`
+before deployment. This verifies Durable termination
+and then stops the Function host to end in-flight activity, without deleting
+Storage history or changing the published pointer. Deployment starts the host
+again. See the [operator sequence](../docs/operations-and-configuration.md#stopping-an-obsolete-run-before-deployment).
 
 The `DvmCollectionV1` task hub uses the existing **separate runtime Storage**
 account through managed-identity `AzureWebJobsStorage` settings. Durable queues,
@@ -342,14 +355,34 @@ Successful HTTP responses are checkpointed immediately to immutable, per-run
 a Durable timer rather than blocking a worker through long quota cooldowns.
 Run settings, SLA policy, timestamp, and previous publication are frozen in a
 per-run plan. A host restart can replay saved responses without downloading them
-from Defender again. The local disk cache is only an optimization.
+from Defender again. Delta pages additionally have append-only continuation
+journals: collection resumes at the next page without replaying prior response
+bodies, and restores page evidence for processing after download completes.
+Delta uses 50,000 rows/page and four-second request pacing independently of the
+full-findings page size. The local disk cache is only an optimization.
+
+With `exclude_scale_sets=true`, new runs use device-scoped snapshots instead of
+the global delta feed, including scheduled `auto` runs. Scale-set devices are
+identified from inventory before findings requests. Per-device continuation
+journals skip completed work on retry and restore bodies after all devices
+finish. Snapshot comparison preserves the existing lifecycle protections and
+reports resolved-between-runs evidence, not intermediate events or exact patch
+times. No customer device-group changes are required.
 
 There is one collection instance, `vulnerability-collection`. A normal, full,
-or scheduled trigger retains an active run. For a failed run, it submits a new
+or scheduled trigger retains an active run within its six-hour budget. For a
+failed run still within that budget, it submits a new
 Durable execution under the same instance ID with the original run input and
 a reset consecutive-failure counter. The failed runtime execution/history is
 replaced, while immutable DVM evidence, checkpoints, frozen policy/baseline,
 run ID, and snapshot time remain unchanged. Completed work is reused.
+Recovery and continuation never extend the original deadline. At expiry, the
+supervisor stops the actual worker, including a silent or blocked subprocess.
+The orchestration reports `timed_out` (`timedOut: true`); a Durable `Completed`
+state alone is not collection success. The next trigger starts a fresh snapshot
+instead of recovering expired checkpoints. History is preserved and incomplete
+output cannot publish. If a trigger finds an expired instance still active, it
+requests termination without starting overlapping work in that trigger.
 Durable rewind is not used because this orchestration uses durable timers.
 A full request does not change the scope of an already
 active/failing run; let that run finish before requesting a new forced full run.
@@ -357,6 +390,9 @@ Inspect `check-runs --progress`, correct permission/configuration failures, and
 invoke again to request recovery. Submission is not proof of execution;
 verify state and progress advance. Missing original run identity is an explicit
 recovery failure, not permission to start a fresh snapshot.
+An operator can explicitly use `invoke function --confirm --fresh` for an
+obsolete failed run after a newer baseline has been published; this refuses
+active runs and preserves retained evidence.
 Incomplete CVE metadata triggers up to three targeted refresh attempts for only
 the missing IDs. Attempt responses use separate append-only checkpoint paths,
 retain the original evidence, and share activity request/time limits and

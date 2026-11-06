@@ -3,7 +3,7 @@ import hashlib
 import json
 import logging
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -17,6 +17,8 @@ from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from vulnerability_view import collection_worker
 from vulnerability_view.collection_transport import CheckpointYield, current_checkpoints
 from vulnerability_view.config import Settings
+from vulnerability_view.defender_client import DefenderClient, ENDPOINTS
+from vulnerability_view.storage_writer import archive_raw_page
 from vulnerability_view.collection_workflow import publish_run, verify_file
 from dataclasses import asdict
 
@@ -34,6 +36,9 @@ class WorkerStore:
         if name not in self.files:
             raise ResourceNotFoundError("missing")
         return self.files[name]
+
+    def list_names(self, prefix):
+        return [name for name in self.files if name.startswith(prefix)]
 
     def append(self, name, content):
         if name in self.files:
@@ -67,8 +72,33 @@ def plan():
     }
 
 
+@pytest.mark.parametrize("stage", ["prepare", "verify", "publish"])
+def test_worker_dispatches_supervised_storage_stages_without_loading_a_collection_plan(monkeypatch, tmp_path, stage):
+    store = SimpleNamespace(close=Mock(), json=Mock(side_effect=AssertionError("No collection plan for this stage")))
+    monkeypatch.setattr(collection_worker.Settings, "load", lambda: Settings())
+    monkeypatch.setattr(collection_worker, "RunStore", lambda settings: store)
+    action = {
+        "stage": stage, "runId": datetime.now(UTC).strftime("live-%Y%m%dT%H%M%SZ"),
+        "deadlineUtc": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
+    }
+    if stage == "prepare":
+        action.update(request={"runId": action["runId"]}, policy={"policyVersion": "original"})
+    callback = Mock(return_value={"stage": stage, "done": True})
+    monkeypatch.setattr(collection_worker, {"prepare": "prepare_run", "verify": "verify_file", "publish": "publish_run"}[stage], callback)
+    input_path, output_path = tmp_path / "input.json", tmp_path / "result.json"
+    input_path.write_text(json.dumps(action))
+    monkeypatch.setattr(collection_worker.sys, "argv", ["worker", str(input_path), str(output_path)])
+    collection_worker.main()
+    assert json.loads(output_path.read_text()) == {"stage": stage, "done": True}
+    if stage == "prepare":
+        callback.assert_called_once_with(action["request"], store, action["policy"])
+    else:
+        callback.assert_called_once_with(action, store)
+    store.close.assert_called_once()
+
+
 @pytest.mark.parametrize("interrupted", [False, True])
-def test_processing_heartbeat_reports_progress_without_a_deadline_and_stops(monkeypatch, caplog, interrupted):
+def test_processing_heartbeat_reports_shared_run_deadline_and_stops(monkeypatch, caplog, interrupted):
     monkeypatch.setattr(collection_worker, "PROCESSING_HEARTBEAT_SECONDS", 0.01)
     observed = threading.Event()
     log = collection_worker.logging.info
@@ -95,7 +125,7 @@ def test_processing_heartbeat_reports_progress_without_a_deadline_and_stops(monk
                 run()
         else:
             run()
-    assert "executionDeadline=none" in caplog.text
+    assert "executionDeadline=original-run-six-hours" in caplog.text
     assert "heartbeat runId=live-20261023T160000Z" in caplog.text
     assert "cpuSeconds=" in caplog.text
     assert "lastProgressAgeSeconds=" in caplog.text
@@ -122,11 +152,99 @@ def test_worker_collect_uses_frozen_snapshot_and_yields_small_progress(monkeypat
     assert result == {
         "done": False, "newRequests": 3, "cachedRequests": 0,
         "retryAfter": 7200, "retry": True, "reason": "HTTP 429",
+        "collectionMode": "full", "sinceTime": None, "downloadedRows": 0, "downloadedBytes": 0,
     }
     assert received["snapshot"] == datetime(2026, 10, 23, 16, tzinfo=UTC)
     assert received["raw_only"] is True
     assert received["cve_batch_size"] == 100
     assert received["page_size"] == 2500
+
+
+def test_delta_worker_restarts_directly_and_commits_the_same_immutable_raw_pages(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    credential = SimpleNamespace(get_token=lambda *args: SimpleNamespace(token="synthetic"))
+    monkeypatch.setattr(collection_worker, "create_credential", lambda *args: credential)
+    monkeypatch.setattr(collection_worker, "baseline_rows", lambda *args, **kwargs: {})
+    monkeypatch.setattr(collection_worker, "_resolve_collection_mode",
+                        lambda *args: ("delta", datetime(2026, 10, 22, tzinfo=UTC)))
+    monkeypatch.setattr("vulnerability_view.collection_transport.time.sleep", lambda delay: None)
+    run = plan()
+    run["collection"] = "delta"
+    store = WorkerStore()
+    calls = []
+
+    def collect(*args, **kwargs):
+        transport = current_checkpoints()
+        transport.request_limit = 1
+        client = DefenderClient(
+            "https://example.test", credential,
+            lambda name, page, content: archive_raw_page(name, page, content, run["runId"]),
+        )
+        transport.allowed_hosts.add("example.test")
+
+        def send(url, **request_kwargs):
+            calls.append(url)
+            body = {"value": [{"id": str(len(calls))}]}
+            if len(calls) == 1:
+                body["@odata.nextLink"] = "https://example.test/next"
+            response = requests.Response()
+            response.status_code = 200
+            response._content = json.dumps(body).encode()
+            return response
+
+        monkeypatch.setattr(client.session, "get", send)
+        endpoint = next(item for item in ENDPOINTS if item.name == "vulnerability_changes")
+        _, status = client.collect(endpoint, {"sinceTime": kwargs["previous_snapshot"].isoformat()}, retain_rows=False)
+        return {}, [status]
+
+    monkeypatch.setattr(collection_worker, "collect_live", collect)
+    first = collection_worker.collect_batch(run, store, tmp_path / "cache")
+    assert first["done"] is False
+    assert first["downloadedRows"] == 1
+    frozen = {name: content for name, content in store.files.items() if "/continuations/" in name}
+    complete = collection_worker.collect_batch(run, store, tmp_path / "cache")
+    assert complete == {"done": True, "rawFiles": 2, "collectionMode": "delta"}
+    assert len(calls) == 2
+    assert all(store.files[name] == content for name, content in frozen.items())
+    collected = store.json(f"runs/2026/10/23/{run['runId']}/collected.json")
+    assert collected["endpointStatuses"][0]["RowCount"] == 2
+    for item in collected["rawFiles"]:
+        assert item["sha256"] == hashlib.sha256(store.read(item["path"])).hexdigest()
+
+
+def test_scoped_worker_selects_snapshot_without_loading_previous_findings(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(collection_worker, "create_credential", lambda *args: object())
+    monkeypatch.setattr(collection_worker, "baseline_rows",
+                        lambda *args, **kwargs: pytest.fail("Scoped collection does not need baseline rows"))
+    run = plan()
+    run["settings"]["exclude_scale_sets"] = True
+    run["collection"] = "auto"
+    received = {}
+
+    def collect(*args, **kwargs):
+        received.update(kwargs)
+        raise CheckpointYield()
+
+    monkeypatch.setattr(collection_worker, "collect_live", collect)
+    result = collection_worker.collect_batch(run, WorkerStore(), tmp_path / "cache")
+    assert result["collectionMode"] == received["vulnerability_collection_mode"] == "full"
+    assert received["exclude_scale_sets"] is True
+    assert result["sinceTime"] is None
+
+
+def test_old_frozen_delta_is_not_silently_reinterpreted_as_a_scoped_snapshot(monkeypatch, tmp_path):
+    monkeypatch.setattr(collection_worker, "create_credential", lambda *args: object())
+    run = plan()
+    run["settings"]["exclude_scale_sets"] = True
+    store = WorkerStore()
+    path = f"runs/2026/10/23/{run['runId']}/collection-inputs.json"
+    store.append_json(path, {"mode": "delta", "previousSnapshot": "2026-10-22T00:00:00+00:00"})
+    frozen = dict(store.files)
+    monkeypatch.setattr(collection_worker, "collect_live", lambda *args, **kwargs: pytest.fail("Must fail before HTTP"))
+    with pytest.raises(ValueError, match="Stop the old run"):
+        collection_worker.collect_batch(run, store, tmp_path / "cache")
+    assert store.files == frozen
 
 
 def test_collection_logs_only_throttled_endpoint_counts_and_errors(monkeypatch, tmp_path, caplog):
@@ -165,13 +283,14 @@ def test_collection_logs_only_throttled_endpoint_counts_and_errors(monkeypatch, 
         result = collection_worker.collect_batch(plan(), WorkerStore(), tmp_path / "cache")
     messages = [record.getMessage() for record in caplog.records]
     assert messages == [
+        "[collection] runId=live-20261023T160000Z mode=full sinceTime=None baselineRunId=None excludeScaleSets=False",
         "[machines] starting download",
         "[machines] 200 rows downloaded; more data available",
         "[machines] complete: 200 rows",
         "[machine_vulnerabilities] starting device-scoped collection for 200 machines",
         "[machine_vulnerabilities] machines complete: 50/200; 100 findings",
         "[machine_vulnerabilities] failed: permission denied",
-        "[collection] paused: HTTP 503; retry in 30s; [machine_vulnerabilities] failed: permission denied",
+        "[collection] paused: HTTP 503; retry in 30s; newRequests=0 downloadedRows=0 downloadedBytes=0; [machine_vulnerabilities] failed: permission denied",
     ]
     assert caplog.records[-2].levelno == logging.ERROR
     assert result["lastProgress"] == "[machine_vulnerabilities] failed: permission denied"

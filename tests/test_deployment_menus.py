@@ -46,6 +46,33 @@ def test_legacy_webapp_deployment_defers_runtime_tracking_until_explicit_restart
     assert "az webapp start " not in deployment
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="Bash is not installed")
+@pytest.mark.parametrize("function,arguments", [
+    ("tf_deploy", "deploy function"),
+    ("tf_verify", "verify function"),
+    ("tf_invoke", "invoke function --confirm"),
+])
+def test_shell_function_code_operations_delegate_without_terraform(function, arguments):
+    source = SHELL_DEPLOY.read_text(encoding="utf-8")
+    definition = re.search(rf"(?ms)^{function}\(\) \{{.*?^\}}", source)
+    assert definition is not None
+    script = f"""
+set -euo pipefail
+ROOT_DIR=/repo
+CONFIRM_LIVE_COLLECTION=yes
+require_tf_vars() {{ :; }}
+require_command() {{ :; }}
+tf_output() {{ echo "Unexpected Terraform lookup" >&2; return 99; }}
+az() {{ echo "Unexpected direct Azure call" >&2; return 99; }}
+python3() {{ printf '%s\\n' "$*"; }}
+{definition.group(0)}
+{function} function
+"""
+    result = subprocess.run(["bash", "-c", script], text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f"-m vulnerability_view.operations_cli {arguments}"
+
+
 def test_legacy_webapp_deployment_uses_pulled_source_version_not_customer_values():
     deploy = SHELL_DEPLOY.read_text(encoding="utf-8")
     webapp = deploy.split('local dashboard_version web_app', 1)[1].split('Packaged dashboard version', 1)[0]
@@ -161,7 +188,9 @@ def test_deployment_menus_expose_matching_operations_submenu():
         "11) Download legacy manual diagnostics (new runs: use progress/log export)",
         "12) Export latest published snapshot (verified local ZIP; read-only)",
         "13) Show Web App startup logs (latest retained container log)",
-        "14) Return to deployment menu",
+        "14) Stop a named collector run and its Function host (preserves history)",
+        "15) Watch current collection progress on the console",
+        "16) Return to deployment menu",
     )
 
     for option in options:
@@ -189,7 +218,7 @@ def test_bash_custom_log_days_default_validation_and_return_order():
     ])
     result = subprocess.run(
         ["bash", "-c", script],
-        input="9\n0\n-1\nabc\n\n10\n3\n11\n12\n13\n14\n",
+        input="9\n0\n-1\nabc\n\n10\n3\n11\n12\n13\n15\n16\n",
         text=True, capture_output=True, timeout=15,
     )
     assert result.returncode == 0, result.stderr
@@ -198,7 +227,8 @@ def test_bash_custom_log_days_default_validation_and_return_order():
     assert "CALL: export-latest-snapshot" in result.stdout
     assert "CALL: download-collection-diagnostics" in result.stdout
     assert "CALL: check-webapp-startup-logs" in result.stdout
-    assert result.stdout.count("CALL:") == 5
+    assert "CALL: check-runs --watch --logs" in result.stdout
+    assert result.stdout.count("CALL:") == 6
     assert result.stdout.count("Enter a positive whole number of days.") == 3
 
 
@@ -215,7 +245,7 @@ $helper = $ast.Find({{ param($node) $node -is [System.Management.Automation.Lang
 Set-Item -Path function:Invoke-FunctionLogsForDays -Value ($helper.Body.GetScriptBlock())
 $menu = $ast.Find({{ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-OperationsMenu' }}, $true)
 $script:Choices = [System.Collections.Generic.Queue[string]]::new()
-'9', '0', '-1', 'abc', '', '10', '3', '11', '12', '13', '14' | ForEach-Object {{ $script:Choices.Enqueue($_) }}
+'9', '0', '-1', 'abc', '', '10', '3', '11', '12', '13', '15', '16' | ForEach-Object {{ $script:Choices.Enqueue($_) }}
 function Read-Host {{ param($Prompt) $script:Choices.Dequeue() }}
 function Pause-Menu {{}}
 function Invoke-OperationsCli {{ param([Parameter(ValueFromRemainingArguments)][string[]]$CliArguments) Write-Output ('CALL: ' + ($CliArguments -join ' ')) }}
@@ -231,7 +261,8 @@ function Invoke-OperationsCli {{ param([Parameter(ValueFromRemainingArguments)][
     assert "CALL: export-latest-snapshot" in result.stdout
     assert "CALL: download-collection-diagnostics" in result.stdout
     assert "CALL: check-webapp-startup-logs" in result.stdout
-    assert result.stdout.count("CALL:") == 5
+    assert "CALL: check-runs --watch --logs" in result.stdout
+    assert result.stdout.count("CALL:") == 6
     assert result.stdout.count("Enter a positive whole number of days.") == 3
 
 
@@ -330,9 +361,9 @@ def test_powershell_menu_preserves_python_executable_as_one_value():
 def test_deployment_menus_show_version_and_revision_in_title():
     shell, powershell = menu_sources()
 
-    assert 'DEPLOYMENT_MENU_VERSION="2026.11.03.3"' in shell
+    assert 'DEPLOYMENT_MENU_VERSION="2026.11.05.1"' in shell
     assert 'Vulnerability View deployment menu %s (revision %s)' in shell
-    assert '$DeploymentMenuVersion = "2026.11.03.3"' in powershell
+    assert '$DeploymentMenuVersion = "2026.11.05.1"' in powershell
     assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
 
@@ -373,7 +404,7 @@ def test_manual_collection_uses_existing_trigger_and_monitoring():
     deploy = SHELL_DEPLOY.read_text(encoding="utf-8")
     function_logs = SHELL_FUNCTION_LOGS.read_text(encoding="utf-8")
 
-    assert "/admin/functions/dataprep_manual_snapshot" in deploy
+    assert "operations_cli invoke function --confirm" in deploy
     assert "/admin/functions/dataprep_snapshot" not in deploy
     for function_name in (
         "dataprep_snapshot",

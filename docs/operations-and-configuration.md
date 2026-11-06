@@ -14,7 +14,31 @@ the hosted applications use their managed identities.
 ```bash
 python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 3 --status-only
 python -m vulnerability_view.operations_cli check-runs --limit 5 --progress
+python -m vulnerability_view.operations_cli check-runs --watch
+python -m vulnerability_view.operations_cli check-runs --watch --logs
 ```
+
+The watcher prints a compact line with state, phase, elapsed time, and available
+progress rather than the full workflow payload. Menu option 15 enables `--logs`,
+adding the latest run-correlated trace from the existing Log Analytics workspace:
+for example, `stage=normalize step=write-dataset source=current dataset=findings rows=420,000`.
+`source=baseline` distinguishes prior-snapshot scans from `source=current`;
+each dataset scan has its own row counter, so counts can reset between inputs.
+`logAge` is the age of that trace; heartbeat `stepAge` is the reported age of the
+last work-progress update. Neither alone proves the worker is stalled. Ingestion
+can lag, and row counts and `stepComplete` describe the reported step, not overall
+completion percentage or whole-run success.
+Missing or inaccessible telemetry is labeled explicitly; Durable status remains
+authoritative. Plain `--watch` requires no telemetry query. Refreshes target
+30-second intervals without overlapping requests; slow Azure responses can delay
+them. A status connection/read timeout or Azure CLI timeout prints
+`STATUS UNAVAILABLE`, explicitly marks collector state unknown, and retries after
+30 seconds instead of closing the watcher. This neither restarts nor retriggers
+collection. Confirmed workflow failures/timeouts and permanent status errors
+still report failure. Ctrl+C stops only watching. Existing detailed diagnostics
+remain available.
+This is a local console change; no Function deployment or infrastructure update
+is needed.
 
 Status combines workflow progress, telemetry, and publication reported through
 the collector's managed identity. A trigger request can succeed before work
@@ -25,6 +49,25 @@ it includes run identity, time, endpoint results, counts, files, and hashes.
 does not establish completion or inactivity. Neither is permission to start
 another collection.
 
+`--watch` prints authoritative workflow progress every 30 seconds without waiting
+for Log Analytics. It shows the collection mode, delta `sinceTime`, new requests,
+newly downloaded rows/bytes for the latest activity, throttle delays, and the
+processing/publication phase. Ctrl+C stops the watcher, not the collector.
+An active run older than the two-hour operating target produces a console
+warning. A separate six-hour maximum covers the entire original run: preparation,
+collection, throttle waits, retries, processing, verification, and publication.
+Stage changes, host restarts, checkpoint recovery, and continuation do not reset
+that budget. Supervisors stop even silent activity workers at the deadline.
+Function logs also report saved-page resume positions and raw-page restoration;
+continuation URLs and credentials are not printed.
+
+An expired run reports `timed_out` with `timedOut: true`; Durable may label its
+orchestration `Completed`, but the console watcher reports failure, not success.
+No new publication is begun after expiry, and incomplete output is never eligible
+for publication. Retained evidence is preserved, and the dashboard continues
+using completed data. An already submitted atomic pointer update can finish
+during cancellation; the deadline is not a rollback.
+
 ### Manual collection and recovery
 
 ```bash
@@ -32,18 +75,122 @@ python -m vulnerability_view.operations_cli invoke function --confirm
 python -m vulnerability_view.operations_cli check-runs --limit 5 --progress
 ```
 
+Manual triggers, status/history checks, console watching, and exact-run stopping
+use the configured Function App/resource group names and verify the Azure CLI
+tenant/subscription; they do not require local Terraform outputs. Host readiness
+checks use the same target. Manual triggering does not start a stopped app:
+deployment starts it automatically, or an operator can start it before invoking.
+Read-only status checks never start the app.
+
 An intentional new full baseline uses `invoke function --confirm --full`.
 The menu's full operation requires `FULL` confirmation.
 
 There is one Durable collection instance. An active run keeps its original
-scope; retrying a failed run reuses its run ID, timestamp, frozen policy,
+scope; retrying a failed run within its six-hour budget reuses its run ID, timestamp, frozen policy,
 baseline, and verified checkpoints. A full request does not change an already
 active or failing run into a new full collection.
+
+The next manual or scheduled trigger starts a fresh snapshot after a timed-out
+run, or after a failed run's original deadline expires. Expired checkpoints remain
+retained but are not repeatedly resumed. As a fallback, a trigger finding an
+expired run still marked active requests termination and starts no overlapping
+replacement in that trigger; confirm termination before invoking again.
 
 Permission/configuration failures need correction before retry. Runtime state
 and retained checkpoints are not purged as a recovery shortcut. The
 [recovery reference](../infra/README.md#resumable-collection-deployment-and-recovery)
 explains stage boundaries and failed execution replacement.
+
+### Stopping an obsolete run before deployment
+
+Redeployment is not cancellation: Durable state survives host restarts. Stop the
+exact run before deploying collection-logic changes:
+
+```bash
+python -m vulnerability_view.operations_cli stop-collection --run-id live-20261103T050000Z --confirm
+python -m vulnerability_view.operations_cli deploy function
+python -m vulnerability_view.operations_cli verify function
+python -m vulnerability_view.operations_cli invoke function --confirm
+python -m vulnerability_view.operations_cli check-runs --watch
+```
+
+Replace the example run ID with the authoritative active run ID. The stop
+command checks that identity, requests Durable termination, verifies the
+`Terminated` state, then stops the Function host so an already executing activity
+cannot keep running. Termination alone does not interrupt an executing activity.
+This uses the existing Durable management endpoint and also works before the
+updated Function package is deployed. If verification fails, the command reports
+an error rather than claiming the collector stopped.
+
+The command never deletes Storage history, purges Durable history, or changes the
+current manifest. It requires Azure CLI access to the configured customer tenant
+and Function management keys. The Function remains stopped until deployment or
+an explicit host start; the deployment command starts it again. The dashboard
+continues serving the last completed publication. An activity already publishing
+when the stop begins may finish before host shutdown; stop is not a rollback.
+
+Deployment-menu Operations options 14 and 15 provide stop and console watch.
+After termination, a new collection freezes the latest published baseline rather
+than recovering the old run. A worker rejects a baseline superseded by another
+complete publication before beginning more collection or processing.
+If an obsolete run has already failed, use
+`invoke function --confirm --fresh` after deployment to create a new run from the
+latest publication instead of recovering its frozen baseline. This explicit
+option refuses to replace an active run and retains the failed run's evidence.
+
+### Nightly collection with scale-set exclusion
+
+With `EXCLUDE_SCALE_SETS=true`, all new live runs use device-scoped snapshots,
+including requests made with `auto` or `delta`. Inventory is collected first,
+recognized scale-set devices are removed, and findings are requested only for
+the remaining devices. The tenant-wide vulnerability delta endpoint is not
+called. The architecture, schedule, current-pointer publication, and supporting
+inventory/aggregate endpoints are unchanged. Metadata recognition still depends
+on Azure resource IDs, not device names; this is not a promise to avoid all
+tenant-wide inventory or aggregate API traffic.
+
+Each included device/page has immutable continuation metadata. On interruption,
+completed devices and pages are skipped without parsing their saved response
+bodies; after all included devices finish, raw pages are restored with integrity
+checks for catalog enrichment and processing. The existing per-device paging,
+machine-ID response validation, request pacing, and required-endpoint failure
+handling remain in force. A failed findings request prevents publication.
+
+Snapshots are compared with the previous publication. A confirmed absent finding
+is described as **resolved between runs**, not as having an exact patch timestamp.
+The existing two-qualified-snapshot confirmation, 48-hour device freshness,
+missing/stale/offboarded-device classification, and wholesale-disappearance
+corroboration protections are unchanged. Intermediate changes between snapshots
+are not reconstructed. Prior scale-set findings are removed from scope before
+reconciliation, not credited as remediation.
+
+The flag is frozen in a run's plan. Stop an old active run before deployment,
+then start a fresh run to use updated settings. An old immutable run with
+scale-set exclusion and a frozen delta input fails explicitly rather than
+silently switching the meaning of its saved evidence.
+
+### Nightly collection without scale-set exclusion
+
+With `EXCLUDE_SCALE_SETS=false`, the automatic full/delta policy is unchanged. With a valid baseline,
+nightly deltas request 50,000 rows per page independently of the 1-2,500 full
+findings page setting. Delta HTTP requests are paced at least four seconds apart
+within an activity (below the documented 30/minute and 1,000/hour limits), and
+server retry delays remain authoritative.
+
+Each completed delta page and its continuation metadata are append-only. A
+retry lists compact checkpoint metadata and resumes at the next page, instead
+of parsing and archiving all previous responses again. Completed page bodies
+are restored with integrity checks when the endpoint download finishes. Processing
+still applies the complete delta to the frozen baseline; no rows are truncated
+to meet a deadline. Old request-only checkpoints remain retained; the new
+continuation journal does not rewrite an old run's immutable plan.
+
+The `downloadedRows`/`downloadedBytes` counters describe new HTTP work in the
+latest activity (decoded response-body bytes, not measured wire traffic), not
+the entire delta or compressed Storage size. The endpoint
+progress reports cumulative rows. Defender's six-hour reporting buckets can
+overlap successive delta windows; repeated changes are applied by finding
+identity and event order.
 
 `PartialSuccess` can mean missing CVE enrichment or optional supporting data.
 It does not mean findings were silently dropped. Endpoint details and
