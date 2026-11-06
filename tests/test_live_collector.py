@@ -14,11 +14,12 @@ from vulnerability_view import defender_client
 from vulnerability_view.config import Settings
 from vulnerability_view.defender_client import ENDPOINTS, DefenderApiError, DefenderClient, Endpoint, collection_endpoints, collection_page_size, probe_defender_page
 from vulnerability_view.live_collector import apply_vulnerability_delta, collect_live, merge_vulnerability_delta, normalize_live, recommendation_requires_api_enrichment, reconcile_live_findings, replay_raw_snapshot
+from test_collection_identity import TENANT, OTHER, credential as tenant_credential
 
 
 class Credential:
     def get_token(self, scope):
-        return type("Token", (), {"token": "not-a-real-token"})()
+        return tenant_credential(TENANT).get_token(scope)
 
 
 def test_experimental_endpoints_are_disabled_by_default():
@@ -911,7 +912,7 @@ def test_device_query_failure_prevents_normalization_and_publication(device_scop
     failures["device-2"] = requests.ReadTimeout("Device-scoped request timed out")
     monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity"))
     monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
-    monkeypatch.setattr(dataprep_cli, "_read_existing", lambda *args: {})
+    monkeypatch.setattr(dataprep_cli, "_read_existing", lambda *args, **kwargs: {})
     monkeypatch.setattr(dataprep_cli, "_resolve_collection_mode", lambda *args: ("full", None))
     monkeypatch.setattr(live_collector, "normalize_live", lambda *args, **kwargs: pytest.fail("Incomplete collection must not normalize"))
     monkeypatch.setattr(dataprep_cli, "_persist_live_run", lambda *args, **kwargs: pytest.fail("Incomplete collection must not publish"))
@@ -1016,7 +1017,7 @@ def test_referenced_catalog_errors_prevent_normalization_and_publication(device_
     monkeypatch.setattr(DefenderClient, "collect", collect)
     monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity"))
     monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
-    monkeypatch.setattr(dataprep_cli, "_read_existing", lambda *args: {})
+    monkeypatch.setattr(dataprep_cli, "_read_existing", lambda *args, **kwargs: {})
     monkeypatch.setattr(dataprep_cli, "_resolve_collection_mode", lambda *args: ("full", None))
     monkeypatch.setattr(live_collector, "normalize_live", lambda *args, **kwargs: pytest.fail("Invalid metadata must prevent normalization"))
     monkeypatch.setattr(dataprep_cli, "_persist_live_run", lambda *args, **kwargs: pytest.fail("Invalid metadata must prevent publication"))
@@ -1095,6 +1096,7 @@ def test_delta_retries_unavailable_baseline_metadata_and_keeps_findings(device_s
         Settings().defender_api_base_url, Credential(),
         snapshot=live_collector.datetime.fromisoformat("2026-10-26T00:30:00+00:00"),
         vulnerability_collection_mode="delta",
+        previous_source_tenant_id=TENANT,
         previous_findings=previous["findings"], previous_vulnerabilities=previous["vulnerabilities"],
         previous_snapshot=first_snapshot,
     )
@@ -1178,6 +1180,7 @@ def test_delta_request_with_scale_set_exclusion_uses_scoped_snapshot_instead(dev
     ]
     actual, statuses = collect_live(
         Settings().defender_api_base_url, Credential(), vulnerability_collection_mode="delta",
+        previous_source_tenant_id=TENANT,
         previous_findings=previous, previous_snapshot=datetime(2026, 10, 18, tzinfo=timezone.utc),
         exclude_scale_sets=True,
     )
@@ -1211,7 +1214,8 @@ def test_collector_exclusion_does_not_restore_previous_scale_set_findings(device
     previous_payloads = deepcopy(payloads)
     previous_payloads["machine_vulnerabilities"] = [row for rows in findings.values() for row in rows]
     existing = normalize_live(previous_payloads, datetime(2026, 10, 18, tzinfo=timezone.utc), "live-20261018T000000Z")
-    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity", tenant_id="tenant", exclude_scale_sets=True))
+    existing["collectionRuns"] = [{"DataOrigin": "Live", "SourceTenantId": TENANT}]
+    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity", tenant_id=TENANT, exclude_scale_sets=True))
     monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
     monkeypatch.setattr(dataprep_cli, "_read_outputs", lambda *args: existing)
     monkeypatch.setattr(dataprep_cli, "_resolve_collection_mode", lambda *args: ("full", None))
@@ -1233,6 +1237,7 @@ def test_delta_collection_keeps_existing_delta_api_and_does_not_query_per_device
     actual, statuses = collect_live(
         Settings().defender_api_base_url, Credential(),
         vulnerability_collection_mode="delta",
+        previous_source_tenant_id=TENANT,
         previous_findings=previous, previous_snapshot=datetime(2026, 10, 18, tzinfo=timezone.utc),
         page_size=2,
     )
@@ -1395,9 +1400,9 @@ def test_collect_cli_forwards_page_size(monkeypatch):
     from vulnerability_view import dataprep_cli
     from vulnerability_view.config import Settings
 
-    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity", tenant_id="tenant", defender_api_base_url="https://example.test"))
+    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity", tenant_id=TENANT, defender_api_base_url="https://example.test"))
     monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
-    monkeypatch.setattr(dataprep_cli, "_read_existing", lambda *args: {})
+    monkeypatch.setattr(dataprep_cli, "_read_existing", lambda *args, **kwargs: {})
     monkeypatch.setattr(dataprep_cli, "_resolve_collection_mode", lambda *args: ("full", None))
 
     def collect(*args, **kwargs):
@@ -1408,6 +1413,44 @@ def test_collect_cli_forwards_page_size(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Verified page-size forwarding"):
         dataprep_cli.main(["collect-live", "--page-size", "100"])
+
+
+@pytest.mark.parametrize("source", ["", OTHER])
+def test_direct_delta_rejects_unknown_or_other_tenant_before_reading_any_endpoint(monkeypatch, source):
+    monkeypatch.setattr(live_collector, "create_client", lambda *args, **kwargs: object())
+    with pytest.raises(ValueError, match="verified baseline"):
+        collect_live(
+            "https://example.test", Credential(), vulnerability_collection_mode="delta",
+            previous_findings=[{"FindingKey": "other-tenant"}],
+            previous_snapshot=datetime(2026, 10, 22, tzinfo=timezone.utc),
+            previous_source_tenant_id=source,
+        )
+
+
+@pytest.mark.parametrize("source,retained", [(None, False), (OTHER, False), (TENANT, True)])
+def test_local_history_is_reused_only_for_the_verified_source_tenant(source, retained):
+    from vulnerability_view.dataprep_cli import _tenant_scoped_existing
+
+    existing = {
+        "findings": [{"DataOrigin": "Live", "FindingKey": "old"}, {"DataOrigin": "Synthetic", "FindingKey": "sample"}],
+        "findingEvents": [{"DataOrigin": "Live"}], "recommendationEvents": [{"DataOrigin": "Live"}],
+        "runHistory": [{"DataOrigin": "Live"}],
+        "collectionRuns": [{"DataOrigin": "Live", "SourceTenantId": source}],
+    }
+    result = _tenant_scoped_existing(existing, TENANT)
+    assert any(row["DataOrigin"] == "Live" for row in result["findings"]) is retained
+    assert any(row["DataOrigin"] == "Synthetic" for row in result["findings"])
+    for key in ("findingEvents", "recommendationEvents", "runHistory"):
+        assert bool(result[key]) is retained
+
+
+def test_previous_findings_do_not_reintroduce_an_unselected_raw_archive(monkeypatch, tmp_path):
+    from vulnerability_view import dataprep_cli
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "output/raw/live-20261022T000000Z").mkdir(parents=True)
+    monkeypatch.setattr(dataprep_cli, "replay_raw_snapshot", lambda *args: pytest.fail("Raw archive is not the selected baseline"))
+    assert dataprep_cli._previous_live_findings("live-20261023T000000Z", {}) == []
 
 
 def test_vulnerability_delta_reconstructs_current_detected_snapshot():

@@ -17,6 +17,12 @@ from vulnerability_view.collection_workflow import (
     INSTANCE_ID, RunStore, ensure_current_baseline, orchestrate, prepare_run, publish_run, run_prefix, start_collection, verify_file,
 )
 from vulnerability_view.config import Settings
+from test_collection_identity import TENANT, OTHER, credential as tenant_credential
+
+
+@pytest.fixture(autouse=True)
+def collection_credential(monkeypatch):
+    monkeypatch.setattr("vulnerability_view.collection_workflow.create_credential", lambda *args: tenant_credential(TENANT))
 
 
 def recent_run_options():
@@ -208,6 +214,50 @@ def test_plan_freezes_settings_policy_and_baseline_across_restart():
     assert plan["policy"]["policyVersion"] == "one"
     assert plan["baseline"] is None
     assert len(store.files) == 1
+
+
+@pytest.mark.parametrize("source,reuse,mode", [(None, False, "full"), (OTHER, False, "full"), (TENANT, True, "auto")])
+def test_plan_isolates_tenant_baselines_without_losing_publication_concurrency(source, reuse, mode):
+    store = PlanStore()
+    baseline = {"complete": True, "runId": "live-20261022T160000Z", "files": []}
+    if source:
+        baseline["sourceTenantId"] = source
+    store.download_blob = lambda: SimpleNamespace(
+        readall=lambda: json.dumps(baseline).encode(), properties=SimpleNamespace(etag="original-etag"),
+    )
+    reference = prepare_run({
+        "runId": "live-20261023T160000Z", "snapshotUtc": "2026-10-23T16:00:00+00:00", "collection": "auto",
+    }, store, {})
+    frozen = store.json(reference["planPath"])
+    assert frozen["sourceTenantId"] == TENANT
+    assert frozen["reuseBaseline"] is reuse
+    assert frozen["collection"] == mode
+    assert frozen["baseline"] == baseline
+    assert frozen["baselineEtag"] == "original-etag"
+    ensure_current_baseline(frozen, store)
+
+
+@pytest.mark.parametrize("source", [None, OTHER])
+def test_explicit_delta_cannot_use_an_unverified_or_other_tenant_baseline(source):
+    store = PlanStore()
+    store.download_blob = lambda: SimpleNamespace(
+        readall=lambda: json.dumps({"complete": True, "sourceTenantId": source}).encode(),
+        properties=SimpleNamespace(etag="original-etag"),
+    )
+    with pytest.raises(ValueError, match="verified baseline"):
+        prepare_run({"runId": "live-20261023T160000Z", "collection": "delta"}, store, {})
+    assert store.files == {}
+
+
+def test_resuming_after_a_source_tenant_change_fails_without_modifying_the_plan(monkeypatch):
+    store = PlanStore()
+    request = {"runId": "live-20261023T160000Z"}
+    prepare_run(request, store, {})
+    frozen = dict(store.files)
+    monkeypatch.setattr(collection_workflow, "create_credential", lambda *args: tenant_credential(OTHER))
+    with pytest.raises(ValueError, match="another source tenant"):
+        prepare_run(request, store, {})
+    assert store.files == frozen
 
 
 @pytest.mark.parametrize("current_id", [None, "live-20261022T160000Z", "live-20261023T160000Z", "live-20261024T160000Z"])
@@ -472,6 +522,7 @@ class PublicationStore(PlanStore):
         self.prefix = run_prefix(self.reference["runId"])
         self.manifest = {
             "runId": self.reference["runId"], "complete": True,
+            "sourceTenantId": TENANT,
             "snapshotTimeUtc": "2026-10-23T16:00:00Z",
             "endpointStatuses": [{"Status": "Success"}],
             "files": [{
@@ -480,7 +531,9 @@ class PublicationStore(PlanStore):
                 "dataset": "findings", "rowCount": 10,
             }],
         }
-        self.append_json(self.reference["planPath"], {"baselineEtag": baseline_etag})
+        self.append_json(self.reference["planPath"], {
+            "baselineEtag": baseline_etag, "sourceTenantId": TENANT, "reuseBaseline": False,
+        })
         self.append_json(f"{self.prefix}/prepared.json", {"manifestPath": f"{self.prefix}/manifest.json"})
         self.save_manifest()
 
@@ -496,6 +549,19 @@ def test_each_file_is_verified_before_pointer_can_advance():
     assert verify_file({**store.reference, "fileIndex": 0}, store)["verified"] is True
     assert publish_run(store.reference, store)["published"] is True
     assert store.pointer.upload_blob.call_args.kwargs == {"overwrite": False}
+
+
+@pytest.mark.parametrize("source", [None, OTHER])
+def test_publication_rejects_missing_or_mismatched_tenant_even_with_verified_files(source):
+    store = PublicationStore()
+    store.manifest["sourceTenantId"] = source
+    store.save_manifest()
+    verify_file({**store.reference, "fileIndex": 0}, store)
+    frozen = dict(store.files)
+    with pytest.raises(ValueError, match="source tenant provenance"):
+        publish_run(store.reference, store)
+    store.pointer.upload_blob.assert_not_called()
+    assert store.files == frozen
 
 
 def test_corrupt_persisted_file_cannot_gain_verification_proof_or_publish():

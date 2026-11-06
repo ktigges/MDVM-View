@@ -27,6 +27,7 @@ from vulnerability_view.summary_builder import (
     build_daily_summary, build_finding_events, build_recommendation_events,
     build_reconciliation, build_run_history,
 )
+from test_collection_identity import TENANT, credential as tenant_credential
 
 
 SNAPSHOT = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
@@ -290,7 +291,7 @@ def test_raw_only_freezes_snapshot_and_retains_derived_relationships_without_nor
     monkeypatch.setattr(live_collector, "collect_azure_subscriptions", optional("azure_subscriptions"))
     monkeypatch.setattr(live_collector, "normalize_live", lambda *args, **kwargs: pytest.fail("raw_only must not normalize"))
     data, statuses = live_collector.collect_live(
-        "https://example.invalid", credential=object(), snapshot=SNAPSHOT, raw_only=True,
+        "https://example.invalid", credential=tenant_credential(TENANT), snapshot=SNAPSHOT, raw_only=True,
         recommendation_enrichment_mode="none", cve_batch_size=100,
     )
     assert data == {}
@@ -361,7 +362,7 @@ def test_finalized_bundle_matches_legacy_pipeline_with_frozen_baseline(work):
 
 
 def test_frozen_manifest_baseline_requires_matching_content(work):
-    manifest = {"complete": True, "files": [{
+    manifest = {"complete": True, "sourceTenantId": TENANT, "files": [{
         "kind": "curated", "dataset": "findings", "path": "curated/old/findings.json.gz",
         "sha256": "not-the-file-hash", "sizeBytes": 1,
     }]}
@@ -370,6 +371,7 @@ def test_frozen_manifest_baseline_requires_matching_content(work):
             work / RUN_ID, Settings(), snapshot=SNAPSHOT, run_id=RUN_ID,
             previous_manifest=manifest, sla_policy=[], work_directory=work / "processing",
             previous_bundle_folder=work / "baseline",
+            endpoint_statuses=[{"SourceTenantId": TENANT}],
         )
 
 

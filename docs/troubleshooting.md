@@ -38,6 +38,39 @@ Interpret the sources separately:
 
 ## 3. Defender and Microsoft Graph authentication
 
+### Run comparisons and source tenant provenance
+
+The Summary **Latest-run comparison** uses the first collector observation to
+decide whether a finding was present in the previous run. A newly imported
+finding with an older Defender first-seen date is new to the collection, not
+part of the previous open total. Comparisons remain scoped to dashboard filters;
+the original Defender first-seen date still supplies source-age reporting.
+Updated viewer aggregate and prepared-response cache versions rebuild affected
+cached comparisons.
+
+Collections record the authenticated Defender token's tenant as `sourceTenantId`
+in the immutable plan and completed manifest, and as `SourceTenantId` in endpoint
+and collection-run evidence. Tokens themselves are never retained. Configured
+tenant and authenticated source must agree. Delta, lifecycle reconciliation,
+events and run history reuse only a baseline proven to belong to that source
+tenant. Local collection and raw replay follow the same isolation rule; merely
+finding an older raw folder does not make it an eligible baseline.
+
+An untagged legacy manifest or a different-tenant manifest causes `auto` and
+`full` collection to create a fresh full baseline without carrying old live
+history forward. Explicit `delta` fails instead. Retained raw, curated and run
+evidence is unchanged; the old pointer and ETag still protect publication
+concurrency. The new tenant baseline initially has no previous comparable run.
+Deployment alone does not remove a previously mixed current snapshot: a
+successful new full collection must publish before the viewer changes datasets.
+
+These fixes require both **Function code (option 3)** and **Web App code
+(option 4)**, with no Terraform apply or infrastructure changes. Frozen legacy
+runs without verified provenance cannot resume safely; after confirming no
+collection is active, a new immutable run can be requested with
+`python -m vulnerability_view.operations_cli invoke function --confirm --full --fresh`.
+No retained history is deleted or overwritten.
+
 | Symptom | Check and action |
 |---|---|
 | Preflight 401 | Run `az login --tenant <tenant-id>` and confirm the selected tenant. Check the configured credential mode. |

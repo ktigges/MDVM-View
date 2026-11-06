@@ -1079,6 +1079,41 @@ def test_comparable_run_summary_uses_compact_history_and_finding_timestamps(tmp_
     assert "finding-events" not in e.reads
 
 
+@pytest.mark.parametrize("aggregated", [False, True])
+@pytest.mark.parametrize("filters,prior,added,current", [
+    ({}, 3, 2, 5),
+    ({"severity": "High"}, 2, 1, 3),
+    ({"severity": "Low"}, 1, 1, 2),
+    ({"search": "finding-0003"}, 0, 1, 1),
+])
+def test_previous_run_excludes_newly_observed_findings_with_backdated_source_first_seen(
+    tmp_path, aggregated, filters, prior, added, current,
+):
+    data = datasets(0)
+    data["findings"] = [
+        finding(
+            index, Severity="Low" if index in (2, 4) else "High",
+            FirstSeenUtc="2026-10-01T00:00:00Z",
+            FirstObservedUtc="2026-10-24T11:00:00Z" if index >= 3 else "2026-10-22T00:00:00Z",
+        )
+        for index in range(5)
+    ]
+    data["run-history"] = [{
+        "SnapshotTimeUtc": "2026-10-23T12:00:00Z", "DataOrigin": "Live",
+        "CollectionRunId": "prior-run", "RunStatus": "Success", "OpenFindings": 3,
+    }]
+    e = engine(tmp_path, data)
+    if aggregated:
+        e.read_model.prepare({})
+    result = e.query({"view": "executive", "filters": filters})
+    movement = {label: value for value, label, *_ in result["cards"]["executiveRunMovement"]}
+    assert movement["Previous open"] == prior
+    assert movement["New / reopened"] == added
+    assert movement["Current detected"] == current
+    assert movement["Net detected change"] == current - prior == added
+    assert "entered or left" not in result["texts"]["executiveRunEquation"]
+
+
 def test_latest_change_filter_and_direct_export_do_not_index_events(tmp_path):
     data = datasets()
     data.pop("finding-events")

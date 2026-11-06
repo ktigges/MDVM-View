@@ -311,7 +311,10 @@ def test_backfill_history_replays_runs_in_order(monkeypatch, tmp_path: Path):
             "machines": [{"id": "device-1", "computerDnsName": "device-1", "lastSeen": snapshot.isoformat(), "healthStatus": "Active", "onboardingStatus": "Onboarded", "machineTags": []}],
             "vulnerabilities": [], "recommendations": [],
         }
-        return normalize_live(payloads, snapshot, folder.name), [{"Endpoint": "required", "Status": "Success", "RowCount": 1}]
+        return normalize_live(payloads, snapshot, folder.name), [{
+            "Endpoint": "required", "Status": "Success", "RowCount": 1,
+            "SourceTenantId": "11111111-1111-4111-8111-111111111111",
+        }]
 
     monkeypatch.setattr("vulnerability_view.dataprep_cli.replay_raw_snapshot", replay)
 

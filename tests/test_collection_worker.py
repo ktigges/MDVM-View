@@ -21,6 +21,12 @@ from vulnerability_view.defender_client import DefenderClient, ENDPOINTS
 from vulnerability_view.storage_writer import archive_raw_page
 from vulnerability_view.collection_workflow import publish_run, verify_file
 from dataclasses import asdict
+from test_collection_identity import TENANT, OTHER, credential as tenant_credential
+
+
+@pytest.fixture(autouse=True)
+def collection_credential(monkeypatch):
+    monkeypatch.setattr(collection_worker, "create_credential", lambda *args: tenant_credential(TENANT))
 
 
 class WorkerStore:
@@ -69,6 +75,7 @@ def plan():
         "runId": "live-20261023T160000Z", "snapshotUtc": "2026-10-23T16:00:00+00:00",
         "settings": asdict(Settings()), "baseline": None,
         "collection": "full", "enrichment": "targeted", "pageSize": 2500,
+        "sourceTenantId": TENANT, "reuseBaseline": False,
     }
 
 
@@ -137,7 +144,6 @@ def test_processing_heartbeat_reports_shared_run_deadline_and_stops(monkeypatch,
 
 def test_worker_collect_uses_frozen_snapshot_and_yields_small_progress(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(collection_worker, "create_credential", lambda *args: object())
     received = {}
 
     def collect(*args, **kwargs):
@@ -162,7 +168,7 @@ def test_worker_collect_uses_frozen_snapshot_and_yields_small_progress(monkeypat
 
 def test_delta_worker_restarts_directly_and_commits_the_same_immutable_raw_pages(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    credential = SimpleNamespace(get_token=lambda *args: SimpleNamespace(token="synthetic"))
+    credential = tenant_credential(TENANT)
     monkeypatch.setattr(collection_worker, "create_credential", lambda *args: credential)
     monkeypatch.setattr(collection_worker, "baseline_rows", lambda *args, **kwargs: {})
     monkeypatch.setattr(collection_worker, "_resolve_collection_mode",
@@ -170,6 +176,7 @@ def test_delta_worker_restarts_directly_and_commits_the_same_immutable_raw_pages
     monkeypatch.setattr("vulnerability_view.collection_transport.time.sleep", lambda delay: None)
     run = plan()
     run["collection"] = "delta"
+    run.update(reuseBaseline=True, baseline={"sourceTenantId": TENANT})
     store = WorkerStore()
     calls = []
 
@@ -195,6 +202,7 @@ def test_delta_worker_restarts_directly_and_commits_the_same_immutable_raw_pages
         monkeypatch.setattr(client.session, "get", send)
         endpoint = next(item for item in ENDPOINTS if item.name == "vulnerability_changes")
         _, status = client.collect(endpoint, {"sinceTime": kwargs["previous_snapshot"].isoformat()}, retain_rows=False)
+        status["SourceTenantId"] = TENANT
         return {}, [status]
 
     monkeypatch.setattr(collection_worker, "collect_live", collect)
@@ -214,7 +222,6 @@ def test_delta_worker_restarts_directly_and_commits_the_same_immutable_raw_pages
 
 def test_scoped_worker_selects_snapshot_without_loading_previous_findings(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(collection_worker, "create_credential", lambda *args: object())
     monkeypatch.setattr(collection_worker, "baseline_rows",
                         lambda *args, **kwargs: pytest.fail("Scoped collection does not need baseline rows"))
     run = plan()
@@ -234,7 +241,6 @@ def test_scoped_worker_selects_snapshot_without_loading_previous_findings(monkey
 
 
 def test_old_frozen_delta_is_not_silently_reinterpreted_as_a_scoped_snapshot(monkeypatch, tmp_path):
-    monkeypatch.setattr(collection_worker, "create_credential", lambda *args: object())
     run = plan()
     run["settings"]["exclude_scale_sets"] = True
     store = WorkerStore()
@@ -249,7 +255,6 @@ def test_old_frozen_delta_is_not_silently_reinterpreted_as_a_scoped_snapshot(mon
 
 def test_collection_logs_only_throttled_endpoint_counts_and_errors(monkeypatch, tmp_path, caplog):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(collection_worker, "create_credential", lambda *args: object())
     clock = [0.0]
     monkeypatch.setattr(collection_worker.time, "monotonic", lambda: clock[0])
 
@@ -298,7 +303,6 @@ def test_collection_logs_only_throttled_endpoint_counts_and_errors(monkeypatch, 
 
 def test_completed_collection_does_not_call_defender_again(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(collection_worker, "create_credential", lambda *args: object())
     calls = []
 
     def collect(*args, **kwargs):
@@ -306,7 +310,7 @@ def test_completed_collection_does_not_call_defender_again(monkeypatch, tmp_path
         raw = tmp_path / "output/raw" / plan()["runId"]
         raw.mkdir(parents=True)
         (raw / "machines-page-000001.json.gz").write_bytes(gzip.compress(b'{"value":[]}'))
-        return {}, [{"Endpoint": "machines", "Status": "Success"}]
+        return {}, [{"Endpoint": "machines", "Status": "Success", "SourceTenantId": TENANT}]
 
     monkeypatch.setattr(collection_worker, "collect_live", collect)
     store = WorkerStore()
@@ -333,7 +337,8 @@ def test_baseline_is_streamed_and_local_cache_integrity_is_verified(tmp_path):
     content = gzip.compress(json.dumps([{"id": index} for index in range(20)]).encode())
     store.files["curated/prior.json.gz"] = content
     frozen = plan()
-    frozen["baseline"] = {"files": [{
+    frozen["reuseBaseline"] = True
+    frozen["baseline"] = {"sourceTenantId": TENANT, "files": [{
         "kind": "curated", "dataset": "findings", "path": "curated/prior.json.gz",
         "rowCount": 20, "sizeBytes": len(content), "sha256": hashlib.sha256(content).hexdigest(),
     }]}
@@ -345,6 +350,40 @@ def test_baseline_is_streamed_and_local_cache_integrity_is_verified(tmp_path):
     (tmp_path / "findings.json.gz").write_bytes(b"corrupt cache")
     with pytest.raises(ValueError, match="integrity"):
         collection_worker.baseline_rows(frozen, store, tmp_path)
+
+
+@pytest.mark.parametrize("source", [None, OTHER])
+def test_rejected_baseline_never_reaches_processing_or_history_restore(monkeypatch, tmp_path, source):
+    monkeypatch.chdir(tmp_path)
+    frozen = plan()
+    frozen["baseline"] = {"sourceTenantId": source, "files": [{
+        "kind": "curated", "dataset": "findings", "path": "curated/other-tenant.json.gz",
+    }]}
+    store = WorkerStore()
+    prefix = f"runs/2026/10/23/{frozen['runId']}"
+    store.append_json(f"{prefix}/collected.json", {
+        "sourceTenantId": TENANT, "rawFiles": [], "endpointStatuses": [{"SourceTenantId": TENANT}],
+    })
+    received = {}
+
+    def advance(raw, settings, baseline, *args, **kwargs):
+        received["baseline"] = baseline
+        return {"done": False, "nextStage": "reconcile"}
+
+    monkeypatch.setattr(collection_worker, "advance_archived_run", advance)
+    result = collection_worker.process_batch(frozen, store, tmp_path / "cache")
+    assert result["done"] is False
+    assert received["baseline"] == {}
+    assert store.downloads == 0
+
+
+def test_worker_rejects_a_source_tenant_change_before_defender_or_checkpoint_writes(monkeypatch, tmp_path):
+    monkeypatch.setattr(collection_worker, "create_credential", lambda *args: tenant_credential(OTHER))
+    monkeypatch.setattr(collection_worker, "collect_live", lambda *args, **kwargs: pytest.fail("No source calls allowed"))
+    store = WorkerStore()
+    with pytest.raises(ValueError, match="source tenant changed"):
+        collection_worker.collect_batch(plan(), store, tmp_path)
+    assert store.files == {}
 
 
 def test_interrupted_local_cache_download_can_resume_from_remote_evidence(tmp_path):
@@ -387,7 +426,7 @@ def test_interrupted_local_cache_append_does_not_poison_saved_remote_page(monkey
 @pytest.mark.parametrize("metadata", ["available", "missing", "recovered_missing", "http_error"])
 def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(monkeypatch, tmp_path, metadata):
     monkeypatch.chdir(tmp_path)
-    credential = SimpleNamespace(get_token=lambda *args: SimpleNamespace(token="test-only-token"))
+    credential = tenant_credential(TENANT)
     monkeypatch.setattr(collection_worker, "create_credential", lambda *args: credential)
     monkeypatch.setattr(collection_worker, "_resolve_enrichment_mode", lambda *args: "targeted")
     monkeypatch.setattr(
