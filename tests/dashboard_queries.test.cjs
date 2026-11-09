@@ -60,7 +60,7 @@ function fixture({snapshotStatus=200, notices=[], now=null, preparation=null, tr
     return value;
   }
   for(const [,id] of html.matchAll(/\bid="([^"]+)"/g))node(id);
-  const views = ["executive","overview","workstations","recommendations","priority","sla","trend","executiveSnapshot","help"];
+  const views = ["executive","overview","workstations","recommendations","sla","trend","executiveSnapshot","help"];
   const navigation = views.map(view=>{const button=node();button.dataset.view=view;button.textContent=view;if(view==="executive")button.classList.add("active");return button;});
   const pageButtons = ["first","previous","next","last"].map(action=>{const button=node();button.dataset.findingsPage=action;return button;});
   const activityButtons = attribute => [...html.matchAll(/<button [^>]+>/g)].map(([tag])=>{
@@ -134,6 +134,64 @@ test("initial load pins metadata and requests only the summary, never full datas
   assert.equal(app.elements.get("loadingNotice").hidden,true);
 });
 
+test("dates use year-first local time and consistently labeled UTC timestamps",async()=>{
+  const app=fixture();await tick();
+  assert.match(app.run('formatLocal("2026-11-09T05:06:07Z")'),/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} .+$/);
+  assert.equal(app.run('formatUtc("2026-11-09T05:06:07Z")'),"2026-11-09 05:06:07 UTC");
+  assert.equal(app.run('formatLocal("invalid")'),"Unknown local time");
+  assert.equal(app.run('periodRangeLabel("2026-11-01","2026-11-09")'),"2026-11-01 – 2026-11-09");
+  app.run('table("lifecycleHistoryTable",["SnapshotTimeUtc"],[{SnapshotTimeUtc:"2026-11-09T05:06:07Z"}])');
+  assert.match(app.elements.get("lifecycleHistoryTable").innerHTML,/2026-11-09 05:06:07 UTC/);
+  assert.equal(app.run('displayDateTime("OSVersion","1607")'),"1607");
+});
+
+test("expanded filters identify their fields and the Close Filter button collapses them",async()=>{
+  const app=fixture();await tick();
+  app.run("setFilterExpanded(false)");
+  const saved=[];
+  app.context.localStorage.setItem=(key,value)=>saved.push([key,value]);
+  assert.equal(app.elements.get("filterBar").hidden,true);
+  app.elements.get("filterToggle").dispatch("click");
+  assert.equal(app.elements.get("filterBar").hidden,false);
+  assert.equal(app.elements.get("filterToggle")["aria-expanded"],"true");
+  assert.equal(app.elements.get("filterToggle").textContent,"Filters open");
+  assert.match(html,/Workspace filter fields/);
+  assert.match(html,/Scroll within this panel for more fields/);
+  app.elements.get("closeFilter").dispatch("click");
+  assert.equal(app.elements.get("filterBar").hidden,true);
+  assert.equal(app.elements.get("filterToggle")["aria-expanded"],"false");
+  assert.equal(app.elements.get("filterToggle").textContent,"Filters");
+  assert.deepEqual(saved.at(-1),["vulnerability-view.filters-expanded.v2","false"]);
+});
+
+test("historical OS breakdown is independent of entity and travels with paging and exports",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('activateView("trend")');await tick();
+  app.query().at(-1).resolve(app.payload());await tick();
+  app.elements.get("reportingEntity").dispatch("change","machines");await tick();
+  app.query().at(-1).resolve(app.payload());await tick();
+  app.elements.get("reportingBreakdown").dispatch("change","osVersion");await tick();
+  const request=app.query().at(-1);
+  assert.equal(request.payload.filters.reportingEntity,"machines");
+  assert.equal(request.payload.filters.reportingBreakdown,"osVersion");
+  request.resolve(app.payload({tables:{lifecycleOsTable:{
+    columns:["OSPlatform","OSVersion","New"],items:[{OSPlatform:"Windows11",OSVersion:"23H2",New:4}],
+    total:1,offset:0,limit:100,action:"none",
+  }}}));await tick();
+  assert.equal(app.elements.get("lifecycleOsBreakdown").hidden,false);
+  assert.match(app.elements.get("lifecycleOsTable").innerHTML,/Windows11/);
+  assert.match(app.elements.get("lifecycleOsTable").innerHTML,/23H2/);
+  const page=app.run('dashboardRequest("trend","lifecycleOsTable",1)');
+  assert.equal(page.filters.reportingBreakdown,"osVersion");
+  assert.equal(page.filters.reportingEntity,"machines");
+  const exported=app.run('dashboardRequest("trend","lifecycleDetailTable")');
+  assert.equal(exported.filters.reportingBreakdown,"osVersion");
+  app.elements.get("reportingBreakdown").dispatch("change","All");await tick();
+  app.query().at(-1).resolve(app.payload());await tick();
+  assert.equal(app.elements.get("lifecycleOsBreakdown").hidden,true);
+});
+
 test("startup polls index preparation without rendering partial findings",async()=>{
   const app=fixture({
     snapshotStatus:202,
@@ -195,6 +253,9 @@ test("index restore and preparation errors remain visible while retrying",async(
 test("replacement status preserves the pinned results and exposes preparation stats",async()=>{
   const app=fixture();await tick();
   app.query()[0].resolve(app.payload({texts:{filterCount:"complete results"}}));await tick();
+  const pinnedCount=app.elements.get("filterCount").textContent;
+  assert.match(pinnedCount,/detected CVEs.*CVEs awaiting verification.*recommendations/);
+  assert.notEqual(pinnedCount,"complete results");
   app.setPreparation({status:"preparing",readySnapshotId:snapshotId,progress:{stage:"validate-query-index",elapsedSeconds:4}});
   app.flushTimers();await tick();
   const notice=app.elements.get("dashboardPreparationStatus");
@@ -202,7 +263,7 @@ test("replacement status preserves the pinned results and exposes preparation st
   assert.match(notice.textContent,/Serving the previous complete snapshot/);
   assert.match(notice.textContent,/Validating published data index/);
   assert.equal(app.run("dashboardQuery.snapshot.snapshotId"),snapshotId);
-  assert.equal(app.elements.get("filterCount").textContent,"complete results");
+  assert.equal(app.elements.get("filterCount").textContent,pinnedCount);
   assert.equal(app.query().length,1);
 });
 
@@ -403,9 +464,31 @@ test("changing report views resets visual progress without retaining a cancelled
 test("shared activity tiles put full-width labels before their counts",()=>{
   const tiles=[...html.matchAll(/<button\b[^>]*data-(?:new|fixed)-view=[^>]*>(.*?)<\/button>/g)];
   assert.equal(tiles.length,8);
-  for(const [,markup] of tiles)assert.match(markup,/^<span>[^<]+<\/span><strong id="[^"]+">0<\/strong>$/);
+  for(const [,markup] of tiles)assert.match(markup,/^<span>[^<]+<\/span><strong id="[^"]+">0<\/strong><small [^>]+>[^<]+<\/small>$/);
   const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
   assert.match(css,/\.new-activity-metrics button,\.new-activity-metrics \.window-metric\{[^}]*grid-template-columns:minmax\(0,1fr\)/);
+});
+
+test("activity tiles explain distinct counts, evidence timestamps and partial fixes on hover and focus",()=>{
+  const tiles=[...html.matchAll(/<button\b([^>]*data-(new|fixed)-view=[^>]*)>(.*?)<\/button>/g)];
+  assert.equal(tiles.length,8);
+  for(const [,attributes,kind,markup] of tiles){
+    const helpId=attributes.match(/aria-describedby="([^"]+)"/)?.[1];
+    assert.ok(helpId);
+    assert.ok(markup.includes(`<small id="${helpId}" class="activity-metric-help" role="tooltip">`));
+    assert.match(markup,/selected UTC date window/);
+    assert.match(markup,/pinned snapshot and workspace filters/);
+    assert.match(markup,kind==="new"?/FirstObservedUtc, falling back to FirstSeenUtc/:/EffectiveRemediationUtc.*falling back to FixedUtc/);
+    if(kind==="fixed")assert.match(markup,/ignores the current exposure-status filter/);
+  }
+  assert.match(html,/same CVE on 100 machines counts once/);
+  assert.match(html,/not necessarily newly onboarded machines/);
+  assert.match(html,/not a count of newly created recommendations/);
+  assert.match(html,/does not mean the CVE is fully resolved across the fleet/);
+  assert.match(html,/not a count of fully remediated machines/);
+  assert.match(html,/does not mean the recommendation is completed/);
+  const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
+  assert.match(css,/button:hover \.activity-metric-help,\.new-activity-metrics button:focus-visible \.activity-metric-help\{display:block\}/);
 });
 
 test("summary decision tiles put titles above million-record values",async()=>{
@@ -436,7 +519,7 @@ test("finding count help explains instances, CVEs, fixes and filtered snapshot s
   assert.match(html,/<details class="finding-count-help"><summary>What counts as a finding instance\?<\/summary><p id="findingInstancesHelp">/);
   assert.match(html,/100 finding instances, 1 distinct CVE, and 100 affected devices/);
   assert.match(html,/not a sum of repeated scans/);
-  assert.match(html,/<button[^>]*data-new-view="overview" data-findings-mode="findings" title="[^"]*100 devices counts as 100 instances/);
+  assert.match(html,/<button[^>]*class="technical-metric"[^>]*data-new-view="overview" data-findings-mode="findings"/);
 });
 
 test("active exposure help separates fleet volume, distinct CVEs and per-device counts",async()=>{
@@ -633,12 +716,49 @@ test("finding pages use server totals; search, filters and distinct-CVE mode res
   assert.equal(app.query().at(-1).payload.page,0);
   assert.equal(app.query().at(-1).payload.filters.severity,"Low");
   app.query().at(-1).resolve(app.payload({tables:{findingsTable:tableResult}}));await tick();
+  app.elements.get("findingsMode").value="findings";
+  app.elements.get("findingsMode").dispatch("change","findings");
+  app.query().at(-1).resolve(app.payload({tables:{findingsTable:tableResult}}));await tick();
+  app.run("clearDashboardResponseCache()");
   app.elements.get("findingsMode").value="cves";
   app.elements.get("findingsMode").dispatch("change","cves");
   assert.equal(app.query().at(-1).payload.mode,"cves");
   assert.equal(app.query().at(-1).payload.page,0);
   app.query().at(-1).resolve(app.payload({tables:{findingsTable:{...tableResult,total:105}}}));await tick();
   assert.match(app.elements.get("findingsPageStatus").textContent,/105 distinct CVEs/);
+});
+
+test("OS Type choices, scope chips, pagination, exports and Reset share the selected platform",async()=>{
+  const app=fixture();await tick();
+  assert.equal(app.query()[0].payload.filters.osType,"All");
+  const facets={osTypes:["Ubuntu","Unknown","Windows11",'OS <test & "name">']};
+  app.query()[0].resolve(app.payload({facets}));await tick();
+  const select=app.elements.get("osTypeFilter");
+  assert.match(select.innerHTML,/All operating systems/);
+  assert.match(select.innerHTML,/Windows11/);
+  assert.match(select.innerHTML,/OS &lt;test &amp; &quot;name&quot;&gt;/);
+  app.run('activateView("overview")');
+  const table={columns:["OSPlatform"],items:[{OSPlatform:"Windows11"}],total:250,offset:0,limit:100};
+  app.query().at(-1).resolve(app.payload({facets,tables:{findingsTable:table}}));await tick();
+  app.pageButtons[3].click();
+  assert.equal(app.query().at(-1).payload.page,2);
+  app.query().at(-1).resolve(app.payload({facets,tables:{findingsTable:{...table,offset:200}}}));await tick();
+  select.value="Windows11";select.dispatch("change","Windows11");
+  assert.equal(app.query().at(-1).payload.page,0);
+  assert.equal(app.query().at(-1).payload.filters.osType,"Windows11");
+  assert.match(app.elements.get("activeFilterChips").innerHTML,/<b>OS Type<\/b>Windows11/);
+  app.query().at(-1).resolve(app.payload({facets,tables:{findingsTable:{...table,total:1}}}));await tick();
+  assert.equal(select.value,"Windows11");
+  app.elements.get("exportFindingsCsv").click();
+  assert.equal(app.query().at(-1).payload.filters.osType,"Windows11");
+  app.query().at(-1).resolve(app.payload({tables:{findingsTable:{...table,total:1}}}));await tick();
+  const form=app.elements.get("body").children.filter(child=>child.tagName==="form").at(-1);
+  assert.equal(JSON.parse(form.children[0].value).filters.osType,"Windows11");
+  app.elements.get("resetFilters").click();await tick();
+  assert.equal(app.run("dashboardRequest().filters.osType"),"All");
+  assert.equal(select.value,"All");
+  assert.match(app.elements.get("findingsPageStatus").textContent,/250/);
+  assert.doesNotMatch(app.elements.get("activeFilterChips").innerHTML,/<b>OS Type<\/b>/);
 });
 
 test("first-seen and remediation shortcuts serialize the preserved filtering semantics",async()=>{
@@ -747,7 +867,7 @@ test("snapshot warnings stay visible without Retry and oversized pages expose a 
 test("every workspace view queries lazily and generic tables receive bounded First/Previous/Next/Last controls",async()=>{
   const app=fixture();await tick();
   app.query()[0].resolve(app.payload());await tick();
-  for(const view of ["workstations","recommendations","priority","sla","trend","executiveSnapshot","help"]){
+  for(const view of ["workstations","recommendations","sla","trend","executiveSnapshot","help"]){
     app.run(`activateView("${view}")`);
     assert.equal(app.query().at(-1).payload.view,view);
     app.query().at(-1).resolve(app.payload());await tick();
@@ -843,10 +963,148 @@ test("executive CSV exports the selected detail representation, never just four 
   app.query()[0].resolve(app.payload());await tick();
   app.elements.get("exportExecutiveSnapshotCsv").click();
   assert.equal(app.query().at(-1).payload.view,"executiveSnapshot");
-  assert.equal(app.query().at(-1).payload.table,"executiveSnapshotFindingTable");
+  assert.equal(app.query().at(-1).payload.table,"executiveSnapshotManagementMachineTable");
+  app.run('state.executiveSnapshotUnit="cves"');
+  app.elements.get("exportExecutiveSnapshotCsv").click();
+  assert.equal(app.query().at(-1).payload.table,"executiveSnapshotManagementCveTable");
   app.run('state.executiveSnapshotUnit="recommendations"');
   app.elements.get("exportExecutiveSnapshotCsv").click();
-  assert.equal(app.query().at(-1).payload.table,"executiveSnapshotRecommendationTable");
+  assert.equal(app.query().at(-1).payload.table,"executiveSnapshotManagementRecommendationTable");
+});
+
+test("management reports default to machines and CVEs and load finding evidence only on demand",async()=>{
+  const app=fixture();await tick();
+  assert.equal(app.query()[0].payload.filters.managementReporting,true);
+  assert.equal(app.query()[0].payload.filters.includeFindingEvidence,false);
+  assert.equal(app.run("findingsList.mode"),"cves");
+  assert.equal(app.run("state.reportingEntity"),"machines");
+  const current={machines:{Open:5},cves:{Open:3},recommendations:{Open:2}};
+  app.query()[0].resolve(app.payload({
+    metadata:{management:{version:1,periods:[current]}},
+    cards:{executiveManagementCards:[[5,"Machines with open risk"],[3,"Open vulnerabilities (unique CVEs)"]]},
+  }));await tick();
+  assert.match(app.elements.get("filterCount").textContent,/5 machines with open risk · 3 unique open CVEs · 2 open recommendations/);
+  assert.match(app.elements.get("executiveManagementCards").innerHTML,/Machines with open risk/);
+  assert.match(app.elements.get("executiveManagement").innerHTML,/500 machines is one vulnerability/);
+  assert.match(app.elements.get("executiveManagement").innerHTML,/pending verification remains open/);
+  app.elements.get("executiveTechnicalEvidence").open=true;
+  app.elements.get("executiveTechnicalEvidence").dispatch("toggle");
+  assert.equal(app.query().at(-1).payload.filters.includeFindingEvidence,true);
+});
+
+test("management entity tables keep ten-row pagination and their own CSV contract",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('activateView("executiveSnapshot")');await tick();
+  const id="executiveSnapshotManagementMachineTable";
+  app.query().at(-1).resolve(app.payload({tables:{[id]:{
+    columns:["DeviceName","ProgressStatus"],items:[{DeviceId:"machine-1",DeviceName:"Endpoint",ProgressStatus:"Improved"}],
+    total:42,offset:0,limit:10,action:"machine",
+  }}}));await tick();
+  const pager=app.elements.get(id+"Pagination");
+  pager.pageButtons[2].click();
+  const request=app.query().at(-1).payload;
+  assert.equal(request.table,id);
+  assert.equal(request.page,1);
+  assert.equal(request.limit,10);
+  assert.equal(request.filters.managementReporting,true);
+});
+
+test("recommendation previews show machines and CVEs instead of multiplying instance counts",async()=>{
+  const app=fixture();await tick();
+  const markup=app.run(`recommendationPreviewMarkup({
+    RecommendationName:"Update software",RecommendationSeverity:"High",SeverityScore:8,
+    AffectedMachines:500,CveCount:1,ActionableWorkloads:500,OpenFindings:1000000,
+    FixImpact:"1000000 findings",VulnerabilityMix:"1000000 High",TopCves:"CVE-2026-1234"
+  })`);
+  assert.match(markup,/Machines/);
+  assert.match(markup,/Unique CVEs/);
+  assert.ok(!markup.includes("1000000")&&!markup.includes("1,000,000"));
+});
+
+test("Summary contains machine and CVE severity totals plus only a compact SLA status dashboard",async()=>{
+  const app=fixture();await tick();
+  const period={CompliancePercent:50,outcomes:{WithinSLA:1,LateSLA:1,UnknownSLA:1,Remaining:1000000,Fixed:3}};
+  app.query()[0].resolve(app.payload({
+    metadata:{management:{sla:{unit:"machine-cve",periods:[period],coverageGap:false}}},
+    charts:{
+      executiveManagementSeverity:{kind:"entity-severity",rows:[{label:"Critical",machines:3,cves:5},{label:"High",machines:2,cves:4},{label:"Medium",machines:1,cves:3},{label:"Low",machines:0,cves:2},{label:"Unknown",machines:0,cves:0}]},
+      executiveManagementSlaSeverity:{kind:"sla-completion",rows:[{label:"Critical",within:50,late:50,assessed:2,completedWithin:1,completedLate:1,completedUnknown:0},{label:"High",within:null,late:null,assessed:0,completedWithin:0,completedLate:0,completedUnknown:1}]},
+      executiveManagementSlaSnapshot:{kind:"sla-status",rows:[{label:"Critical",openWithin:10,openOverdue:2,completedWithin:3,completedLate:1,unknownDeadline:4}]},
+    },
+  }));await tick();
+  const root=app.elements.get("executiveManagement");
+  assert.ok(root.innerHTML.indexOf('id="executiveManagementSeverity"')<root.innerHTML.indexOf('id="executiveManagementSlaSnapshot"'));
+  const severity=app.elements.get("executiveManagementSeverity").innerHTML;
+  assert.ok(severity.indexOf('data-severity-entity="machines"')<severity.indexOf('data-severity-entity="cves"'));
+  assert.match(severity,/Machines \/ workload instances by severity/);
+  assert.match(severity,/Unique CVEs by severity/);
+  assert.match(severity,/Critical<\/span><strong>3<\/strong>/);
+  assert.match(severity,/Critical<\/span><strong>5<\/strong>/);
+  assert.ok(!severity.includes("Unknown"));
+  for(const suffix of ["SlaStatus","SlaPolicy","SlaSeverity","Movement","Progress","ComparisonTable","MachineTable","CveTable","RecommendationTable"]){
+    assert.ok(!root.innerHTML.includes(`id="executiveManagement${suffix}"`),suffix);
+  }
+  const status=app.elements.get("executiveManagementSlaSnapshot").innerHTML;
+  for(const label of ["Open within deadline","Open overdue","Completed on time","Completed late","Unknown deadline"])assert.match(status,new RegExp(label));
+  assert.match(status,/<td>10<\/td><td>2<\/td><td>3<\/td><td>1<\/td><td>4<\/td>/);
+  assert.ok(!status.includes("%"));
+  assert.ok(!app.query()[0].payload.filters.includeFindingEvidence);
+});
+
+test("Executive Snapshot retains detailed completion analysis and period comparisons",async()=>{
+  const app=fixture();await tick();
+  app.run(`ensureManagementReport("executiveSnapshot");renderManagementSla("executiveSnapshot",{periods:[{CompliancePercent:50,outcomes:{WithinSLA:1,LateSLA:1,UnknownSLA:1}}]});renderDashboardChart("executiveSnapshotManagementSlaSeverity",{kind:"sla-completion",rows:[{label:"Critical",within:50,late:50,assessed:2,completedWithin:1,completedLate:1,completedUnknown:0},{label:"High",within:null,late:null,assessed:0,completedWithin:0,completedLate:0,completedUnknown:1}]})`);
+  const markup=app.elements.get("executiveSnapshotManagement").innerHTML;
+  for(const suffix of ["SlaSnapshot","SlaStatus","SlaSeverity","Movement","Progress","ComparisonTable"])assert.ok(markup.includes(`id="executiveSnapshotManagement${suffix}"`));
+  const graph=app.elements.get("executiveSnapshotManagementSlaSeverity").innerHTML;
+  assert.match(graph,/1 \/ 2 assessed completions/);
+  assert.match(graph,/Not assessed/);
+  assert.match(graph,/1 completed with unknown deadlines \(excluded\)/);
+});
+
+test("SLA no-outcome states remain ungraded and coverage gaps stay explicit without colors",async()=>{
+  const app=fixture();await tick();
+  app.run(`ensureManagementReport("sla");renderManagementSla("sla",{periods:[{CompliancePercent:null}]})`);
+  assert.match(app.elements.get("slaManagementSlaStatus").innerHTML,/Not assessed/);
+  assert.ok(!app.elements.get("slaManagementSlaStatus").innerHTML.includes("100.0%"));
+  app.run(`renderManagementSla("sla",{coverageGap:true,periods:[{CompliancePercent:null}]})`);
+  assert.match(app.elements.get("slaManagementSlaStatus").innerHTML,/Coverage gap/);
+});
+
+test("historical severity is unavailable rather than zero before retained observations",async()=>{
+  const app=fixture();await tick();
+  app.run(`ensureManagementReport("executive");renderDashboardChart("executiveManagementSeverity",{kind:"entity-severity",available:false,rows:[]})`);
+  assert.match(app.elements.get("executiveManagementSeverity").innerHTML,/unavailable, not zero/);
+});
+
+test("catalog options and legacy Prioritize navigation use the single Recommendations page",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('activateView("recommendations")');await tick();
+  app.elements.get("recommendationCatalogStatus").dispatch("change","No current exposure");await tick();
+  app.elements.get("recommendationCatalogSort").dispatch("change","cves");await tick();
+  assert.equal(app.query().at(-1).payload.filters.recommendationCatalogStatus,"No current exposure");
+  assert.equal(app.query().at(-1).payload.filters.recommendationCatalogSort,"cves");
+  app.elements.get("recommendationWorkspaceFilters").click();
+  assert.equal(app.elements.get("filterBar").hidden,false);
+  app.elements.get("resetRecommendationCatalog").click();await tick();
+  assert.equal(app.run("state.recommendationCatalogStatus"),"All");
+  assert.equal(app.run("state.recommendationCatalogSort"),"name");
+  app.run('activateView("priority")');await tick();
+  assert.equal(app.query().at(-1).payload.view,"recommendations");
+  assert.equal(app.query().at(-1).payload.filters.recommendationCatalogSort,"priority");
+  assert.equal(app.run("state.activeView"),"recommendations");
+  assert.ok(!html.includes('data-view="priority"'));
+});
+
+test("machine detail retains the reporting scope that opened it",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('activateView("executiveSnapshot")');await tick();
+  app.run('pivotToMachine({DeviceId:"machine-x"})');await tick();
+  assert.equal(app.query().at(-1).payload.filters.managementSourceView,"executiveSnapshot");
+  assert.equal(app.query().at(-1).payload.filters.includeFindingEvidence,false);
 });
 
 test("CVE buttons inside finding-instance rows open CVE detail rather than the surrounding finding",async()=>{

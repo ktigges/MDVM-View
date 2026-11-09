@@ -492,7 +492,7 @@ def test_slow_summary_does_not_gate_snapshot_or_independent_recommendations(tmp_
         ), project_root=tmp_path,
     )
     entered, release = Event(), Event()
-    original = DashboardQueryEngine._executive
+    original = DashboardQueryEngine._management_report
 
     def slow_summary(self, *args):
         entered.set()
@@ -501,7 +501,7 @@ def test_slow_summary_does_not_gate_snapshot_or_independent_recommendations(tmp_
             raise OSError("Summary calculation failed")
         return original(self, *args)
 
-    monkeypatch.setattr(DashboardQueryEngine, "_executive", slow_summary)
+    monkeypatch.setattr(DashboardQueryEngine, "_management_report", slow_summary)
 
     async def verify():
         async with application.router.lifespan_context(application):

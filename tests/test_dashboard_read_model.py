@@ -126,7 +126,7 @@ def test_read_model_does_not_change_collection_index_or_publish_evidence(tmp_pat
     e = engine(tmp_path)
     e.build_index({"findings": 237})
     assert not list(tmp_path.glob("*-read-*"))
-    assert dashboard_read_model.VERSION == 3
+    assert dashboard_read_model.VERSION == 4
     with e._connect() as db:
         assert not db.execute("SELECT name FROM sqlite_master WHERE name LIKE '%read_model%'").fetchall()
     import vulnerability_view.dashboard_index as index

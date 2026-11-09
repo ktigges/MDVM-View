@@ -4,11 +4,42 @@ Purpose: Verify finding, recommendation, run-history, summary, and reconciliatio
 
 from datetime import datetime, timedelta, timezone
 
-from vulnerability_view.summary_builder import build_daily_summary, build_recommendation_events, build_reconciliation, build_run_history
+from vulnerability_view.summary_builder import build_daily_summary, build_finding_events, build_recommendation_events, build_reconciliation, build_run_history
 from vulnerability_view.synthetic_generator import generate_synthetic
 
 
 REAL_CVE_CATALOG = [{"CveId": "CVE-2025-1234", "Severity": "High", "CvssScore": 8.8}]
+
+
+def test_finding_events_capture_observed_os_without_rewriting_history():
+    snapshot = datetime(2026, 11, 9, tzinfo=timezone.utc)
+    original = {
+        "FindingKey": "finding-1", "FindingStatus": "Open",
+        "OSPlatform": "Windows10", "OSVersion": "22H2",
+    }
+    events = build_finding_events([original], [], [], snapshot, "run-1")
+    assert events[0]["OSPlatform"] == "Windows10"
+    assert events[0]["OSVersion"] == "22H2"
+    upgraded = {**original, "OSPlatform": "Windows11", "OSVersion": "24H2", "FindingStatus": "Fixed"}
+    repeated = build_finding_events([{**original, "OSVersion": "changed"}], [], events, snapshot, "run-1")
+    assert repeated == events
+    legacy = {key: value for key, value in events[0].items() if key not in ("OSPlatform", "OSVersion")}
+    next_events = build_finding_events([upgraded], [original], [legacy], snapshot + timedelta(days=1), "run-2")
+    assert next_events[0] == legacy
+    assert next_events[1]["OSPlatform"] == "Windows11"
+    assert next_events[1]["OSVersion"] == "24H2"
+    missing = build_finding_events([{"FindingKey": "missing"}], [], [], snapshot, "run-3")[0]
+    assert missing["OSPlatform"] == missing["OSVersion"] == ""
+
+
+def test_synthetic_finding_events_retain_os_fields():
+    data = generate_synthetic(
+        snapshot_time=datetime(2026, 11, 9, tzinfo=timezone.utc), cve_catalog=REAL_CVE_CATALOG,
+    )
+    findings = {row["FindingKey"]: row for row in data["findings"]}
+    for event in data["findingEvents"]:
+        assert event["OSPlatform"] == findings[event["FindingKey"]]["OSPlatform"]
+        assert event["OSVersion"] == findings[event["FindingKey"]]["OSVersion"]
 
 
 def test_recommendation_events_are_persistent_and_idempotent():

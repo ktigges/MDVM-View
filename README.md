@@ -87,13 +87,13 @@ publication, startup, caches, queries, and the relevant source files.
 
 | View | Purpose |
 |---|---|
-| Summary | Exposure, SLA results, Secure Score, and high-impact recommendations |
-| Recommendations / Prioritize | Work grouped under Defender recommendations |
-| Vulnerabilities | Finding instances or distinct CVEs, with search and paging |
+| Summary | Current machines/workload instances, unique CVEs, and severity totals; compact SLA status counts by severity |
+| Recommendations | One action catalog with exposure filters, Priority ranking, and machine/CVE sorting |
+| Vulnerabilities | Unique CVEs by default, with search, paging, and optional technical evidence |
 | Endpoint assets | Device inventory and the evidence behind affected-device totals |
-| Remediate (SLA) | Remediation outcomes and SLA evidence |
-| Reporting | Lifecycle changes and filtered exports |
-| Executive Snapshot | A management report for a selected period and scope |
+| Remediate (SLA) | Machine/CVE SLA outcomes and completion graphs |
+| Reporting | Machine/CVE SLA progress, lifecycle changes, and filtered exports |
+| Executive Snapshot | Unique machines, CVEs, and recommendations; improved and fully resolved progress for a selected period and scope |
 | How to use | Workflow and count definitions inside the application |
 
 Active totals count `Open`, `Reopened`, and `DetectionReturned` findings.

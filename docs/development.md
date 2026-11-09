@@ -199,6 +199,120 @@ snapshots use the index-rebuild tool above. The two publishers must not overlap.
 
 ## Performance checks
 
+### Machine/CVE management reporting
+
+The browser requests `filters.managementReporting=true`. Management summaries
+count unique device IDs, unique CVE IDs, and recommendations independently.
+Duplicate software/version evidence cannot multiply those totals. Missing
+identifiers do not create phantom entities.
+Shared startup defaults use the same machine/CVE model and prewarm the
+Vulnerabilities view in distinct-CVE mode, rather than preparing unused legacy
+finding-instance summaries.
+
+For machines/CVEs, `Improved` requires a confirmed machine/CVE completion during
+the selected period with some unresolved risk remaining. Removing one software
+instance while the same CVE remains on that machine is not a completed CVE.
+Recommendation progress retains confirmed removal of supporting exposure.
+`Fully resolved` additionally requires no unresolved
+exposure in the entire selected scope at period end. Pending verification is
+unresolved even when a qualified-absence timestamp exists. A later confirmed
+reopening prevents current resolution but does not erase the earlier resolved
+interval. Unknown deadlines are not interpreted as compliant. Assessment is
+capped at the pinned collection time.
+
+Management scope ignores activity-window, latest-run-change, and exposure-status
+toggles so an unchanged open exposure cannot disappear from the resolution
+test. The other workspace filters still apply; resolution is not an unfiltered
+tenant-wide claim. Severity uses each entity's highest remaining severity.
+Historical status is reconstructed from retained machine `FirstObservedUtc`,
+confirmed removals, and reopen timestamps, not a complete replay of every past
+cycle. `FirstSeenUtc` can be a CVE catalog detection date and must not backdate
+machine exposure when `FirstObservedUtc` is available. Legacy records without
+that field retain their existing first-seen fallback. Retained run-history
+coverage is explicit: earlier periods are unavailable, not zero; intersecting
+periods identify partial history.
+
+Management SLA uses **one outcome per device ID + CVE ID**, not one per software
+version. A pair completes only when no evidence remains unresolved and a
+confirmed removal falls in the period. Its completion time is the last
+confirmed removal and its deadline is the earliest retained applicable deadline.
+Any known lateness wins; otherwise missing deadlines are unknown, not success.
+On-time percentage divides completed-on-time pairs by completed pairs with
+known outcomes. Open/pending and unknown outcomes never enter that denominator.
+The same CVE can be fixed on one machine and remain open on another.
+The severity chart exposes each numerator, assessed denominator, late count,
+and excluded unknown-deadline completion count. Empty severity buckets say
+Not assessed, not 100%. A 100% on-time completion rate does not mean all risk
+has been remediated. The overall completion counts and retained observation
+start/snapshot count are visible alongside the chart.
+
+Summary contains only current machine/CVE headline totals, their severity
+breakdowns, and a compact SLA-by-severity status table. It does not show
+compliance percentages, progress charts, period comparisons, or detailed
+remediation tables. Detailed SLA analysis remains in Executive Snapshot,
+Reporting, and Remediate. The compact table separates open-within-deadline,
+open-overdue, completed-on-time, completed-late, and unknown-deadline outcomes.
+These categories are disjoint; known overdue/late evidence takes precedence
+over missing deadlines. Unknown combines open and completed unassessed outcomes;
+verification-pending evidence stays open. Completions use the report period,
+while open status uses its pinned endpoint.
+
+The detailed SLA, Executive Snapshot, Vulnerabilities, and Reporting panels
+retain completion percentages and period movement. The
+headline severity panels show machines/workload instances first, then unique
+CVEs, each classified once at its highest remaining severity in the selected
+scope: Critical, High, Medium, Low. Unknown severity is separate, never silently
+classified Low. Machine totals are distinct device IDs, not collapsed workload
+groups. SLA outcomes are separate from vulnerability severity; there is no
+red/yellow/green rating or `ExecutiveStatus` field. SLA deadlines do not reset
+on deployment; new collection evidence updates tracking at each pinned snapshot.
+
+A disk-backed scalar clock projection is shared by the entity and pair
+aggregations. Each period endpoint is evaluated once per source row. Full
+evidence payloads are not materialized. Group all periods before joining the
+compact entity tables, so entity lookups do not run once per machine/CVE pair.
+Their bounded disposable product cache is shared across summary,
+report, paging, and export requests. Cache admission is limited to 30,000 total
+entity rows and the existing product-size limits; evidence collections are
+never copied into the response or cache. Cold management aggregation uses the
+serialized expensive-query worker, not the read model's interactive fast lane.
+Mixed recommendation-type scopes materialize catalog membership once, rather
+than performing a correlated type lookup for every evidence row. First-catalog
+row and missing-identifier semantics are preserved. The scale benchmark includes
+an unrelated misconfiguration action to exercise that customer-data path.
+The compact SLA cache retains only per-machine/per-CVE rollups and percentage
+charts, never the full machine/CVE pair collection. Prepared response version 10
+invalidates earlier presentations without changing retained source data.
+
+Machine/CVE detail defaults to `pivotSlaCveTable`: one row per machine/CVE,
+including confirmed fixed and remaining CVEs in the selected reporting period.
+`managementSourceView` preserves Executive Snapshot/Reporting scope and dates.
+Machine exports include `FixedCVEs` and completed on-time/late/unknown outcomes;
+CVE exports include `FixedMachines`. Pair detail exports
+carry the period, pinned snapshot, and selected identity.
+
+Recommendations is an alphabetical catalog, with independent
+`recommendationCatalogStatus` and `recommendationCatalogSort` controls and
+access to workspace filters. Its CSV follows those filters and sort.
+`recommendationCatalogSort=priority` puts unresolved actions first, then ranks by
+severity, Defender score, affected machines and unique CVEs, not duplicate
+instance volume. `recommendationCatalogStatus=Unresolved exposure` limits the
+catalog to detected or pending actions. There is no separate Prioritize tab;
+legacy browser navigation redirects to Recommendations with Priority sorting.
+The legacy priority API remains available for compatibility.
+Legacy API requests without management mode retain their prior behavior.
+No collector changes or new collection are required.
+
+`filters.includeFindingEvidence=true` explicitly loads the original technical
+reports as well. The browser enables it only while a technical evidence panel
+is expanded. The normal execution deadline and immutable source/index format
+are unchanged. Entity CSVs use tables such as
+`executiveSnapshotManagementMachineTable`, `executiveSnapshotManagementCveTable`,
+and `executiveSnapshotManagementRecommendationTable`. Technical detail remains
+available separately; the management PDF excludes it. Entity CSVs retain the
+period, pinned snapshot time, representation, and resolution-scope filters so
+a scoped resolution claim is not mistaken for tenant-wide resolution.
+
 The standalone benchmarks generate isolated local data. They do not establish
 Azure B2 response times, network behavior, managed-identity latency, or capacity
 for a different customer's data shape.
@@ -210,6 +324,18 @@ PYTHONPATH=src python tests/benchmark_dashboard_queries.py \
   --rows 2000000 --events 2000000 --prepare-defaults --all-views \
   --broad-filters --mixed-lifecycle --enforce-targets
 ```
+
+Machine/CVE report scale and response-shape check:
+
+```bash
+PYTHONPATH=src python tests/benchmark_dashboard_queries.py \
+  --rows 1000000 --mixed-lifecycle --management-reporting --enforce-targets
+```
+
+This checks exact distinct-entity totals, no finding-instance columns in entity
+tables, bounded responses, a cold report within 10 seconds, a cached response
+within 5 seconds, and a second entity page within 10 seconds. Index preparation
+is measured separately.
 
 Full-server smoke check:
 
@@ -232,6 +358,13 @@ thresholds in a harness are checks, not enforced service quotas.
 
 ## Remaining work and limits
 
+- Executive Snapshot concentration charts share one compact, period-end
+  aggregation rather than repeatedly scanning finding evidence. The aggregation
+  retains device identities for exact distinct-machine counts, including the
+  combined Other row. It reads scoped findings in row order instead of forcing
+  recommendation-ordered random evidence lookups. Recommendation workload and
+  concentration calculations have separate diagnostic stages; the normal query
+  execution deadline is unchanged.
 - The recommendation-type classifier treats some end-of-support uninstall
   recommendations as misconfiguration. Their linked vulnerability findings can
   therefore be excluded by the default Vulnerability-only scope. This affects

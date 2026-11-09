@@ -244,6 +244,14 @@ Reopened, DetectionReturned, StaleDevice, OutOfScope, Unknown, and Open.
 
 An event records prior/new state, finding/device/CVE/recommendation identity,
 ownership, policy/SLA result, reason, time, and lineage.
+New finding events also retain `OSPlatform` and `OSVersion` from the finding
+when the collector records the transition. These describe the observation,
+not necessarily the earlier effective-remediation instant. Existing event
+records are preserved unchanged; older events may lack these optional fields.
+Historical OS breakdowns identify **Event observation** versus fallback
+**Snapshot attribution**. Recommendation events are tenant-level and can span
+multiple operating systems; their OS groups use matching snapshot findings,
+not a single OS assigned to the recommendation.
 `EventTimeUtc` is when the collector learned the transition.
 `EffectiveTimeUtc` is when it counts for reporting; a confirmed fix can be
 learned later than its first qualified absence.

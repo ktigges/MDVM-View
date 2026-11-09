@@ -171,6 +171,16 @@ def test_lifecycle_events_summaries_and_history_are_exactly_equivalent(store):
     assert list(bounded_summary.run_history(actual, previous, events, recs, [], rec_events, [], [], SNAPSHOT, RUN_ID, store)) == expected_history
 
 
+def test_bounded_finding_events_preserve_existing_observed_os_on_retry(store):
+    row = {"FindingKey": "os-event", "FindingStatus": "Open", "OSPlatform": "Windows10", "OSVersion": "22H2"}
+    existing = build_finding_events([row], [], [], SNAPSHOT, RUN_ID)
+    repeated = bounded_summary.finding_events(
+        [{**row, "OSPlatform": "Windows11", "OSVersion": "24H2"}], [], existing,
+        SNAPSHOT, RUN_ID, store,
+    )
+    assert list(repeated) == existing
+
+
 @pytest.mark.parametrize("has_history", [False, True])
 def test_recommendation_global_history_idempotency_and_order(store, has_history):
     current = [{"RecommendationId": key} for key in ("c", "a", "b", "a")]

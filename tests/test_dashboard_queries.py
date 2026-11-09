@@ -273,6 +273,78 @@ def engine(root, data=None, snapshot_id="snapshot-1", snapshot_time=SNAPSHOT):
     return result
 
 
+def platform_datasets():
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="win", OSPlatform="Windows11", RecommendationId="rec-0", CveId="CVE-2026-0001"),
+        finding(1, DeviceId="linux", OSPlatform="Ubuntu", RecommendationId="rec-1", CveId="CVE-2026-0001"),
+        finding(2, DeviceId="unknown-none", OSPlatform=None, RecommendationId="rec-2"),
+        finding(3, DeviceId="unknown-empty", OSPlatform="", RecommendationId="rec-2"),
+        finding(4, DeviceId="unknown-text", OSPlatform="Unknown", RecommendationId="rec-2"),
+        finding(5, DeviceId="win", OSPlatform="Windows11", RecommendationId="rec-1", CveId="CVE-2026-0001"),
+    ]
+    devices = {row["DeviceId"]: row for row in data["findings"]}
+    devices["mac"] = finding(6, DeviceId="mac", OSPlatform="macOS")
+    devices["android"] = finding(7, DeviceId="android", OSPlatform="Android")
+    data["devices"] = [
+        {**row, "OnboardingStatus": "Onboarded", "HealthStatus": "Active"}
+        for row in devices.values()
+    ]
+    data["recommendations"].append({
+        **data["recommendations"][0], "RecommendationId": "rec-machine-only",
+    })
+    data["recommendation-machines"] = [
+        finding(7, DeviceId="android", OSPlatform="Android", RecommendationId="rec-machine-only"),
+    ]
+    return data
+
+
+@pytest.mark.parametrize("os_type,findings,recommendations,machines", [
+    ("All", 6, 4, 7),
+    ("Windows11", 2, 2, 1),
+    ("Ubuntu", 1, 1, 1),
+    ("Unknown", 3, 1, 3),
+    ("Android", 0, 1, 1),
+    ("macOS", 0, 0, 1),
+    ("missing' OR 1=1 --", 0, 0, 0),
+])
+def test_os_type_filters_every_view_inventory_and_exports(
+    tmp_path, os_type, findings, recommendations, machines,
+):
+    e = engine(tmp_path, platform_datasets())
+    filters = {"osType": os_type}
+    for view in dashboard_queries.PREPARED_VIEWS:
+        result = e.query({"view": view, "filters": filters})
+        assert result["scope"]["findings"] == findings, view
+        assert result["scope"]["recommendations"] == recommendations, view
+        assert result["facets"]["osTypes"] == ["Android", "Ubuntu", "Unknown", "Windows11", "macOS"]
+        if view == "workstations":
+            assert result["tables"]["workstationTable"]["total"] == machines
+    exported = list(e.iter_export({"view": "overview", "table": "findingsTable", "filters": filters}))
+    assert len(exported) == findings
+    if os_type != "All":
+        assert all((row["OSPlatform"] or "Unknown") == os_type for row in exported)
+    assert e.reads["devices"] == 1
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_os_type_preserves_filtered_details_and_combined_scope_after_default_cache(tmp_path, prepared):
+    e = engine(tmp_path, platform_datasets())
+    if prepared:
+        e.read_model.prepare({})
+    assert e.query({"view": "executive"})["scope"]["findings"] == 6
+    filters = {"osType": "Windows11", "severity": "High", "subscription": "subscription-1"}
+    result = e.query({"view": "detail", "filters": filters, "selection": {"type": "recommendation", "id": "rec-1"}})
+    assert result["scope"]["findings"] == 2
+    assert result["tables"]["pivotFindingTable"]["total"] == 1
+    assert result["tables"]["pivotFindingTable"]["items"][0]["OSPlatform"] == "Windows11"
+    cves = e.query({"view": "overview", "mode": "cves", "filters": filters})
+    assert cves["tables"]["findingsTable"]["total"] == 1
+    assert cves["tables"]["findingsTable"]["items"][0]["OpenFindings"] == 2
+    assert e.query({"view": "overview", "filters": {**filters, "severity": "Low"}})["scope"]["findings"] == 0
+    assert e.query({"view": "executive"})["scope"]["findings"] == 6
+
+
 def test_paging_and_off_page_search_are_exact(tmp_path):
     e = engine(tmp_path)
     first = e.query({"view": "overview"})["tables"]["findingsTable"]
@@ -607,6 +679,62 @@ def test_executive_concentration_other_keeps_distinct_machine_counts(tmp_path):
     assert rows[-1] == {"label": "Other", "value": 3, "criticalHigh": 3, "machines": 1}
 
 
+@pytest.mark.parametrize("severity", [None, "High"])
+def test_executive_concentration_compacts_one_sequential_scan_with_exact_counts(tmp_path, severity):
+    rng = random.Random(71)
+    data = datasets(0)
+    data["findings"] = [
+        finding(
+            index, DeviceId=rng.choice([None, "", 0, "0", 1, 1.0, "1", "device"]),
+            SubscriptionId=rng.choice([None, "", *[f"sub-{n}" for n in range(9)]]),
+            OwnerTeam=rng.choice([None, "", *[f"team-{n}" for n in range(10)]]),
+            Severity=rng.choice(["Critical", "High", "Medium", None]),
+            FirstSeenUtc=rng.choice(["2026-10-01T00:00:00Z", "2026-10-23T00:00:00Z", SNAPSHOT]),
+            FixedUtc=rng.choice([None, "2026-10-21T00:00:00Z", "2026-10-24T00:00:00Z"]),
+            ReopenedUtc=rng.choice([None, "2026-10-22T00:00:00Z"]),
+        )
+        for index in range(240)
+    ]
+    data["findings"] *= 3
+    e = engine(tmp_path, data)
+    e._ensure("findings")
+    end = dashboard_queries._timestamp("2026-10-23T23:59:59.999Z")
+    with e._connect() as db:
+        e._finding_scope(db, "report_scope", "f.Severity=?" if severity else "1", [severity] if severity else [], {})
+        e._view(db, "period_open", f"SELECT * FROM report_scope WHERE {e._open_at(end)}", [])
+        statements = []
+        db.set_trace_callback(statements.append)
+        out = {"charts": {}}
+        e._executive_concentration(db, out, None, end)
+        db.set_trace_callback(None)
+        materializations = [sql for sql in statements if "CREATE TEMP TABLE executive_open_dimensions" in sql]
+        assert len(materializations) == 1
+        plan = " ".join(row["detail"] for row in db.execute(
+            "EXPLAIN QUERY PLAN " + materializations[0].split(" AS", 1)[1],
+        ))
+        assert ("SEARCH f USING INDEX findings_Severity" if severity else "SCAN f") in plan
+        assert "findings_recommendation_rank" not in plan
+        assert db.execute("SELECT count(*) FROM executive_open_dimensions").fetchone()[0] < db.execute(
+            "SELECT count(*) FROM period_open"
+        ).fetchone()[0]
+        for chart, field in (("executiveSubscriptionConcentration", "SubscriptionId"), ("executiveOwnerConcentration", "OwnerTeam")):
+            rows = [dict(row) for row in db.execute(f"""
+                SELECT coalesce(nullif({field},''),'Unassigned') label,count(*) value,
+                  sum(Severity IN ('Critical','High')) criticalHigh,
+                  count(DISTINCT nullif(DeviceId,'')) machines
+                FROM period_open GROUP BY {field} ORDER BY value DESC,label
+            """)]
+            assert len(rows) > 6
+            labels = [row["label"] for row in rows[:6]]
+            other = dict(db.execute(f"""
+                SELECT count(*) value,coalesce(sum(Severity IN ('Critical','High')),0) criticalHigh,
+                  count(DISTINCT nullif(DeviceId,'')) machines FROM period_open
+                WHERE coalesce(nullif({field},''),'Unassigned') NOT IN ({','.join('?' for _ in labels)})
+            """, labels).fetchone())
+            expected = rows[:6] + [{"label": "Other", **other}]
+            assert out["charts"][chart]["rows"] == expected
+
+
 @pytest.mark.parametrize("rule", [
     {"id": "unicode", "field": "DeviceName", "operator": "prefix", "value": "mün", "label": "Unicode hosts"},
     {"id": "quotes", "field": "DeviceName", "operator": "contains", "value": "o'brien", "label": "O'Brien hosts"},
@@ -650,7 +778,7 @@ def test_all_views_have_bounded_snapshot_pinned_output(tmp_path, view):
         assert table["total"] >= len(table["items"])
     assert "findings" not in result
     if view == "executive":
-        assert not {"devices", "vulnerabilities", "recommendation-events", "daily-summary"} & e.reads.keys()
+        assert not {"vulnerabilities", "recommendation-events", "daily-summary"} & e.reads.keys()
 
 
 def test_sla_fixed_device_pairs_preserve_unresolved_and_null_key_semantics(tmp_path):
@@ -1059,7 +1187,7 @@ def test_single_run_summary_never_reads_full_finding_history(tmp_path):
     assert "previous comparable run is not available" in result["texts"]["executiveDeltaContext"]
     assert "finding-events" not in e.reads
     assert "recommendation-events" not in e.reads
-    assert "devices" not in e.reads
+    assert e.reads["devices"] == 1
 
 
 def test_comparable_run_summary_uses_compact_history_and_finding_timestamps(tmp_path):
@@ -1171,6 +1299,111 @@ def test_raw_lifecycle_pager_does_not_recompute_period_or_chart_aggregates(tmp_p
     assert len(page["tables"]["lifecycleHistoryTable"]["items"]) == 37
     assert page["cards"] == first["cards"]
     assert page["charts"] == first["charts"]
+
+
+def historical_os_data():
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="win-a", OSPlatform="Windows11", OSVersion="22H2"),
+        finding(1, DeviceId="win-a", OSPlatform="Windows11", OSVersion="22H2"),
+        finding(2, DeviceId="win-b", OSPlatform="Windows11", OSVersion="23H2"),
+        finding(3, DeviceId="linux", OSPlatform="Ubuntu", OSVersion="24.04"),
+        finding(4, DeviceId="unknown", OSPlatform="", OSVersion=""),
+        finding(5, DeviceId="low", OSPlatform="Ubuntu", OSVersion="22.04", Severity="Low"),
+    ]
+    for row in data["findings"]:
+        row["RecommendationId"] = "rec-0"
+    data["devices"] = [
+        {**row} for row in data["findings"] if row["FindingKey"] != "finding-0001"
+    ]
+    data["finding-events"] = [
+        {**{k: v for k, v in row.items() if k not in ("OSPlatform", "OSVersion")},
+         "EventType": "New", "EffectiveTimeUtc": row["FirstSeenUtc"]}
+        for row in data["findings"]
+    ]
+    data["recommendation-events"] = [
+        {"RecommendationId": "rec-0", "EventType": "Baseline", "DataOrigin": "Live",
+         "EffectiveTimeUtc": "2026-10-23T13:00:00Z", "SnapshotTimeUtc": SNAPSHOT}
+    ]
+    return data
+
+
+@pytest.mark.parametrize("entity,windows_new", [("findings", 2), ("machines", 1), ("cves", 2)])
+def test_historical_os_breakdown_preserves_entity_units_scope_and_exports(tmp_path, entity, windows_new):
+    e = engine(tmp_path, historical_os_data())
+    request = {
+        "view": "trend", "limit": 1,
+        "filters": {"reportingEntity": entity, "reportingBreakdown": "osVersion", "reportingChange": "New", "severity": "High"},
+    }
+    result = e.query(request)
+    table = result["tables"]["lifecycleOsTable"]
+    assert table["total"] == 4
+    rows = list(e.iter_export({**request, "table": "lifecycleOsTable"}))
+    assert len(rows) == 4
+    windows = next(row for row in rows if row["OSPlatform"] == "Windows11" and row["OSVersion"] == "22H2")
+    assert windows["New"] == windows_new
+    assert windows["OSMetadataSource"] == "Snapshot attribution"
+    assert any(row["OSPlatform"] == row["OSVersion"] == "Unknown" for row in rows)
+    assert not any(row["OSVersion"] == "22.04" for row in rows)
+    detail = list(e.iter_export({**request, "table": "lifecycleDetailTable"}))
+    assert all("OSPlatform" in row and "OSVersion" in row and "OSMetadataSource" in row for row in detail)
+    page = e.query({**request, "table": "lifecycleOsTable", "page": 1})
+    assert page["tables"]["lifecycleOsTable"]["offset"] == 1
+    assert page["tables"]["lifecycleOsTable"]["items"] != table["items"]
+
+
+def test_recommendation_os_type_groups_do_not_duplicate_events_across_versions(tmp_path):
+    e = engine(tmp_path, historical_os_data())
+    request = {"view": "trend", "filters": {
+        "reportingEntity": "recommendations", "reportingBreakdown": "osType", "reportingChange": "All",
+    }}
+    result = e.query(request)
+    windows = next(row for row in result["tables"]["lifecycleOsTable"]["items"] if row["OSPlatform"] == "Windows11")
+    assert windows["Baseline"] == windows["EvidenceRows"] == 1
+    assert "Inactive" in result["tables"]["lifecycleOsTable"]["columns"]
+    detail = list(e.iter_export({**request, "table": "lifecycleDetailTable"}))
+    assert sum(row["OSPlatform"] == "Windows11" for row in detail) == 1
+    assert "OSVersion" not in result["tables"]["lifecycleDetailTable"]["columns"]
+    versions = e.query({**request, "filters": {**request["filters"], "reportingBreakdown": "osVersion"}})
+    assert len([row for row in versions["tables"]["lifecycleOsTable"]["items"] if row["OSPlatform"] == "Windows11"]) == 2
+
+
+def test_historical_event_os_is_not_replaced_by_current_device_metadata(tmp_path):
+    data = historical_os_data()
+    data["finding-events"][0].update(OSPlatform="Windows10", OSVersion="1909")
+    data["finding-events"][1].update(OSPlatform="", OSVersion="")
+    e = engine(tmp_path, data)
+    result = e.query({"view": "trend", "filters": {"reportingBreakdown": "osVersion", "reportingChange": "New"}})
+    rows = result["tables"]["lifecycleOsTable"]["items"]
+    observed = [row for row in rows if row["OSMetadataSource"] == "Event observation"]
+    assert {(row["OSPlatform"], row["OSVersion"]) for row in observed} == {("Windows10", "1909"), ("Unknown", "Unknown")}
+    assert not any(row["OSPlatform"] == "Windows11" and row["OSVersion"] == "22H2" for row in rows)
+
+
+def test_historical_os_working_table_does_not_duplicate_full_event_payloads(tmp_path, monkeypatch):
+    e = engine(tmp_path, historical_os_data())
+    original = e._table
+    checked = []
+    def bounded_table(db, response, payload, table_id, *args, **kwargs):
+        if table_id == "lifecycleOsTable":
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(lifecycle_scoped_events)")}
+            assert "data" not in columns
+            assert "_event_rowid" in columns
+            checked.append(True)
+        return original(db, response, payload, table_id, *args, **kwargs)
+    monkeypatch.setattr(e, "_table", bounded_table)
+    e.query({"view": "trend", "filters": {"reportingBreakdown": "osType", "reportingChange": "All"}})
+    assert checked
+
+
+def test_historical_breakdown_all_is_backward_compatible_and_rejects_unknown_dimension(tmp_path):
+    e = engine(tmp_path, historical_os_data())
+    result = e.query({"view": "trend", "filters": {"reportingChange": "New"}})
+    assert "lifecycleOsTable" not in result["tables"]
+    assert result["tables"]["lifecycleHistoryTable"]["total"] == 6
+    assert "OSPlatform" not in result["tables"]["lifecycleDetailTable"]["columns"]
+    with pytest.raises(ValueError, match="Unknown historical breakdown"):
+        e.query({"view": "trend", "filters": {"reportingBreakdown": "untrusted"}})
 
 
 def test_executive_export_preflight_reuses_report_period_aggregates(tmp_path, monkeypatch):

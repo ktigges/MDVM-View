@@ -18,12 +18,12 @@ const DETECTED_FINDING_STATUSES=new Set(["Open","Reopened","DetectionReturned"])
 const FINDING_INSTANCE_HELP="One finding instance is one CVE detected in a specific software product/version on one device. The same CVE in the same product/version on 100 devices counts as 100 instances, but only 1 distinct CVE. Different affected products or versions on the same device can add instances. This is not a count of attacks or separate fixes: one update can remove many instances. Counts reflect the selected snapshot and workspace filters.";
 if("scrollRestoration" in history)history.scrollRestoration="manual";
 window.addEventListener("pageshow",()=>requestAnimationFrame(()=>window.scrollTo(0,0)));
-const state={findings:[],findingEvents:[],recommendationEvents:[],runHistory:[],devices:[],recommendations:[],recommendationMachines:[],remediations:[],summary:[],runs:[],secureScores:[],subscriptions:[],slaPolicy:null,recommendationTracking:new Map(),findingsByRecommendation:new Map(),recommendationMachinesByRecommendation:new Map(),recommendationsById:new Map(),subscriptionInventoryById:new Map(),vulnerabilityDetailsById:new Map(),watchlistCves:new Map(),origin:"Both",severity:filterConfig.defaultSeverity||"All",exposureStatus:"DetectedAndPending",assetClass:"All",subscription:"All",hideNonReporting:Boolean(filterConfig.defaultHideNonReporting),reportingDays:DEFAULT_REPORTING_DAYS,includeDiscoveredOnly:Boolean(filterConfig.defaultIncludeDiscoveredOnly),recommendationTypes:new Set(DEFAULT_RECOMMENDATION_TYPES),recommendationTrackingFilter:"All",recommendationTrackingEnabled:false,recommendationTrackingLocalPreview:false,team:"All",search:"",domains:new Set(DEFAULT_DOMAINS),newPeriod:"day",newPeriodFilter:false,remediationPeriodFilter:false,latestRunChangesOnly:false,newPeriodStart:"",newPeriodEnd:"",statisticsPeriod:"week",reportingEntity:"findings",reportingChange:"Fixed",executiveSnapshotPeriod:"30days",executiveSnapshotStart:"",executiveSnapshotEnd:"",executiveSnapshotSubscription:"All",executiveSnapshotOwner:"All",executiveSnapshotUnit:"findings",selectedRecommendationId:"",detailRecommendationIds:[],selectedEntity:null,selectedCveDialogId:"",pivotSourceLabel:"",snapshotTimeMs:NaN,activeView:"executive"};
+const state={findings:[],findingEvents:[],recommendationEvents:[],runHistory:[],devices:[],recommendations:[],recommendationMachines:[],remediations:[],summary:[],runs:[],secureScores:[],subscriptions:[],slaPolicy:null,recommendationTracking:new Map(),findingsByRecommendation:new Map(),recommendationMachinesByRecommendation:new Map(),recommendationsById:new Map(),subscriptionInventoryById:new Map(),vulnerabilityDetailsById:new Map(),watchlistCves:new Map(),origin:"Both",managementReporting:true,includeFindingEvidence:false,osType:"All",reportingBreakdown:"All",severity:filterConfig.defaultSeverity||"All",exposureStatus:"DetectedAndPending",assetClass:"All",subscription:"All",hideNonReporting:Boolean(filterConfig.defaultHideNonReporting),reportingDays:DEFAULT_REPORTING_DAYS,includeDiscoveredOnly:Boolean(filterConfig.defaultIncludeDiscoveredOnly),recommendationTypes:new Set(DEFAULT_RECOMMENDATION_TYPES),recommendationTrackingFilter:"All",recommendationCatalogStatus:"All",recommendationCatalogSort:"name",recommendationTrackingEnabled:false,recommendationTrackingLocalPreview:false,team:"All",search:"",domains:new Set(DEFAULT_DOMAINS),newPeriod:"day",newPeriodFilter:false,remediationPeriodFilter:false,latestRunChangesOnly:false,newPeriodStart:"",newPeriodEnd:"",statisticsPeriod:"week",reportingEntity:"machines",reportingChange:"Fixed",executiveSnapshotPeriod:"30days",executiveSnapshotStart:"",executiveSnapshotEnd:"",executiveSnapshotSubscription:"All",executiveSnapshotOwner:"All",executiveSnapshotUnit:"machines",selectedRecommendationId:"",detailRecommendationIds:[],selectedEntity:null,selectedCveDialogId:"",pivotSourceLabel:"",snapshotTimeMs:NaN,activeView:"executive"};
 const DEFENDER_RECOMMENDATIONS_URL="https://security.microsoft.com/exposure-recommendations?tabId=Devices";
 const DEFENDER_VULNERABILITIES_URL="https://security.microsoft.com/vulnerabilities/devices";
 const MAX_CUSTOMER_LOGO_BYTES=2*1024*1024;
 const FINDINGS_PAGE_SIZE=100;
-const findingsList={mode:"findings",page:0,scopeKey:""};
+const findingsList={mode:"cves",page:0,scopeKey:""};
 /** Find a dashboard element by ID. */
 const $=id=>document.getElementById(id);
 /** Interpret supported boolean representations. */
@@ -43,7 +43,8 @@ const esc=value=>String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&
 /** Format a timestamp in UTC for display. */
 const formatUtc=value=>{const date=new Date(value);return Number.isFinite(date.getTime())?`${date.toISOString().slice(0,19).replace("T"," ")} UTC`:"Unknown UTC time";};
 /** Format a timestamp in the browser's local time zone. */
-const formatLocal=value=>{const date=new Date(value);return Number.isFinite(date.getTime())?date.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"numeric",minute:"2-digit",second:"2-digit",timeZoneName:"short"}):"Unknown local time";};
+const formatLocal=value=>{const date=new Date(value);if(!Number.isFinite(date.getTime()))return"Unknown local time";const pad=value=>String(value).padStart(2,"0"),zone=new Intl.DateTimeFormat(undefined,{timeZoneName:"short"}).formatToParts(date).find(part=>part.type==="timeZoneName").value;return`${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${zone}`;};
+const displayDateTime=(column,value)=>/(?:Utc|DateTime)$/.test(column)&&value?formatUtc(value):value;
 let reauthenticationStarted=false;
 /** Fetch a dashboard API and restart Easy Auth when the browser session expires. */
 async function apiFetch(path,options){
@@ -120,7 +121,7 @@ function setNavigationCollapsed(collapsed,persist=false){document.body.classList
 /** Keep the expanded desktop filter panel inside the visible viewport. */
 function sizeFilterPanel(){const panel=$("filterBar");if(panel.hidden||matchMedia("(max-width: 650px)").matches){panel.style.removeProperty("max-height");return;}const available=Math.max(240,window.innerHeight-panel.getBoundingClientRect().top-12);panel.style.setProperty("max-height",`${available}px`,"important");}
 /** Expand or collapse dashboard filters. */
-function setFilterExpanded(expanded,persist=false){$("filterBar").hidden=!expanded;document.querySelector(".workspace-controls")?.classList.toggle("filters-open",expanded);const label=expanded?"Hide filters":"Show filters";$("filterToggle").setAttribute("aria-expanded",String(expanded));$("filterToggle").setAttribute("aria-label",label);$("filterToggle").title=label;if(expanded)requestAnimationFrame(sizeFilterPanel);else $("filterBar").style.removeProperty("max-height");if(persist)localStorage.setItem("vulnerability-view.filters-expanded.v2",String(expanded));}
+function setFilterExpanded(expanded,persist=false){$("filterBar").hidden=!expanded;const controls=document.querySelector(".workspace-controls");controls?.classList.toggle("filters-open",expanded);const label=expanded?"Hide filters":"Show filters";$("filterToggle").setAttribute("aria-expanded",String(expanded));$("filterToggle").setAttribute("aria-label",label);$("filterToggle").title=label;$("filterToggle").textContent=expanded?"Filters open":"Filters";if(expanded){if(persist)controls?.scrollIntoView({block:"nearest"});requestAnimationFrame(sizeFilterPanel);}else $("filterBar").style.removeProperty("max-height");if(persist)localStorage.setItem("vulnerability-view.filters-expanded.v2",String(expanded));}
 window.addEventListener("resize",sizeFilterPanel);
 /** Apply presentation settings to dashboard content. */
 function applyPresentationConfig(){
@@ -201,7 +202,10 @@ function loadDashboardDatasets(){
 
 /** Initialize for the dashboard. */
 function initialize(){
-  [["severityFilter","severity"],["assetClassFilter","assetClass"],["subscriptionFilter","subscription"],["teamFilter","team"]].forEach(([id,key])=>$(id).addEventListener("change",event=>{state[key]=event.target.value;clearSelectedWorkItem();render();}));
+  for(const key of ["recommendationCatalogStatus","recommendationCatalogSort"])$(key).addEventListener("change",event=>{state[key]=event.target.value;clearSelectedWorkItem();render();});
+  $("recommendationWorkspaceFilters").addEventListener("click",event=>{event.stopPropagation();setFilterExpanded(true,true);});
+  $("resetRecommendationCatalog").addEventListener("click",()=>{state.recommendationCatalogStatus="All";state.recommendationCatalogSort="name";$("recommendationCatalogStatus").value="All";$("recommendationCatalogSort").value="name";clearSelectedWorkItem();render();});
+  [["severityFilter","severity"],["assetClassFilter","assetClass"],["osTypeFilter","osType"],["subscriptionFilter","subscription"],["teamFilter","team"]].forEach(([id,key])=>$(id).addEventListener("change",event=>{state[key]=event.target.value;clearSelectedWorkItem();render();}));
   $("exposureStatusFilter").addEventListener("change",event=>{state.exposureStatus=event.target.value;clearSelectedWorkItem();render();});
   $("pendingOnlyFilter").addEventListener("click",()=>{state.exposureStatus=state.exposureStatus==="PendingOnly"?"DetectedAndPending":"PendingOnly";$("exposureStatusFilter").value=state.exposureStatus;clearSelectedWorkItem();render();});
   $("hideNonReporting").addEventListener("change",event=>{state.hideNonReporting=event.target.checked;$("reportingDays").disabled=!state.hideNonReporting;clearSelectedWorkItem();render();});
@@ -227,6 +231,7 @@ function initialize(){
   $("customerLogoInput").addEventListener("change",event=>{const file=event.target.files?.[0];event.target.value="";uploadCustomerLogo(file);});
   $("navToggle").addEventListener("click",()=>setNavigationCollapsed(!document.body.classList.contains("nav-collapsed"),true));
   $("filterToggle").addEventListener("click",()=>setFilterExpanded($("filterBar").hidden,true));
+  $("closeFilter").addEventListener("click",()=>{setFilterExpanded(false,true);$("filterToggle").focus();});
   $("statisticsPeriod").addEventListener("change",event=>{state.statisticsPeriod=event.target.value;$("customPeriodFields").hidden=state.statisticsPeriod!=="custom";renderTrend();});
   $("applyStatisticsPeriod").addEventListener("click",renderTrend);
   $("executiveSnapshotPeriod").addEventListener("change",event=>{state.executiveSnapshotPeriod=event.target.value;$("executiveSnapshotCustom").hidden=state.executiveSnapshotPeriod!=="custom";renderExecutiveSnapshot();});
@@ -237,6 +242,7 @@ function initialize(){
   $("printExecutiveSnapshot").addEventListener("click",printExecutiveSnapshot);
   $("exportExecutiveSnapshotCsv").addEventListener("click",exportExecutiveSnapshotCsv);
   $("reportingEntity").addEventListener("change",event=>{state.reportingEntity=event.target.value;renderLifecycleReporting();});
+  $("reportingBreakdown").addEventListener("change",event=>{state.reportingBreakdown=event.target.value;renderLifecycleReporting();});
   $("reportingChange").addEventListener("change",event=>{state.reportingChange=event.target.value;renderLifecycleReporting();});
   $("exportReportingCsv").addEventListener("click",exportLifecycleCsv);
   $("openWorkflowHelp").addEventListener("click",()=>activateView("help"));
@@ -281,6 +287,7 @@ function rebuildDerivedState(){
 
 /** Activate view for the dashboard. */
 function activateView(view){
+  if(view==="priority"){view="recommendations";state.recommendationCatalogSort="priority";$("recommendationCatalogSort").value="priority";}
   const button=document.querySelector(`.story-nav button[data-view="${view}"]`),section=$(view);if(!button||!section)return;
   const viewChanged=state.activeView!==view;
   if(viewChanged)clearSelectedWorkItem();
@@ -505,9 +512,9 @@ function renderAvailability(){
 }
 
 /** Reset filters for the dashboard. */
-function resetFilters(){state.origin="Both";state.severity="All";state.exposureStatus="DetectedAndPending";state.assetClass="All";state.subscription="All";state.hideNonReporting=Boolean(filterConfig.defaultHideNonReporting);state.reportingDays=DEFAULT_REPORTING_DAYS;state.includeDiscoveredOnly=Boolean(filterConfig.defaultIncludeDiscoveredOnly);state.team="All";state.search="";state.newPeriod="day";state.newPeriodFilter=false;state.remediationPeriodFilter=false;state.latestRunChangesOnly=false;state.newPeriodStart="";state.newPeriodEnd="";state.recommendationTrackingFilter="All";state.recommendationTypes=new Set(DEFAULT_RECOMMENDATION_TYPES);state.domains=new Set(DEFAULT_DOMAINS);clearSelectedWorkItem();$("severityFilter").value="All";$("exposureStatusFilter").value="DetectedAndPending";$("assetClassFilter").value="All";$("subscriptionFilter").value="All";$("hideNonReporting").checked=state.hideNonReporting;$("reportingDays").value=String(state.reportingDays);$("reportingDays").disabled=!state.hideNonReporting;$("includeDiscoveredAssets").checked=state.includeDiscoveredOnly;$("teamFilter").value="All";$("recommendationTrackingFilter").value="All";$("searchFilter").value="";$("newPeriod").value="day";$("applyNewPeriodFilter").checked=false;$("newPeriodCustom").hidden=true;$("newPeriodStart").value="";$("newPeriodEnd").value="";document.querySelectorAll(".latest-run-changes-toggle").forEach(input=>input.checked=false);document.querySelectorAll('input[name="recommendationType"]').forEach(input=>input.checked=state.recommendationTypes.has(input.value));document.querySelectorAll('input[name="assetDomain"]').forEach(input=>input.checked=state.domains.has(input.value));render();}
+function resetFilters(){state.origin="Both";state.severity="All";state.exposureStatus="DetectedAndPending";state.assetClass="All";state.osType="All";state.subscription="All";state.hideNonReporting=Boolean(filterConfig.defaultHideNonReporting);state.reportingDays=DEFAULT_REPORTING_DAYS;state.includeDiscoveredOnly=Boolean(filterConfig.defaultIncludeDiscoveredOnly);state.team="All";state.search="";state.newPeriod="day";state.newPeriodFilter=false;state.remediationPeriodFilter=false;state.latestRunChangesOnly=false;state.newPeriodStart="";state.newPeriodEnd="";state.recommendationTrackingFilter="All";state.recommendationTypes=new Set(DEFAULT_RECOMMENDATION_TYPES);state.domains=new Set(DEFAULT_DOMAINS);clearSelectedWorkItem();$("severityFilter").value="All";$("exposureStatusFilter").value="DetectedAndPending";$("assetClassFilter").value="All";$("osTypeFilter").value="All";$("subscriptionFilter").value="All";$("hideNonReporting").checked=state.hideNonReporting;$("reportingDays").value=String(state.reportingDays);$("reportingDays").disabled=!state.hideNonReporting;$("includeDiscoveredAssets").checked=state.includeDiscoveredOnly;$("teamFilter").value="All";$("recommendationTrackingFilter").value="All";$("searchFilter").value="";$("newPeriod").value="day";$("applyNewPeriodFilter").checked=false;$("newPeriodCustom").hidden=true;$("newPeriodStart").value="";$("newPeriodEnd").value="";document.querySelectorAll(".latest-run-changes-toggle").forEach(input=>input.checked=false);document.querySelectorAll('input[name="recommendationType"]').forEach(input=>input.checked=state.recommendationTypes.has(input.value));document.querySelectorAll('input[name="assetDomain"]').forEach(input=>input.checked=state.domains.has(input.value));render();}
 /** Active filter items for the dashboard. */
-function activeFilterItems(classLabels,subscriptionScope,typeScope,domainScope){const items=[];if(state.severity!=="All")items.push(["Severity",state.severity]);if(state.exposureStatus!=="DetectedAndPending")items.push(["Exposure",{DetectedOnly:"Detected only",PendingOnly:"Pending verification only",ConfirmedFixed:"Confirmed fixed only",All:"All lifecycle states"}[state.exposureStatus]||state.exposureStatus]);if(state.assetClass!=="All")items.push(["Asset",classLabels[state.assetClass]]);if(state.subscription!=="All")items.push(["Subscription",subscriptionScope]);if(state.hideNonReporting)items.push(["Reporting",`Within ${state.reportingDays} days`]);if(state.team!=="All")items.push(["Queue",state.team]);if(state.newPeriodFilter)items.push(["First observed",newPeriodRange()?.label||"Invalid custom range"]);if(state.remediationPeriodFilter)items.push(["Remediation observed",newPeriodRange()?.label||"Invalid custom range"]);if(state.latestRunChangesOnly)items.push(["Run changes","New, reopened, or fixed since previous run"]);if(state.recommendationTrackingEnabled&&state.recommendationTrackingFilter!=="All")items.push(["Work status",recommendationTrackingLabel(state.recommendationTrackingFilter)]);if(state.recommendationTypes.size!==2)items.push(["Type",typeScope]);if(state.domains.size!==5)items.push(["Domains",domainScope]);if(state.search)items.push(["Search",state.search]);return items;}
+function activeFilterItems(classLabels,subscriptionScope,typeScope,domainScope){const items=[];if(state.severity!=="All")items.push(["Severity",state.severity]);if(state.exposureStatus!=="DetectedAndPending")items.push(["Exposure",{DetectedOnly:"Detected only",PendingOnly:"Pending verification only",ConfirmedFixed:"Confirmed fixed only",All:"All lifecycle states"}[state.exposureStatus]||state.exposureStatus]);if(state.assetClass!=="All")items.push(["Asset",classLabels[state.assetClass]]);if(state.osType!=="All")items.push(["OS Type",state.osType]);if(state.subscription!=="All")items.push(["Subscription",subscriptionScope]);if(state.hideNonReporting)items.push(["Reporting",`Within ${state.reportingDays} days`]);if(state.team!=="All")items.push(["Queue",state.team]);if(state.newPeriodFilter)items.push(["First observed",newPeriodRange()?.label||"Invalid custom range"]);if(state.remediationPeriodFilter)items.push(["Remediation observed",newPeriodRange()?.label||"Invalid custom range"]);if(state.latestRunChangesOnly)items.push(["Run changes","New, reopened, or fixed since previous run"]);if(state.recommendationTrackingEnabled&&state.recommendationTrackingFilter!=="All")items.push(["Work status",recommendationTrackingLabel(state.recommendationTrackingFilter)]);if(state.recommendationTypes.size!==2)items.push(["Type",typeScope]);if(state.domains.size!==5)items.push(["Domains",domainScope]);if(state.search)items.push(["Search",state.search]);return items;}
 /** Render scope for the dashboard. */
 function renderScope(current=filteredFindings().filter(open),recommendations=filteredRecommendations()){const classLabels={All:"All asset classifications",AzureCloud:"Azure / Cloud",TraditionalIT:"Traditional IT",Unknown:"Unknown classification"},subscriptionScope=state.subscription==="All"?"All subscriptions":state.subscription==="NoSubscription"?"No subscription":`Subscription ${subscriptionLabel(state.subscription)}`,activeButton=document.querySelector(".story-nav button.active"),activeView=activeButton?.dataset.view||state.activeView,typeScope=state.recommendationTypes.size===2?"All recommendation types":[...state.recommendationTypes].join(" + ")||"No recommendation types",domainScope=state.domains.size===5?"All asset domains":[...state.domains].join(" + ")||"No asset domains",parts=[state.severity==="All"?"All severities":state.severity,classLabels[state.assetClass],subscriptionScope],chips=activeFilterItems(classLabels,subscriptionScope,typeScope,domainScope);state.activeView=activeView;if(state.hideNonReporting)parts.push(`Reported within ${state.reportingDays} days`);if(state.team!=="All")parts.push(state.team);if(state.search)parts.push(`Search: “${state.search}”`);$("scopeSummary").textContent=parts.join(" · ");$("activeFilterChips").innerHTML=chips.length?chips.map(([label,value])=>`<span><b>${esc(label)}</b>${esc(value)}</span>`).join(""):`<span class="empty"><b>Filters</b>None applied</span>`;const bar=$("scopeBar");bar.classList.remove("scope-updated");requestAnimationFrame(()=>bar.classList.add("scope-updated"));}
 
@@ -550,11 +557,11 @@ function metricHelp(label){return({
 })[exposureLabel(label)]||"";}
 function cards(id,items,hint="Current filter context"){$(id).innerHTML=items.map(([value,label,itemHint])=>{const detail=itemHint??hint,help=metricHelp(label);return`<div class="metric"${help?` title="${esc(help)}"`:""}><span class="label${help?" metric-help":""}"${help?` tabindex="0" aria-label="${esc(`${exposureLabel(label)}. ${help}`)}"`:""}>${esc(exposureLabel(label))}</span><strong class="value">${typeof value==="number"?fmt(value):esc(value)}</strong>${detail?`<span class="hint">${esc(detail)}</span>`:""}</div>`;}).join("");}
 /** Header label for the dashboard. */
-function headerLabel(column){const labels={OpenFindings:"Active exposure instances",PendingFindings:"Pending exposure instances",EvidenceRecommendations:"Related recommendations",DetectedMachines:"Machines with detections",DetectedCVEs:"Distinct active CVEs",PendingCVEs:"CVEs with pending evidence",EvidenceRows:"Evidence rows",WorkAction:"Working here?",RemediationStarted:"Defender remediation started",TrackingStatus:"Dashboard work status",TrackingUpdatedBy:"Updated by",TrackingUpdatedUtc:"Updated UTC",SeverityScore:"Defender severity score",FixedWithinSLA:"Remediation observed within SLA",FixedOutsideSLA:"Remediation observed outside SLA",PendingVerification:"Pending verification",OpenOutsideSLA:"Detected findings overdue",SLACompliance:"Finding SLA compliance"};return labels[column]||column.replace(/([A-Z])/g," $1").trim().replace(/\bS L A\b/g,"SLA").replace(/\bC V E\b/g,"CVE").replace(/\bU T C\b/g,"UTC").replace(/\bI D\b/g,"ID");}
+function headerLabel(column){const labels={FixedCVEs:"CVEs fixed on this machine",FixedMachines:"Machines with this CVE fixed",CompletedWithinSLA:"Completed within SLA",CompletedLate:"Completed late",CompletedUnknownSLA:"Completed, unknown SLA",OverdueOutcomes:"Overdue machine/CVE outcomes",ExecutiveStatus:"Executive SLA status",OpenCVEs:"CVEs remaining",CVEsOpen:"Open CVEs",CVEsImproved:"CVEs improved",CVEsFullyResolved:"CVEs fully resolved",MachinesOpen:"Machines with open risk",MachinesImproved:"Machines improved",MachinesFullyResolved:"Machines fully resolved",RecommendationsOpen:"Open recommendations",SlaStatus:"SLA risk status",PendingEvidence:"Awaiting verification",OSPlatform:"OS Type",OSVersion:"OS Version",OSMetadataSource:"OS metadata source",OpenFindings:"Active exposure instances",PendingFindings:"Pending exposure instances",EvidenceRecommendations:"Related recommendations",DetectedMachines:"Machines with detections",DetectedCVEs:"Distinct active CVEs",PendingCVEs:"CVEs with pending evidence",EvidenceRows:"Evidence rows",WorkAction:"Working here?",RemediationStarted:"Defender remediation started",TrackingStatus:"Dashboard work status",TrackingUpdatedBy:"Updated by",TrackingUpdatedUtc:"Updated UTC",SeverityScore:"Defender severity score",FixedWithinSLA:"Remediation observed within SLA",FixedOutsideSLA:"Remediation observed outside SLA",PendingVerification:"Pending verification",OpenOutsideSLA:"Detected findings overdue",SLACompliance:"SLA compliance"};return labels[column]||column.replace(/([A-Z])/g," $1").trim().replace(/\bS L A\b/g,"SLA").replace(/\bC V E\b/g,"CVE").replace(/\bU T C\b/g,"UTC").replace(/\bI D\b/g,"ID");}
 /** Render compact work status beneath a recommendation name. */
 function recommendationWorkStatus(row){if(!state.recommendationTrackingEnabled||!Object.hasOwn(row,"TrackingStatus"))return"";const status=row.TrackingStatus||"Untracked",details=[row.TrackingUpdatedBy&&row.TrackingUpdatedBy!=="—"?row.TrackingUpdatedBy:"",row.TrackingUpdatedUtc&&row.TrackingUpdatedUtc!=="—"?row.TrackingUpdatedUtc:""].filter(Boolean).join(" · ");return`<span class="recommendation-work-status"><span class="tracking-status ${esc(status)}">${esc(recommendationTrackingLabel(status))}</span>${details?`<small>${esc(details)}</small>`:""}</span>`;}
 /** Table for the dashboard. */
-function table(id,columns,rows,onClick=false){const element=$(id),help=column=>{const description=metricHelp(headerLabel(column));return description?` title="${esc(description)}"`:"";};element.innerHTML=`<thead><tr>${columns.map(column=>`<th${help(column)}>${esc(headerLabel(column))}</th>`).join("")}</tr></thead><tbody>${rows.map((row,index)=>`<tr data-index="${index}">${columns.map(column=>`<td${help(column)}>${cell(column,row[column],row)}</td>`).join("")}</tr>`).join("")}</tbody>`;element.querySelectorAll("a").forEach(link=>link.addEventListener("click",event=>{event.stopPropagation();if(link.classList.contains("recommendation-handoff")){const recommendation=rows[Number(link.closest("tr").dataset.index)];navigator.clipboard?.writeText(`${recommendation.RecommendationName}\nRecommendation ID: ${recommendation.RecommendationId}`).catch(()=>{dashboardStatus(`Copy unavailable. Search Defender for recommendation ${recommendation.RecommendationId}.`);});}}));if(onClick){const handler=typeof onClick==="function"?onClick:showDetail;element.querySelectorAll("tbody tr").forEach((tr,index)=>{tr.tabIndex=0;tr.addEventListener("click",()=>handler(rows[index]));tr.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();handler(rows[index]);}});});}}
+function table(id,columns,rows,onClick=false){const element=$(id),help=column=>{const description=metricHelp(headerLabel(column));return description?` title="${esc(description)}"`:"";};element.innerHTML=`<thead><tr>${columns.map(column=>`<th${help(column)}>${esc(headerLabel(column))}</th>`).join("")}</tr></thead><tbody>${rows.map((row,index)=>`<tr data-index="${index}">${columns.map(column=>`<td${help(column)}>${cell(column,displayDateTime(column,row[column]),row)}</td>`).join("")}</tr>`).join("")}</tbody>`;element.querySelectorAll("a").forEach(link=>link.addEventListener("click",event=>{event.stopPropagation();if(link.classList.contains("recommendation-handoff")){const recommendation=rows[Number(link.closest("tr").dataset.index)];navigator.clipboard?.writeText(`${recommendation.RecommendationName}\nRecommendation ID: ${recommendation.RecommendationId}`).catch(()=>{dashboardStatus(`Copy unavailable. Search Defender for recommendation ${recommendation.RecommendationId}.`);});}}));if(onClick){const handler=typeof onClick==="function"?onClick:showDetail;element.querySelectorAll("tbody tr").forEach((tr,index)=>{tr.tabIndex=0;tr.addEventListener("click",()=>handler(rows[index]));tr.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();handler(rows[index]);}});});}}
 /** Render statistics cards for the dashboard. */
 function renderStatisticsCards(current,previous){
   const netRows=[...current._newRows.map(row=>({...row,EvidenceCategory:"New"})),...current._fixedRows.map(row=>({...row,EvidenceCategory:"Fixed"}))],items=[
@@ -593,7 +600,7 @@ function renderLifecycleReporting(){
   const values=definitions.map(([key,label,mode])=>[mode==="sum"?rows.reduce((total,row)=>total+Number(row[key]||0),0):Number(ending[key]||0),label]);
   $("lifecycleCards").innerHTML=values.map(([value,label])=>`<div class="metric"><span class="label">${esc(label)}</span><strong class="value">${fmt(value)}</strong><span class="hint">${esc(periodRangeLabel(range.start,range.end))} UTC</span></div>`).join("");
   const coverage=entity==="recommendations"?ending.RecommendationHistoryStartUtc:ending.FindingHistoryStartUtc;
-  $("lifecycleCoverage").textContent=`${entity[0].toUpperCase()+entity.slice(1)} lifecycle coverage begins ${coverage?new Date(coverage).toLocaleString():"with the first upgraded collector run"}. Counts use ${entity==="findings"?"finding instances":entity}, not interchangeable units.`;
+  $("lifecycleCoverage").textContent=`${entity[0].toUpperCase()+entity.slice(1)} lifecycle coverage begins ${coverage?formatUtc(coverage):"with the first upgraded collector run"}. Counts use ${entity==="findings"?"finding instances":entity}, not interchangeable units.`;
   const detailRows=lifecycleEvidence(entity,range.start,range.end),changeLabel={Fixed:"Confirmed fixed",PendingConfirmation:"Pending confirmation",PendingVerification:"Pending verification",DetectionReturned:"Detection returned",New:"New",Reopened:"Reopened after confirmation",All:"All changes"}[state.reportingChange];
   $("reportingChange").value=state.reportingChange;
   $("lifecycleDetailTitle").textContent=`${changeLabel} ${entity} detail`;
@@ -692,7 +699,7 @@ function latestSecureScore(){
 /** Render secure score for the dashboard. */
 function renderSecureScore(){
   const score=latestSecureScore(),percent=score?Number(score.ScorePercent||Number(score.CurrentScore||0)/Math.max(1,Number(score.MaxScore||0))*100):0,average=Number(score?.AllTenantsAverageScore||0),delta=percent-average;
-  $("secureScoreCard").innerHTML=score?`<div class="secure-score-heading"><span>MICROSOFT SECURE SCORE</span><strong>${esc(score.DataOrigin||"Current")} evidence</strong></div><div class="secure-score-body"><div class="score-ring" style="--score:${Math.max(0,Math.min(100,percent))}"><strong>${percent.toFixed(1)}%</strong><span>attained</span></div><div class="secure-score-detail"><h3>${fmt(score.CurrentScore)} of ${fmt(score.MaxScore)} points</h3><p>${delta>=0?`${delta.toFixed(1)} points above`:`${Math.abs(delta).toFixed(1)} points below`} the reported tenant average of ${average.toFixed(1)}%.</p><small>Updated ${esc(new Date(score.CreatedDateTime||score.SnapshotTimeUtc).toLocaleDateString())}</small></div></div>`:`<div class="secure-score-heading"><span>MICROSOFT SECURE SCORE</span></div><div class="secure-score-empty"><strong>Not available</strong><p>Secure Score was not present in this snapshot.</p></div>`;
+  $("secureScoreCard").innerHTML=score?`<div class="secure-score-heading"><span>MICROSOFT SECURE SCORE</span><strong>${esc(score.DataOrigin||"Current")} evidence</strong></div><div class="secure-score-body"><div class="score-ring" style="--score:${Math.max(0,Math.min(100,percent))}"><strong>${percent.toFixed(1)}%</strong><span>attained</span></div><div class="secure-score-detail"><h3>${fmt(score.CurrentScore)} of ${fmt(score.MaxScore)} points</h3><p>${delta>=0?`${delta.toFixed(1)} points above`:`${Math.abs(delta).toFixed(1)} points below`} the reported tenant average of ${average.toFixed(1)}%.</p><small>Updated ${esc(formatUtc(score.CreatedDateTime||score.SnapshotTimeUtc))}</small></div></div>`:`<div class="secure-score-heading"><span>MICROSOFT SECURE SCORE</span></div><div class="secure-score-empty"><strong>Not available</strong><p>Secure Score was not present in this snapshot.</p></div>`;
 }
 /** Render decision metrics for the dashboard. */
 function renderDecisionMetrics(id,items){$(id).innerHTML=items.map(item=>`<button type="button" class="decision-metric" data-target="${esc(item.target)}"${item.anchor?` data-anchor="${esc(item.anchor)}"`:""}${item.severity?` data-severity="${esc(item.severity)}"`:""}${metricHelp(item.label)?` title="${esc(metricHelp(item.label))}"`:""} aria-label="${esc(`${exposureLabel(item.label)}: ${item.value}. ${metricHelp(item.label)} View details`)}"><span${metricHelp(item.label)?' class="metric-help"':""}>${esc(exposureLabel(item.label))}</span><strong>${typeof item.value==="number"?fmt(item.value):esc(item.value)}</strong><small>${esc(item.detail)}</small>${item.delta?`<small class="metric-delta ${esc(item.delta.tone)}">${esc(item.delta.text)}</small>`:""}<span class="metric-action">View details &rarr;</span></button>`).join("");$(id).querySelectorAll(".decision-metric").forEach(button=>button.addEventListener("click",()=>{if(button.dataset.severity){state.severity=button.dataset.severity;$("severityFilter").value=state.severity;}document.querySelector(`.story-nav button[data-view="${button.dataset.target}"]`)?.click();if(button.dataset.anchor)requestAnimationFrame(()=>document.getElementById(button.dataset.anchor)?.scrollIntoView({block:"start"}));}));}
@@ -709,7 +716,7 @@ function renderRecommendationImpactGrid(id,recommendations,limit){
   $(id).querySelectorAll(".recommendation-impact-card").forEach(button=>button.addEventListener("click",()=>pivotToRecommendation(rows[Number(button.dataset.index)])));
 }
 /** Recommendation preview markup for the dashboard. */
-function recommendationPreviewMarkup(row){return`<div class="impact-card-heading"><span class="severity ${esc(row.RecommendationSeverity)}">${esc(row.RecommendationSeverity)}</span><b title="Source value from Defender recommendations">Defender score ${esc(row.SeverityScore)}</b></div><h4>${esc(row.RecommendationName)}</h4><p>${esc(row.RecommendedVersion||row.ProductName||"Apply the Defender recommendation")}</p><dl><div><dt>Open findings</dt><dd>${fmt(row.OpenFindings)}</dd></div><div><dt>Workloads</dt><dd>${fmt(row.ActionableWorkloads)}</dd></div><div><dt>Instances</dt><dd>${fmt(row.AffectedMachines)}</dd></div><div><dt>CVEs</dt><dd>${fmt(row.CveCount)}</dd></div></dl><div class="impact-mix"><strong>Vulnerability mix</strong><span>${esc(row.VulnerabilityMix)}</span></div><div class="impact-cves">${esc(row.CveExamples)}</div><footer>${esc(row.FixImpact)}<span>Select row for full details →</span></footer>`;}
+function recommendationPreviewMarkup(row){return`<div class="impact-card-heading"><span class="severity ${esc(row.RecommendationSeverity)}">${esc(row.RecommendationSeverity)}</span><b title="Source value from Defender recommendations">Defender score ${esc(row.SeverityScore)}</b></div><h4>${esc(row.RecommendationName)}</h4><p>${esc(row.RecommendedVersion||row.ProductName||"Apply the Defender recommendation")}</p><dl><div><dt>Machines</dt><dd>${fmt(row.AffectedMachines)}</dd></div><div><dt>Unique CVEs</dt><dd>${fmt(row.CveCount)}</dd></div><div><dt>Workload groups</dt><dd>${fmt(row.ActionableWorkloads)}</dd></div></dl><div class="impact-cves">${esc(row.TopCves||"")}</div><footer>Machine and vulnerability impact<span>Supporting details and evidence →</span></footer>`;}
 /** Bind recommendation previews for the dashboard. */
 function bindRecommendationPreviews(tableId,rows){
   const preview=$("recommendationPreview"),tableElement=$(tableId),tableRows=[...tableElement.querySelectorAll("tbody tr")],impactById=new Map(recommendationImpactRows(filteredRecommendations()).map(row=>[String(row.RecommendationId||""),row])),previewRows=rows.map(row=>{const impact=impactById.get(String(row.RecommendationId||""));return impact?{...impact,...row}:null;});let timer;
@@ -830,8 +837,7 @@ function renderTaskDueHistory(latestDate){const latest=new Date(`${latestDate}T2
 function shiftUtcDate(date,days){const shifted=new Date(`${date}T00:00:00Z`);shifted.setUTCDate(shifted.getUTCDate()+days);return shifted.toISOString().slice(0,10);}
 /** Period range label for the dashboard. */
 function periodRangeLabel(start,end){
-  /** Format a UTC date for a period label. */
-  const format=value=>new Date(`${value}T00:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"});return start===end?format(start):`${format(start)} – ${format(end)}`;}
+  return start===end?start:`${start} – ${end}`;}
 /** Comparable run dates for the dashboard. */
 function comparableRunSnapshots(){const history=[...state.findingEvents,...state.runs],preferred=state.origin==="Both"?history.filter(row=>row.DataOrigin==="Live"):history.filter(row=>row.DataOrigin===state.origin),rows=preferred.length?preferred:history,grouped=new Map();rows.forEach(row=>{const timestamp=String(row.SnapshotTimeUtc||row.EventTimeUtc||"");if(!timestamp)return;const key=String(row.CollectionRunId||timestamp),item=grouped.get(key)||{timestamp,time:new Date(timestamp).getTime(),failed:false};item.failed||=row.RunStatus==="Failed";grouped.set(key,item);});return[...grouped.values()].filter(row=>Number.isFinite(row.time)&&!row.failed).sort((a,b)=>a.time-b.time).slice(-2);}
 /** Comparable run dates for period reporting. */
@@ -1077,8 +1083,10 @@ function dashboardFilters(){
 
 function dashboardRequest(view=state.activeView,tableId=null,page=0){
   const request={snapshotId:dashboardQuery.snapshot?.snapshotId,view,filters:dashboardFilters(),mode:view==="overview"?findingsList.mode:"findings",page,limit:FINDINGS_PAGE_SIZE};
+  request.filters.includeFindingEvidence=Boolean($(view+"TechnicalEvidence")?.open||view==="trend"&&$("trendWorkflowEvidence")?.open);
+  if(tableId?.includes("Management"))request.limit=10;
   if(tableId)request.table=tableId;
-  if(view==="detail")request.selection=state.selectedEntity;
+  if(view==="detail"){request.selection=state.selectedEntity;request.filters.managementSourceView=state.pivotSourceLabel||state.activeView;}
   return request;
 }
 
@@ -1450,7 +1458,9 @@ function renderDashboardTable(id,result,view){
 
 function renderDashboardFacets(facets){
   if(!facets)return;
-  const teams=facets.teams||[],subscriptions=facets.subscriptions||[];
+  const teams=facets.teams||[],subscriptions=facets.subscriptions||[],osTypes=facets.osTypes||[];
+  $("osTypeFilter").innerHTML=`<option value="All">All operating systems</option>${osTypes.map(os=>`<option value="${esc(os)}">${esc(os)}</option>`).join("")}`;
+  $("osTypeFilter").value=state.osType;
   state.subscriptionInventoryById.clear();
   subscriptions.forEach(row=>{const id=String(row.SubscriptionId||row.subscriptionId||row.id||"");if(id)state.subscriptionInventoryById.set(id,row);});
   const subscriptionOptions=subscriptions.map(row=>{const id=String(row.SubscriptionId||row.subscriptionId||row.id||"");return`<option value="${esc(id)}">${esc(row.SubscriptionName||row.DisplayName||row.displayName||row.name||id)}</option>`;}).join("");
@@ -1467,6 +1477,41 @@ function renderDashboardFacets(facets){
 function renderDashboardChart(id,chart){
   id=({executiveSnapshotSubscriptionConcentration:"executiveSubscriptionConcentration",executiveSnapshotOwnerConcentration:"executiveOwnerConcentration"})[id]||id;
   if(!$(id))return;
+  if(chart.kind==="entity-severity"){
+    if(chart.available===false){$(id).innerHTML='<p class="coverage-note">No retained observations cover this period; historical severity totals are unavailable, not zero.</p>';return;}
+    $(id).innerHTML=[["machines","Machines / workload instances"],["cves","Unique CVEs"]].map(([key,title])=>`
+      <article class="panel severity-summary" data-severity-entity="${key}">
+        <div class="panel-title"><h3>${title} by severity</h3></div>
+        <div class="severity-total-grid">${(chart.rows||[]).filter(row=>row.label!=="Unknown"||Number(row[key])>0).map(row=>`
+          <div class="severity-total severity-${esc(String(row.label).toLowerCase())}">
+            <span>${esc(row.label)}</span><strong>${fmt(row[key])}</strong>
+          </div>`).join("")}</div>
+      </article>`).join("");
+    return;
+  }
+  if(chart.kind==="sla-status"){
+    if(chart.available===false){$(id).innerHTML='<p class="coverage-note">SLA status is unavailable before retained observations.</p>';return;}
+    const columns=[["openWithin","Open within deadline"],["openOverdue","Open overdue"],["completedWithin","Completed on time"],["completedLate","Completed late"],["unknownDeadline","Unknown deadline"]];
+    $(id).innerHTML=`<div class="table-wrap"><table class="sla-status-table"><caption>Machine/CVE SLA outcomes by severity</caption>
+      <thead><tr><th scope="col">Severity</th>${columns.map(([,label])=>`<th scope="col">${esc(label)}</th>`).join("")}</tr></thead>
+      <tbody>${(chart.rows||[]).map(row=>`<tr><th scope="row">${esc(row.label)}</th>${columns.map(([key])=>`<td>${fmt(row[key])}</td>`).join("")}</tr>`).join("")}</tbody>
+      </table></div>`;
+    return;
+  }
+  if(chart.kind==="sla-completion"){
+    $(id).innerHTML=(chart.rows||[]).map(row=>{
+      const assessed=Number(row.assessed),within=Number(row.within),late=Number(row.late);
+      const outcome=assessed>0?`${within.toFixed(1)}% on time · ${fmt(row.completedWithin)} / ${fmt(assessed)} assessed completions`:"Not assessed — no completed outcomes with known deadlines";
+      return`<div class="sla-completion-row">
+        <strong>${esc(row.label)}</strong><span>${esc(outcome)}</span>
+        <div class="sla-completion-track" role="img" aria-label="${esc(`${row.label}: ${outcome}`)}">
+          ${assessed>0?`<i class="sla-completion-within" style="width:${Math.max(0,Math.min(100,within))}%"></i><i class="sla-completion-late" style="width:${Math.max(0,Math.min(100,late))}%"></i>`:""}
+        </div>
+        <small>${fmt(row.completedWithin)} on time · ${fmt(row.completedLate)} late · ${fmt(row.completedUnknown)} completed with unknown deadlines (excluded)</small>
+      </div>`;
+    }).join("");
+    return;
+  }
   if(chart.kind==="meter"){
     const value=chart.value==null?null:Number(chart.value),target=Number(state.slaPolicy?.complianceTargetPercent),hasTarget=Number.isFinite(target)&&target>0&&target<=100;
     $(id).style.width=`${Math.max(0,Math.min(100,value||0))}%`;
@@ -1477,17 +1522,17 @@ function renderDashboardChart(id,chart){
     return;
   }
   const rows=chart.rows||[],series=chart.series||[];
-  let maximum=1;
+  let maximum=chart.unit==="percent"?100:1;
   for(const row of rows)for(const item of series)maximum=Math.max(maximum,Number(row[item.key]||0));
   if(chart.kind==="line"||chart.kind==="bars"){
-    const width=960,height=260,pad=36,plotHeight=height-pad*2,plotWidth=width-pad*2,colors=["#1673c9","#21835b","#c83d4d","#d68a16"],x=index=>pad+(rows.length>1?index/(rows.length-1)*plotWidth:plotWidth/2),y=value=>height-pad-Math.max(0,Number(value||0))/maximum*plotHeight,label=row=>String(row.label||row.date||row.timestamp||"").slice(0,10),every=Math.max(1,Math.ceil(rows.length/8));
+    const width=960,height=260,pad=36,plotHeight=height-pad*2,plotWidth=width-pad*2,colors=["#1673c9","#21835b","#c83d4d","#d68a16"],x=index=>pad+(rows.length>1?index/(rows.length-1)*plotWidth:plotWidth/2),y=value=>height-pad-Math.max(0,Number(value||0))/maximum*plotHeight,label=row=>String(row.label||row.date||row.timestamp||""),every=Math.max(1,Math.ceil(rows.length/8));
     const chartSeries=series.map((item,seriesIndex)=>{
       const color=colors[seriesIndex%colors.length],points=rows.map((row,index)=>`${x(index)},${y(row[item.key])}`).join(" ");
       if(chart.kind==="line")return`<polyline fill="none" stroke="${color}" stroke-width="2.5" points="${points}"/>${rows.map((row,index)=>`<circle cx="${x(index)}" cy="${y(row[item.key])}" r="3" fill="${color}"><title>${esc(`${label(row)} · ${item.label||item.key}: ${fmt(row[item.key])}`)}</title></circle>`).join("")}`;
       const groupWidth=plotWidth/Math.max(1,rows.length),barWidth=Math.max(2,groupWidth/(series.length+1));
       return rows.map((row,index)=>`<rect fill="${color}" x="${pad+index*groupWidth+seriesIndex*barWidth}" y="${y(row[item.key])}" width="${barWidth}" height="${height-pad-y(row[item.key])}"><title>${esc(`${label(row)} · ${item.label||item.key}: ${fmt(row[item.key])}`)}</title></rect>`).join("");
     }).join("");
-    $(id).innerHTML=rows.length?`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Snapshot-pinned exposure movement"><line x1="${pad}" y1="${height-pad}" x2="${width-pad}" y2="${height-pad}" stroke="#9bb0bf"/><text x="${pad}" y="18">${fmt(maximum)}</text>${chartSeries}${rows.map((row,index)=>index%every===0||index===rows.length-1?`<text x="${x(index)}" y="${height-10}" text-anchor="middle">${esc(label(row).slice(5))}</text>`:"").join("")}</svg><div class="server-chart-legend">${series.map((item,index)=>`<span><i style="background:${colors[index%colors.length]}"></i>${esc(item.label||item.key)}</span>`).join("")}</div>`:"No matching chart data.";
+    $(id).innerHTML=rows.length?`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Snapshot-pinned management chart"><line x1="${pad}" y1="${height-pad}" x2="${width-pad}" y2="${height-pad}" stroke="#9bb0bf"/><text x="${pad}" y="18">${fmt(maximum)}${chart.unit==="percent"?"%":""}</text>${chartSeries}${rows.map((row,index)=>index%every===0||index===rows.length-1?`<text x="${chart.kind==="bars"?pad+(index+.5)*plotWidth/rows.length:x(index)}" y="${height-10}" text-anchor="middle">${esc(/^\d{4}-\d{2}-\d{2}/.test(label(row))?label(row).slice(5,10):label(row))}</text>`:"").join("")}</svg><div class="server-chart-legend">${series.map((item,index)=>`<span><i style="background:${colors[index%colors.length]}"></i>${esc(item.label||item.key)}</span>`).join("")}</div>`:"No completed SLA outcomes with known deadlines in this scope.";
     return;
   }
   $(id).innerHTML=rows.map(row=>`<div class="server-chart-group"><strong>${esc(row.label||row.date||row.timestamp||row.Date||row.Severity||row.name||row.key||"")}</strong>${series.map(item=>`<div class="server-chart-row"><span>${esc(item.label||item.key)}</span><i class="server-bar ${esc(item.className||"")}" style="width:${Math.max(0,Number(row[item.key]||0))/maximum*65}%"></i><strong>${esc(row[item.key]??"—")}</strong></div>`).join("")}${chart.kind==="concentration"?`<small>${fmt(row.criticalHigh)} Critical/High findings · ${fmt(row.machines)} machines</small>`:""}</div>`).join("")||"No matching chart data.";
@@ -1514,6 +1559,9 @@ function bindDashboardCardActions(id,items){
 }
 
 function renderDashboardResponse(payload,view,tableId){
+  ensureManagementReport(view);
+  renderManagementSla(view,payload.metadata?.management?.sla);
+  if(view==="trend")$("lifecycleOsBreakdown").hidden=state.reportingBreakdown==="All";
   const selectedRecommendation=state.recommendationsById.get(state.selectedRecommendationId);
   state.recommendationsById.clear();
   if(selectedRecommendation)state.recommendationsById.set(state.selectedRecommendationId,selectedRecommendation);
@@ -1527,7 +1575,10 @@ function renderDashboardResponse(payload,view,tableId){
       renderSecureScore();
     }
     const scope=payload.scope||{};
-    $("filterCount").textContent=`${fmt(scope.detected)} detected · ${fmt(scope.pending)} pending · ${fmt(scope.recommendations)} recommendations`;
+    const management=payload.metadata?.management?.periods?.[0];
+    $("filterCount").textContent=management
+      ?`${fmt(management.machines.Open)} machines with open risk · ${fmt(management.cves.Open)} unique open CVEs · ${fmt(management.recommendations.Open)} open recommendations`
+      :`${fmt(scope.detectedCves)} detected CVEs · ${fmt(scope.pendingCves)} CVEs awaiting verification · ${fmt(scope.recommendations)} recommendations`;
     // Scope text/chips use only the serialized filters, not the unloaded findings.
     renderScope([],[]);
     const activityIds={newFindings:"newFindingCount",newCves:"newCveCount",newMachines:"newMachineCount",newRecommendations:"newRecommendationCount",fixedFindings:"fixedWindowFindingCount",fixedCves:"fixedWindowCveCount",fixedMachines:"fixedWindowMachineCount",fixedRecommendations:"fixedWindowRecommendationCount"};
@@ -1538,16 +1589,96 @@ function renderDashboardResponse(payload,view,tableId){
     $("availabilityItems").innerHTML=`<span class="header-status-item available"><i aria-hidden="true"></i><strong>Pinned snapshot</strong><span>${esc(dashboardQuery.snapshot.runId||dashboardQuery.snapshot.snapshotId)}</span></span>`;
   }
   for(const [id,items] of Object.entries(payload.cards||{}))if($(id)){cards(id,items,"");bindDashboardCardActions(id,items);}
-  for(const [id,text] of Object.entries(payload.texts||{}))if($(id)&&!["freshnessText","freshnessLocalText"].includes(id))$(id).textContent=text;
+  for(const [id,text] of Object.entries(payload.texts||{}))if($(id)&&!["freshnessText","freshnessLocalText","filterCount"].includes(id))$(id).textContent=text;
   for(const [id,result] of Object.entries(payload.tables||{}))if(!tableId||id===tableId)renderDashboardTable(id,result,view);
   if(view==="executiveSnapshot"){
     const severityRows=payload.tables?.executiveSnapshotSlaTable?.items;
-    if(severityRows)renderDashboardChart("executiveSnapshotSeverity",{kind:"severity",rows:severityRows.map(row=>({label:row.Severity,value:row.OpenAtPeriodEnd||0})),series:[{key:"value",label:"Open findings"}]});
+    if(severityRows&&!("management" in (payload.metadata||{})))renderDashboardChart("executiveSnapshotSeverity",{kind:"severity",rows:severityRows.map(row=>({label:row.Severity,value:row.OpenAtPeriodEnd||0})),series:[{key:"value",label:"Open findings"}]});
     $("executiveSnapshotGenerated").textContent=`Pinned snapshot: ${formatUtc(dashboardQuery.snapshot.snapshotTimeUtc)}`;
   }
   for(const [id,items] of Object.entries(payload.donuts||{}))if($(id))renderDonut(id,items);
   for(const [id,graph] of Object.entries(payload.slaGraphs||{}))if($(id))renderSlaBarGraph(id,graph.rows||[],graph.series||[]);
   for(const [id,chart] of Object.entries(payload.charts||{}))renderDashboardChart(id,chart);
+}
+
+function ensureManagementReport(view){
+  const root=$(view+"Management");
+  if(!root||root.dataset.initialized)return;
+  root.dataset.initialized="true";
+  const prefix=view+"Management";
+  const slaSnapshot=`
+    <article class="panel management-sla-snapshot" aria-label="Quick SLA status by severity">
+      <div class="panel-title"><h3>Current SLA status by severity</h3><span>Counts, not completion percentages</span></div>
+      <div id="${prefix}SlaSnapshot"></div>
+      <p class="coverage-note">One CVE on one machine is one SLA outcome; software/version duplicates do not multiply counts.
+        Open status is assessed at the pinned snapshot; completions are in the stated reporting period.
+        Pending verification remains open. Unknown deadline includes open and completed outcomes without a conclusive deadline assessment.
+        Known overdue or late outcomes take precedence over missing evidence. Detailed SLA analysis is available in Executive Snapshot and Reporting.</p>
+    </article>`;
+  root.innerHTML=`
+    <section class="management-report" aria-label="Machine and vulnerability management summary">
+      <div class="section-heading"><div><span>MACHINES AND VULNERABILITIES</span><h2>${view==="executive"?"Current machines and vulnerabilities":"Open risk and confirmed progress"}</h2></div></div>
+      <p id="${prefix}Context" class="coverage-note"></p>
+      <div id="${prefix}Cards" class="metric-grid"></div>
+      <div id="${prefix}Severity" class="management-severity"></div>
+      <p class="coverage-note">Each machine/workload instance is counted once, at its highest remaining CVE severity in this scope.
+        Workload groups are not collapsed into a single machine. Each unique CVE is counted once at its highest remaining severity across the selected machines.
+        Unknown severity is shown separately when present; pending verification remains open.
+        A CVE on 500 machines is one vulnerability, not 500 vulnerabilities.</p>
+      ${view==="executive"?slaSnapshot:`
+      <section class="management-sla" aria-label="Machine and CVE SLA tracking">
+        ${slaSnapshot}
+        <div class="subsection-heading"><div><span>MACHINE / CVE SLA</span><h3>Confirmed remediation against policy deadlines</h3></div></div>
+        <div id="${prefix}SlaStatus" class="management-sla-status" role="status"></div>
+        <p id="${prefix}SlaPolicy" class="coverage-note"></p>
+        <p class="coverage-note">Each CVE has one SLA outcome on each machine, regardless of software/version duplicates.
+          A CVE is fixed on that machine only when all matching evidence is confirmed cleared.
+          Completion uses the last confirmed removal and the earliest applicable deadline; missing deadlines remain unknown unless lateness is already known.
+          Compliance = on-time completed machine/CVE outcomes ÷ completed outcomes with known deadlines. Open, pending, and unknown outcomes are excluded from that percentage, not counted as success.</p>
+        <div class="executive-snapshot-grid">
+          <article class="panel"><div class="panel-title"><h3>On-time rate of completed outcomes by severity</h3><span>Not the percentage of open risk remediated</span></div><div id="${prefix}SlaSeverity"></div></article>
+          <article class="panel"><div class="panel-title"><h3>Machine progress by reporting period</h3><span>Improved and fully resolved are separate</span></div><div id="${prefix}Movement"></div></article>
+        </div>
+      </section>
+      <div class="subsection-heading"><div><h3>Remediation progress in the selected period</h3></div></div>
+      <div id="${prefix}Progress" class="metric-grid"></div>
+      <p class="management-definitions"><strong>Improved:</strong> at least one machine/CVE outcome completed, but risk remains.
+        Recommendation progress can also represent confirmed partial exposure removal.
+        <strong>Fully resolved:</strong> confirmed remediation occurred in the period and no unresolved exposure remains in the selected scope.
+        Each machine and each CVE is counted once in its own total; pending verification remains open.
+        Stale or unknown evidence also remains unresolved unless confirmed cleared.
+        Overdue and verification counts are subsets and may overlap.
+        A CVE on 500 machines is one vulnerability, not 500 vulnerabilities.</p>
+      <p class="coverage-note">Overdue means at least one unresolved exposure is past its policy SLA. Unknown deadlines are not treated as compliant.
+        Status uses the selected snapshot and full workspace scope, not only changed rows or the exposure-status toggle.
+        It does not certify resolution outside the selected filters. Earlier periods are reconstructed from retained lifecycle timestamps.</p>
+      <article class="panel"><div class="panel-title"><h3>Period comparison</h3><span>Distinct entity totals, not added finding instances</span></div><div class="table-wrap"><table id="${prefix}ComparisonTable"></table></div></article>
+      ${[["Machine","Machines"],["Cve","Vulnerabilities (unique CVEs)"],["Recommendation","Recommendations"]].map(([key,label])=>`
+        <details class="management-detail"${key==="Recommendation"?" open":""}><summary>${label}: status and progress</summary>
+          <div class="table-wrap"><table id="${prefix}${key}Table"></table></div>
+        </details>`).join("")}`}
+    </section>`;
+}
+
+function renderManagementSla(view,sla){
+  const prefix=view+"Management",root=$(prefix+"SlaStatus");
+  if(!root||!sla)return;
+  const current=sla.periods?.[0];
+  if(!current)return;
+  const compliance=current.CompliancePercent==null?"Not assessed":`${Number(current.CompliancePercent).toFixed(1)}%`;
+  const outcomes=current.outcomes,history=sla.history;
+  const counts=outcomes?`${fmt(outcomes.WithinSLA)} / ${fmt(outcomes.WithinSLA+outcomes.LateSLA)} assessed completions were on time · ${fmt(outcomes.LateSLA)} late · ${fmt(outcomes.UnknownSLA)} completed with unknown deadlines (excluded).`:"Completed-outcome counts unavailable for this response.";
+  root.innerHTML=`<strong>${esc(compliance)} on-time rate among assessed machine/CVE completions</strong>
+    <span>${esc(counts)}</span>
+    <span>This is not overall remediation progress. Open-risk machine and CVE totals above are excluded from this completion percentage.</span>
+    <span>Existing recorded deadlines remain in force; this deployment does not restart the SLA clock.
+      Tracking updates when a new successful collection supplies evidence. Results are assessed at the pinned snapshot time.</span>
+    ${history?.startUtc?`<span>Retained history begins ${esc(formatUtc(history.startUtc))} · ${fmt(history.snapshots)} recorded snapshots. Earlier CVE catalog dates are not machine-observation history.</span>`:"<span>Retained run-history coverage is unavailable; long-term SLA performance cannot be established.</span>"}
+    ${sla.coverageGap?"<span>Coverage gap: some evidence has no machine or CVE identifier and cannot receive a machine/CVE SLA outcome.</span>":""}`;
+  const policies=state.slaPolicy?.policies||[];
+  $(prefix+"SlaPolicy").textContent=policies.length
+    ?`Retained SLA policy: ${policies.map(policy=>`${policy.severity}${policy.knownExploitRequired?" + known exploit":""}: ${fmt(policy.slaDays)} days`).join(" · ")}. Deadlines are read from existing snapshot data.`
+    :"Deadlines use existing snapshot data. A retained severity policy is unavailable; missing deadlines are not treated as compliant.";
 }
 
 function openDashboardDetail(selection,row={}){
@@ -1580,9 +1711,9 @@ function prepareDashboardDetail(payload){
   setPivotShell(`Selected: ${selection.type[0].toUpperCase()+selection.type.slice(1)}`,record.RecommendationName||record.DeviceName||record.CveId||selection.id,"",recommendation&&live,record);
   const ids=Object.keys(payload.tables||{}).filter(id=>id!=="pivotTable"),machine=selection.type==="machine";
   if(machine&&ids.includes("pivotRecommendationTable"))ids.unshift(...ids.splice(ids.indexOf("pivotRecommendationTable"),1));
-  const titles={pivotRecommendationTable:"Related recommendations",pivotCveTable:"CVE evidence",pivotFindingTable:"Exposure instance evidence"};
+  const titles={pivotSlaCveTable:"Machine/CVE SLA outcomes: fixed and remaining",pivotManagementMachineTable:"Machines: remaining CVEs and SLA progress",pivotManagementCveTable:"Unique CVEs and affected-machine progress",pivotRecommendationTable:"Related recommendations",pivotCveTable:"CVE evidence",pivotFindingTable:"Exposure instance evidence"};
   renderPivotDetails(ids.map(id=>({id,title:titles[id]||headerLabel(id.replace(/^pivot/,"").replace(/Table$/,""))})));
-  $("pivotDetails").insertAdjacentHTML(machine?"beforeend":"afterbegin",`<div class="server-record">${Object.entries(record).filter(([,value])=>value===null||typeof value!=="object").map(([key,value])=>`<div><small>${esc(headerLabel(key))}</small>${value===null?"Unknown":esc(value)}</div>`).join("")}</div>`);
+  $("pivotDetails").insertAdjacentHTML(machine?"beforeend":"afterbegin",`<div class="server-record">${Object.entries(record).filter(([,value])=>value===null||typeof value!=="object").map(([key,value])=>`<div><small>${esc(headerLabel(key))}</small>${value===null?"Unknown":esc(displayDateTime(key,value))}</div>`).join("")}</div>`);
   const position=state.detailRecommendationIds.indexOf(selection.id);
   $("pivotPrevious").disabled=!recommendation||position<=0;
   $("pivotNext").disabled=!recommendation||position<0||position>=state.detailRecommendationIds.length-1;
@@ -1668,7 +1799,7 @@ pivotToMachine=row=>openDashboardDetail({type:"machine",id:String(row.DeviceId||
 pivotToCve=row=>openDashboardDetail({type:"cve",id:normalizedCve(row.CveId||row.id||row)},typeof row==="object"?row:{});
 showDetail=row=>dashboardRowAction(row.CveId?"cve":row.DeviceId?"machine":row.RecommendationId?"recommendation":"finding",row);
 exportLifecycleCsv=()=>{void exportDashboardCsv("trend","lifecycleDetailTable");};
-exportExecutiveSnapshotCsv=()=>{void exportDashboardCsv("executiveSnapshot",state.executiveSnapshotUnit==="recommendations"?"executiveSnapshotRecommendationTable":"executiveSnapshotFindingTable");};
+exportExecutiveSnapshotCsv=()=>{void exportDashboardCsv("executiveSnapshot","executiveSnapshotManagement"+({machines:"Machine",cves:"Cve",recommendations:"Recommendation"}[state.executiveSnapshotUnit]||"Machine")+"Table");};
 const refreshLegacyTracking=refreshRecommendationTracking;
 refreshRecommendationTracking=async()=>{
   const previous=JSON.stringify([...state.recommendationTracking]);
@@ -1686,4 +1817,8 @@ $("retryDashboardQuery").addEventListener("click",()=>{
 });
 $("reloadDashboardSnapshot").addEventListener("click",()=>location.reload());
 $("exportFindingsCsv").addEventListener("click",()=>{void exportDashboardCsv("overview","findingsTable");});
+for(const view of ["executive","executiveSnapshot","sla","trend"]){
+  $(view+"TechnicalEvidence").addEventListener("toggle",()=>{if(state.activeView===view)render();});
+}
+$("trendWorkflowEvidence").addEventListener("toggle",()=>{if(state.activeView==="trend")render();});
 loadDashboardDatasets();

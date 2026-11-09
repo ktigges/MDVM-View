@@ -210,9 +210,9 @@ def test_dashboard_distinguishes_sla_targets_and_task_due_dates():
     assert "Current dataset policy" in javascript
     assert "Targets start at the collector's first observation" in javascript
     assert "Weekly remediation task due-date history" in html
-    assert "Recommendation inventory and workflow" in html
-    assert "Risk-ranked work queue ordered by effective severity" in html
-    assert "Highest linked open-finding severity combined with Defender recommendation score" in html
+    assert "<h2>Recommendations</h2>" in html
+    assert "Priority sorting puts actions with unresolved exposure first" in html
+    assert "orders by severity, Defender score, affected machines, and unique CVEs" in html
 
 
 def test_dashboard_orders_all_recommendation_surfaces_highest_first():
@@ -268,7 +268,8 @@ def test_dashboard_exposes_shared_recommendation_work_status_filter():
     assert "recommendationWorkSwitch" not in javascript
     assert 'aria-label="Working here:' not in javascript
     assert "Use the compact ON/OFF switch" not in html
-    assert "Open a recommendation to update its dashboard work status" in html
+    assert 'id="recommendationCatalogStatus"' in html
+    assert 'id="recommendationWorkspaceFilters"' in html
 
 
 def test_dashboard_executive_subtiles_have_visible_contrast():
@@ -350,7 +351,7 @@ def test_dashboard_treats_remediation_activity_as_supporting_context():
 
     assert "GLOBAL VULNERABILITY SLA · FINDING-LEVEL RESULTS" in html
     assert 'id="weeklyTaskDueTable"' in html
-    assert "Remediation history" in html
+    assert "Machine/CVE SLA tracking and remediation outcomes" in html
     assert "Remediation activity context" in html
     assert 'id="remediationActivitySection" data-feature="remediation-activity" hidden' in html
     assert 'id="remediationTaskHistorySection" data-feature="remediation-activity" hidden' in html
@@ -424,7 +425,8 @@ def test_dashboard_prioritizes_recommendations_not_individual_findings():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
 
-    assert "<h2>Prioritized recommendations</h2>" in html
+    assert 'data-view="priority"' not in html
+    assert '<option value="priority">Priority</option>' in html
     assert "priorityRecommendationRows" in javascript
     assert "renderPriority" in javascript
     assert "SuppressRecommendationHandoff:true" in javascript
@@ -510,8 +512,11 @@ def test_dashboard_has_independent_exportable_executive_snapshot():
     assert 'id="executiveSnapshotOwner"' in html
     assert 'id="executiveSnapshotUnit"' in html
     assert 'aria-label="Finding-level SLA compliance by severity"' in html
-    assert '<option value="findings">Finding instances</option>' in html
-    assert '<option value="recommendations">Recommendation workload</option>' in html
+    assert '<option value="machines">Machines</option>' in html
+    assert '<option value="cves">Vulnerabilities (CVEs)</option>' in html
+    assert '<option value="recommendations">Recommendations</option>' in html
+    assert 'id="executiveSnapshotManagement"' in html
+    assert 'id="executiveSnapshotTechnicalEvidence"' in html
     assert 'id="executiveSlaMeterValue"' in html
     assert 'id="executiveSlaMeterText"' in html
     assert 'id="executiveSlaTargetMarker"' in html
@@ -527,7 +532,7 @@ def test_dashboard_has_independent_exportable_executive_snapshot():
     assert "function printExecutiveSnapshot()" in javascript
     assert "function exportExecutiveSnapshotCsv()" in javascript
     assert 'executiveSnapshotPeriod:"30days"' in javascript
-    assert 'executiveSnapshotUnit:"findings"' in javascript
+    assert 'executiveSnapshotUnit:"machines"' in javascript
     assert "Elevated SLA exposure" not in javascript
     assert 'statusCard.className="executive-severity-status-grid"' in javascript
     assert "<small>SLA compliance</small>" in javascript
@@ -567,7 +572,7 @@ def test_dashboard_has_independent_exportable_executive_snapshot():
     assert "strong.High" in stylesheet
     assert "strong.Medium" in stylesheet
     assert "strong.Low" in stylesheet
-    assert 'order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "executiveSnapshot", "help"]' in configuration
+    assert 'order: ["executive", "recommendations", "overview", "workstations", "sla", "trend", "executiveSnapshot", "help"]' in configuration
     assert "body.executive-snapshot-print .story:not(#executiveSnapshot)" in stylesheet
     assert "@media print" in stylesheet
 
@@ -630,7 +635,8 @@ def test_lifecycle_entity_selector_and_latest_run_change_filter_are_wired():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
 
-    assert "Lifecycle reporting by entity" in html
+    assert "Change activity by entity" in html
+    assert 'reportingEntity:"machines"' in javascript
     assert 'id="reportingChange"' in html
     assert '<option value="Fixed" selected>Confirmed fixed</option>' in html
     assert '<option value="PendingConfirmation">Pending confirmation</option>' in html
@@ -874,7 +880,7 @@ def test_dashboard_separates_detection_confirmation_and_sla_timing():
     assert "SLA remediations pending verification" in javascript
     assert ".lifecycle-status.PendingConfirmation" in stylesheet
     assert ".lifecycle-status.PendingVerification" in stylesheet
-    assert ".filterbar .exposure-status-filter{grid-column:1/span 6!important;grid-row:2}" in stylesheet
+    assert ".filterbar .exposure-status-filter{grid-column:1/span 6!important;grid-row:3}" in stylesheet
     assert ".pending-filter-shortcut[aria-pressed=\"true\"]" in stylesheet
 
 
@@ -941,9 +947,9 @@ def test_dashboard_connects_executive_workload_sla_and_recommendation_impact():
     assert "setTimeout(()=>show(index,row,event.clientX),350)" in javascript
     assert html.index('id="recommendationPreview"') > html.index("</main>")
     assert "RECOMMENDATION INVENTORY" not in html
-    assert "<h2>Recommendation inventory and workflow</h2>" in html
+    assert "<h2>Recommendations</h2>" in html
     assert 'selectEntity("recommendation",id,true)' in javascript
-    assert 'order: ["executive", "recommendations", "priority", "overview", "workstations", "sla", "trend", "executiveSnapshot", "help"]' in configuration
+    assert 'order: ["executive", "recommendations", "overview", "workstations", "sla", "trend", "executiveSnapshot", "help"]' in configuration
 
 
 def test_dashboard_executive_summary_uses_readable_visual_hierarchy():
@@ -1112,8 +1118,8 @@ def test_dashboard_supports_new_vulnerability_period_analysis_and_filtering():
     assert "state.remediationPeriodFilter=true" in javascript
     assert "state.exposureStatus=\"All\"" in javascript
     assert "Remediation observed" in javascript
-    assert ".filterbar .severity-filter{grid-column:1/span 2!important;grid-row:1}" in stylesheet
-    assert ".filterbar .latest-run-change-filter{grid-column:1/span 6!important;grid-row:4}" in stylesheet
+    assert ".filterbar .severity-filter{grid-column:1/span 2!important;grid-row:2}" in stylesheet
+    assert ".filterbar .latest-run-change-filter{grid-column:1/span 6!important;grid-row:5}" in stylesheet
     assert ".window-metric:hover,.new-activity-metrics .window-metric:focus-visible" in stylesheet
     assert "cursor:pointer" in stylesheet
     assert "counts use each finding's first-seen or fixed timestamp inside this UTC window" in javascript

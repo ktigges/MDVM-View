@@ -121,6 +121,7 @@ def main():
     parser.add_argument("--enforce-targets", action="store_true")
     parser.add_argument("--broad-filters", action="store_true")
     parser.add_argument("--mixed-lifecycle", action="store_true")
+    parser.add_argument("--management-reporting", action="store_true")
     args = parser.parse_args()
     if args.rows < (4 if args.mixed_lifecycle else 1) or args.events < 0:
         parser.error("rows must be positive (at least four with mixed lifecycle), and events cannot be negative")
@@ -131,6 +132,14 @@ def main():
         root = Path(directory)
         source = root / "source"
         generate_data(source, args.rows, args.events, args.mixed_lifecycle)
+        if args.management_reporting:
+            catalog = list(JsonRows(source / "recommendations.json.gz", 0))
+            catalog.append({
+                "RecommendationId": "configuration-without-cve-evidence",
+                "RecommendationName": "Harden platform settings",
+                "RemediationType": "Configuration", "DataOrigin": "Live",
+            })
+            write_json_rows(source / "recommendations.json.gz", catalog)
         engine = DashboardQueryEngine(
             root / "index", "benchmark", snapshot_time,
             lambda name: iter(JsonRows(source / f"{name}.json.gz", args.rows if name == "findings" else 0)),
@@ -168,6 +177,53 @@ def main():
             size = len(json.dumps(result, separators=(",", ":")).encode())
             assert size < 512 * 1024, f"Unbounded response: {size} bytes"
             return result, size
+
+        if args.management_reporting:
+            started = time.perf_counter()
+            engine.prepare_workspace_indexes()
+            timings["indexPreparationSeconds"] = round(time.perf_counter() - started, 3)
+            managed = {**payload, "view": "executiveSnapshot", "filters": {
+                **payload["filters"], "managementReporting": True, "includeFindingEvidence": False,
+            }}
+            first, size = query("coldEntityReportSeconds", managed)
+            cached, _ = query("cachedEntityReportSeconds", managed)
+            assert cached == first
+            current = first["metadata"]["management"]["periods"][0]
+            expected_machines = len({
+                i % 2000 for i in range(min(args.rows, 2000))
+                if not args.mixed_lifecycle or i % 4
+            })
+            expected_cves = len({
+                i % 13217 for i in range(min(args.rows, 13217 * 4))
+                if not args.mixed_lifecycle or i % 4
+            })
+            assert current["machines"]["Open"] == expected_machines, current
+            assert current["cves"]["Open"] == expected_cves, current
+            sla = first["metadata"]["management"]["sla"]
+            assert sla["unit"] == "machine-cve"
+            completed = sum(i % 4 == 0 for i in range(args.rows)) if args.mixed_lifecycle else 0
+            within = sum(i % 4 == 0 and i % 90 <= 25 for i in range(args.rows)) if args.mixed_lifecycle else 0
+            expected_compliance = 100 * within / completed if completed else None
+            assert sla["periods"][0]["CompliancePercent"] == expected_compliance, sla
+            severity = first["charts"]["executiveSnapshotManagementSeverity"]["rows"]
+            assert sum(row["machines"] for row in severity) == expected_machines
+            assert sum(row["cves"] for row in severity) == expected_cves
+            assert "ExecutiveStatus" not in sla["periods"][0]
+            for entity in ("Machine", "Cve", "Recommendation"):
+                assert not any("Finding" in column for column in first["tables"][f"executiveSnapshotManagement{entity}Table"]["columns"])
+            query("entitySecondPageSeconds", {**managed, "table": "executiveSnapshotManagementMachineTable", "page": 1})
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            rss_bytes = rss if sys.platform == "darwin" else rss * 1024
+            print(json.dumps({
+                "rows": args.rows, "mixedLifecycle": args.mixed_lifecycle,
+                "management": current, "responseBytes": size, "peakRssBytes": rss_bytes, **timings,
+            }), flush=True)
+            assert rss_bytes <= args.max_rss_mib * 1024**2, f"Peak RSS {rss_bytes} exceeds budget"
+            if args.enforce_targets:
+                assert timings["coldEntityReportSeconds"] <= 10, timings
+                assert timings["cachedEntityReportSeconds"] <= 5, timings
+                assert timings["entitySecondPageSeconds"] <= 10, timings
+            return
 
         visible = args.rows - (args.rows + 3) // 4 if args.mixed_lifecycle else args.rows
         first, size = query("coldOverviewSeconds", payload)
