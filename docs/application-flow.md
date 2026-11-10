@@ -202,13 +202,19 @@ There are two preparation paths:
 | Configuration | Before the snapshot is advertised as ready |
 |---|---|
 | No persistent viewer cache | Prepare shared workspace indexes and aggregates; additional history, search, and report work remains on demand |
-| `DASHBOARD_DERIVED_CACHE_CONTAINER` enabled | Restore/build the shared indexes, aggregates, search projection, history index, and all nine default-view results; save completed cache artifacts |
+| `DASHBOARD_DERIVED_CACHE_CONTAINER` enabled | Restore/build the shared indexes, aggregates, search projection, history index, and all ten default-view results; save completed cache artifacts |
 
 Terraform enables the separate `dvm-viewer-cache` container. Cache reuse checks
 snapshot, query format, evidence identity, filters, workload grouping, and policy.
 Downloads are size/hash verified, expanded within limits, and checked before
 installation. Missing compatible artifacts can be built; corruption and storage
 failures are reported, not treated as an empty successful result.
+
+Startup-prepared default results use a separate bounded memory cache and protected
+entries in the saved query-products store. Filtered-query churn evicts ordinary
+products before defaults, so opening the default reports does not repeat a cold
+SLA calculation. Each saved default still requires an exact compatible response
+identity; different filters, policies, or response versions cannot reuse it.
 
 Local active indexes are disposable. A restart can restore compatible completed
 cache artifacts from Azure instead of rebuilding them. It does not require
@@ -236,7 +242,8 @@ requires reload. Recommendation workflow writes also reject stale evidence.
 | Local snapshot cache | At most two snapshots and 8 GiB per worker |
 | Combined expanded published indexes | 7 GiB |
 | Shared aggregate model | 512 MiB |
-| Shared saved query products | 64 MiB |
+| Shared saved query products | 64 MiB, at most 24 entries including protected defaults |
+| Startup-prepared default results in memory | Ten entries, 20 MiB total, 2 MiB per result |
 | Browser view/page cache | Up to 16 entries, 8 MiB total, 2 MiB per entry |
 | Normal table pages | 100 rows; API maximum 200 |
 | Execution capacity | Two interactive workers and one separate heavy-work slot for reports/exports |

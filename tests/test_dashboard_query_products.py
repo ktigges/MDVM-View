@@ -578,3 +578,16 @@ def test_product_publication_hook_sees_committed_valid_database(tmp_path):
     products.publisher = publish
     products.save_document("scope:one", {"findings": 10})
     assert published == [products.path]
+
+
+def test_query_products_preserve_default_reports_within_existing_entry_budget(tmp_path):
+    products = DashboardProducts(tmp_path / "primary.sqlite3")
+    for view in range(10):
+        products.save_document(f"default:{view}", {"view": view})
+    for index in range(40):
+        products.save_document(f"filtered:{index}", {"index": index})
+    for view in range(10):
+        assert products.document(f"default:{view}") == {"view": view}
+    assert products.document("filtered:0") is None
+    assert products.document("filtered:39") == {"index": 39}
+    products.validate()

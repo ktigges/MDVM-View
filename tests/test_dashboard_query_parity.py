@@ -1,11 +1,4 @@
-"""Compare server aggregates with the dashboard's existing lifecycle helpers."""
-
-import json
-import shutil
-import subprocess
-from pathlib import Path
-
-import pytest
+"""Verify retained evidence-query contracts against fixed lifecycle cases."""
 
 from vulnerability_view.dashboard_queries import DashboardQueryEngine
 
@@ -13,44 +6,7 @@ from vulnerability_view.dashboard_queries import DashboardQueryEngine
 SNAPSHOT = "2026-10-24T00:59:46Z"
 
 
-def legacy_metrics(rows):
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is required for cross-runtime dashboard parity")
-    script = r"""
-const fs=require("node:fs"),vm=require("node:vm");
-const source=fs.readFileSync("dashboard/app.js","utf8").split("\n");
-const rows=JSON.parse(fs.readFileSync(0,"utf8"));
-const context=vm.createContext({
-  PENDING_FINDING_STATUSES:new Set(["PendingConfirmation","PendingVerification"]),
-  DETECTED_FINDING_STATUSES:new Set(["Open","Reopened","DetectionReturned"]),
-  state:{search:""},
-});
-for(const name of ["truthy","pending","detected","slaResolved"])
-  vm.runInContext(source.find(line=>line.startsWith(`const ${name}=`)),context);
-for(const name of ["normalizedCve","findingKnownExploit","aggregateBy","rowCounts","cveRowsFor","slaCardItems","matchesSearch"])
-  vm.runInContext(source.find(line=>line.startsWith(`function ${name}(`)),context);
-const cves=context.cveRowsFor(rows).map(row=>{
-  const {rows,...result}=row;
-  const detected=vm.runInContext("detected",context);
-  return {...result,EvidenceRows:rows.length,DetectedMachines:new Set(rows.filter(detected).map(row=>row.DeviceId).filter(Boolean)).size};
-});
-const searches={};
-for(const search of ["%","_","null","none","findingkey","münchen","CVE-2026-1001"]){
-  context.state.search=search.toLowerCase();
-  searches[search]=rows.filter(context.matchesSearch).map(row=>row.FindingKey).sort();
-}
-console.log(JSON.stringify({cards:context.slaCardItems(rows),cves,searches}));
-"""
-    result = subprocess.run(
-        [node, "-e", script], input=json.dumps(rows), text=True,
-        capture_output=True, timeout=15, cwd=Path(__file__).parents[1],
-    )
-    assert result.returncode == 0, result.stderr
-    return json.loads(result.stdout)
-
-
-def test_server_preserves_cve_and_sla_lifecycle_arithmetic(tmp_path):
+def test_evidence_queries_preserve_cve_and_sla_lifecycle_arithmetic(tmp_path):
     common = {
         "DataOrigin": "Live", "AssetClass": "TraditionalIT", "OwnerTeam": "Endpoints",
         "SubscriptionId": "", "SnapshotTimeUtc": SNAPSHOT, "LastSeenUtc": SNAPSHOT,
@@ -91,7 +47,14 @@ def test_server_preserves_cve_and_sla_lifecycle_arithmetic(tmp_path):
                     "domains": ["Devices", "Cloud"], "recommendationTypes": ["Vulnerability"]},
         "page": 0, "limit": 100,
     }
-    expected = legacy_metrics(findings)
+    expected_cves = [
+        {"CveId": "CVE-2026-1001", "Severity": "High", "CvssScore": 8.8,
+         "KnownExploit": False, "OpenFindings": 2, "PendingFindings": 2,
+         "FixedFindings": 1, "DetectedMachines": 1, "EvidenceRows": 5},
+        {"CveId": "CVE-2026-1002", "Severity": "High", "CvssScore": 8.8,
+         "KnownExploit": True, "OpenFindings": 1, "PendingFindings": 0,
+         "FixedFindings": 0, "DetectedMachines": 1, "EvidenceRows": 2},
+    ]
     overview = engine.query({**request, "view": "overview", "mode": "cves"})
     actual = overview["tables"]["findingsTable"]["items"]
     fields = [
@@ -99,11 +62,23 @@ def test_server_preserves_cve_and_sla_lifecycle_arithmetic(tmp_path):
         "PendingFindings", "FixedFindings", "DetectedMachines", "EvidenceRows",
     ]
     assert [{field: row[field] for field in fields} for row in actual] == [
-        {field: row[field] for field in fields} for row in expected["cves"]
+        {field: row[field] for field in fields} for row in expected_cves
     ]
     sla = engine.query({**request, "view": "sla"})
-    assert sla["cards"]["slaCards"] == expected["cards"]
-    for search, keys in expected["searches"].items():
+    assert sla["cards"]["slaCards"] == [
+        [7, "Finding instances observed"],
+        [1, "Findings confirmed fixed"],
+        [2, "SLA remediations pending verification"],
+        [0, "Remediation observed within policy SLA"],
+        [1, "Remediation observed outside policy SLA"],
+        [1, "Detected findings overdue"],
+    ]
+    expected_searches = {
+        "%": ["finding-0"], "_": ["finding-0"], "münchen": ["finding-0"],
+        "null": [], "none": [], "findingkey": [],
+        "CVE-2026-1001": [f"finding-{index}" for index in range(5)],
+    }
+    for search, keys in expected_searches.items():
         result = engine.query({
             **request, "view": "overview", "mode": "findings",
             "filters": {**request["filters"], "search": search.lower()},

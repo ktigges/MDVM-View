@@ -1,6 +1,6 @@
 # Development and maintenance
 
-The [README](../README.md) covers the application and handoff.
+The [project guide](../PROJECT-GUIDE.md) covers the engineering handoff.
 [Application flow](application-flow.md) describes the runtime.
 This guide covers local work, tests, release versions, and maintenance tools.
 
@@ -62,9 +62,9 @@ Tests use pytest; browser interaction tests use Node.js without installing
 front-end packages. Examples:
 
 ```bash
-python -m pytest -q tests/test_dashboard_exports.py
-node --test tests/dashboard_findings.test.cjs tests/dashboard_queries.test.cjs
-python -m pytest -q
+DASHBOARD_AUTH_ENABLED=false python -m pytest -q tests/test_dashboard_exports.py
+node --test tests/dashboard_queries.test.cjs
+DASHBOARD_AUTH_ENABLED=false python -m pytest -q
 git diff --check
 ```
 
@@ -327,13 +327,12 @@ The legacy priority API remains available for compatibility.
 Legacy API requests without management mode retain their prior behavior.
 No collector changes or new collection are required.
 
-`filters.includeFindingEvidence=true` explicitly loads the original technical
-reports as well. The browser enables it only while a technical evidence panel
-is expanded. The normal execution deadline and immutable source/index format
-are unchanged. Entity CSVs use tables such as
+The browser always uses `filters.includeFindingEvidence=false` and distinct-CVE
+mode. It has no finding-instance selector or hidden technical report panels.
+The backend's explicit evidence/compatibility contracts remain available for
+diagnostic callers; they are not dashboard metrics. Entity CSVs use tables such as
 `executiveSnapshotManagementMachineTable`, `executiveSnapshotManagementCveTable`,
-and `executiveSnapshotManagementRecommendationTable`. Technical detail remains
-available separately; the management PDF excludes it. Entity CSVs retain the
+and `executiveSnapshotManagementRecommendationTable`. Entity CSVs retain the
 period, pinned snapshot time, representation, and resolution-scope filters so
 a scoped resolution claim is not mistaken for tenant-wide resolution.
 

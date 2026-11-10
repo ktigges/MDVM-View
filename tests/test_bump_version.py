@@ -117,6 +117,30 @@ def test_function_bump_uses_source_version_not_stale_terraform_value(tmp_path: P
     assert json.loads(tfvars.read_text())["function_version"] == f"{today}.8"
 
 
+def test_web_bump_uses_source_version_not_stale_terraform_value(tmp_path: Path):
+    script, tfvars, config = make_workspace(tmp_path)
+    today = datetime.now(timezone.utc).strftime("%Y.%m.%d")
+    config.write_text(config.read_text().replace("2000.01.01.8", f"{today}.7"))
+
+    result = run_bump(script, "web")
+
+    assert result.returncode == 0
+    assert f'version: "{today}.8"' in config.read_text()
+    assert json.loads(tfvars.read_text())["dashboard_version"] == f"{today}.8"
+
+
+def test_web_bump_does_not_require_customer_terraform_configuration(tmp_path: Path):
+    script, tfvars, config = make_workspace(tmp_path)
+    tfvars.unlink()
+
+    result = run_bump(script, "web")
+
+    assert result.returncode == 0
+    assert config.read_text() != ""
+    assert "2000.01.01.8" not in config.read_text()
+    assert not tfvars.exists()
+
+
 def test_function_bump_does_not_require_customer_terraform_configuration(tmp_path: Path):
     script, tfvars, _ = make_workspace(tmp_path)
     tfvars.unlink()

@@ -28,8 +28,8 @@ window.VULNERABILITY_VIEW_DEFAULTS = {
 };
 
 window.VULNERABILITY_VIEW_CONFIG = {
-  version: "2026.11.10.6",
-  revision: "2026-11-10T20:08:08Z",
+  version: "2026.11.10.7",
+  revision: "2026-11-10T21:10:09Z",
   branding: {
     eyebrow: "VULNERABILITY VIEW",
     title: "Microsoft Vulnerability Management",

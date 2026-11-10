@@ -1,13 +1,14 @@
 # Documentation
 
-The [project README](../README.md) covers the purpose, technology, architecture,
-and maintenance handoff. The documents below cover the details without repeating
-the same setup in each guide.
+The [project guide](../PROJECT-GUIDE.md) is the engineering handoff and design
+reference. The [README](../README.md) is the short project overview.
+The documents below hold detailed commands, settings, and operating procedures.
 
 ## Main references
 
 | Subject | Document | What belongs there |
 |---|---|---|
+| Engineering handoff | [Project guide](../PROJECT-GUIDE.md) | Workstation setup, logic, source map, design decisions, and operational handoff |
 | Architecture and runtime | [Application flow](application-flow.md) | Collection, publication, dashboard startup, indexes, caches, and source map |
 | Calculation rules | [Dashboard and collection logic](../LOGIC.md) | Finding identity, lifecycle, SLA, priority, filtering, and work status |
 | Azure installation and updates | [Deployment guide](../DEPLOY.md) | Prerequisites, permissions, configuration, deployment, and verification |

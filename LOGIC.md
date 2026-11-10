@@ -42,10 +42,15 @@ still reads all current datasets because it must carry every labeled synthetic
 dataset forward. These memory optimizations do not change the published schema,
 manifest contents, lifecycle results, SLA results, or dashboard behavior.
 
-## 2. Finding identity and scope
+## 2. Vulnerability identity, evidence identity, and scope
 
-A finding represents a device, vulnerability, product, and version
-relationship. `FindingKey` uses the Defender machine-vulnerability row ID when
+A vulnerability is one machine vulnerable to one CVE, regardless of software
+products or versions. Dashboard totals count distinct CVEs and distinct
+machines separately. Software-record totals and machine/CVE relationship totals
+are not dashboard headline metrics.
+
+An internal finding records the device, CVE, product, and version evidence
+needed for reconciliation. `FindingKey` uses the Defender machine-vulnerability row ID when
 available. Otherwise it is the SHA-256 hash of:
 
 ```text
@@ -54,10 +59,9 @@ machineId | cveId | productName | productVersion
 
 A product-version change can therefore close one key and open another.
 
-The same CVE in the same product/version on 100 devices is 100 finding
-instances but one distinct CVE. A finding instance is not an attack, an
-independent patch job, or another count of the same key on every scan.
-Dashboard totals use the selected snapshot and filters.
+The same CVE on 100 machines is one distinct CVE and 100 affected machines.
+Several software records for that CVE on one machine do not add vulnerabilities.
+Dashboard totals use the selected snapshot and filters, not repeated scans.
 
 The dashboard separates current detections from evidence confirmation.
 `Open`, `Reopened`, and `DetectionReturned` are current detections.
@@ -129,7 +133,7 @@ reporting-age scope.
 The **Assets** view starts from the normalized `devices` dataset rather than
 deriving inventory from vulnerability findings. Active Azure/Cloud and
 traditional devices therefore remain visible even when they have no current
-finding rows. Finding counts are joined onto the inventory, and configured
+finding rows. Distinct CVE counts are joined onto the inventory, and configured
 scale-out workloads remain grouped. Onboarded assets are shown by default.
 The optional **Include discovered-only assets** control adds non-onboarded
 inventory records, which display `Not assessed` instead of a zero vulnerability
@@ -337,62 +341,38 @@ selectors. Severity, asset classification, recommendation type, domain,
 reporting-age, origin, and search filters still apply. The report compares the
 selected period with the immediately preceding equal period.
 
-### Finding-level SLA position
+### Entity progress and SLA position
 
-The SLA meter always uses completed finding outcomes:
+The report presents distinct machines, CVEs, and recommendations together.
+Its export selector chooses an entity-detail CSV; it does not change the
+summary's counting units. The dashboard has no finding-instance reporting mode.
 
-```text
-Finding SLA compliance =
-  Fixed within SLA /
-  (Fixed within SLA + Fixed outside SLA)
-```
+An unresolved entity appears once, at its highest remaining severity. Overdue
+takes precedence over unknown deadline, then not yet due. Pending evidence
+remains unresolved. Removing software evidence without clearing the machine/CVE
+does not establish a completed vulnerability.
 
-Findings without a finite SLA due date are not included in that percentage.
-`complianceTargetPercent` in the retained SLA policy is optional.
-Recommendation workload mode does not change the meter or finding deadlines.
+Full clearance requires no unresolved vulnerability in the selected scope:
+no affected machine for a CVE, and no remaining CVE for a machine. Confirmed
+partial removal is improved, not fully cleared. Recommendation progress is
+shared workload context, not a separate SLA clock.
 
-When no approved percentage is configured, the meter shows actual compliance
-with a neutral color and no target marker or percentage-point variance. When a
-target is configured, the marker appears at that percentage and the fill color
-moves continuously from red near 0%, through orange and yellow, to green at
-the configured target. Values above the target remain green.
+An entity's full-clearance SLA result includes retained component clearances,
+not only the final removal. Any late component makes it late. Otherwise a
+missing deadline or completion makes it unknown; otherwise it is on time.
+The on-time percentage is on-time full clearances divided by on-time plus late
+full clearances. Unknown results are shown separately and excluded. An empty
+assessment is unavailable, not 100%. Not yet due is not a remediation result.
 
-Critical, High, Medium, and Low are calculated separately using the same
-finding-level formula. Their tile colors identify severity, not performance:
-Critical is red, High is orange, Medium is yellow, and Low is green, matching
-the Open risk by severity chart. The displayed percentage is the SLA result. A
-dash is shown when that severity has no completed finding with a finite SLA due
-date in the period.
+The dedicated SLA page uses the same distinct CVE/machine semantics for
+month-to-date and completed UTC calendar weeks and months. Historical coverage
+gaps produce unavailable values rather than zero totals. Existing deadlines
+remain in force across policy changes.
 
-The severity cards also show within-SLA fixes, outside-SLA fixes, and open
-overdue findings. Open overdue counts are supporting risk context. They do not
-change the completed-remediation compliance percentage.
-
-If no completed finding has a usable SLA result in the period, the meter says
-that there are no completed finding-level SLA outcomes instead of creating a
-percentage.
-
-### Recommendation workload
-
-The recommendation universe is the union of findings fixed during the selected
-period and findings open at period end, grouped by `RecommendationId`.
-
-- **Fully remediated:** at least one linked finding was fixed during the period
-  and no linked finding is open at period end.
-- **Partially remediated:** at least one linked finding was fixed during the
-  period and at least one linked finding remains open.
-- **Still open:** linked findings remain open and no linked finding was fixed
-  during the period.
-- **With outside-SLA findings:** at least one linked finding was fixed after
-  its due date or remains open after its due date.
-
-This is a workload rollup, not a recommendation SLA clock. A recommendation
-can contain finding instances with different first-seen times, due dates,
-machines, CVEs, and outcomes.
-
-PDF output uses the currently selected representation. CSV output is
-finding-level evidence in Finding instances mode and one row per recommendation
-workload in Recommendation workload mode.
+PDF output contains the management report. CSV contains all matching rows for
+the selected machine, CVE, or recommendation representation, with the pinned
+snapshot and report scope. Earlier periods are reconstructed from retained
+lifecycle evidence, not a replay of every historical remediation/reopening cycle.
 
 ## 11. Deployment effects
 

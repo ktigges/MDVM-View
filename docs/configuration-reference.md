@@ -211,8 +211,10 @@ fabricated for local development.
 
 ## 5. Terraform-generated Function App Settings
 
-The collector Function receives these from `main.tf`; edit the corresponding
-Terraform input rather than changing the generated setting in the portal.
+The collector Function receives these from `main.tf`. Terraform is not required
+solely to restore the scale-set exclusion runtime setting; the manual procedure
+below supports that change without an infrastructure deployment. Other generated
+settings remain managed through their corresponding Terraform inputs.
 
 | Azure App Setting | Source / purpose |
 |---|---|
@@ -233,6 +235,27 @@ Terraform input rather than changing the generated setting in the portal.
 | `STORAGE_ACCOUNT_NAME` | Protected history storage account |
 | `STORAGE_CONTAINER_NAME` | Immutable history container |
 | `STORAGE_CURRENT_CONTAINER_NAME` | Current-pointer container |
+
+### Manual scale-set exclusion setting
+
+If `EXCLUDE_SCALE_SETS` is missing from an existing Function App, it can be added
+manually in Azure Portal under **Function App > Settings > Environment variables >
+App settings**:
+
+1. Add `EXCLUDE_SCALE_SETS` with the value `true` to skip scale-set devices.
+2. Save/apply the change. App Settings changes restart the Function App.
+3. Verify that `EXCLUDE_SCALE_SETS=true` appears in the saved App Settings.
+
+No Terraform run or code redeployment is needed for this runtime-only change.
+An absent setting uses the default `false` unless application JSON configuration
+overrides it, so omission does not enable scale-set exclusion. The setting affects
+new collection runs; existing runs retain their frozen settings and retained
+history is unchanged.
+
+Before any later Terraform apply, synchronize `exclude_scale_sets` in
+`infra/terraform/main.tfvars.json` with the manually selected value (`true` to
+exclude scale sets). Otherwise Terraform can overwrite the manual setting with
+its configured value, whose default is `false`.
 
 ## 6. Terraform-generated Web App Settings
 

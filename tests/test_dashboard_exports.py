@@ -1,4 +1,4 @@
-"""Last modified: 2026-10-08.
+"""Last modified: 2026-11-10.
 Purpose: Verify dashboard exports, presentation contracts, versioning, and local-only tools.
 """
 
@@ -16,12 +16,12 @@ from vulnerability_view.config import Settings
 from vulnerability_view.export_writer import write_outputs
 
 
-def test_dashboard_findings_paging_and_drilldown_interactions():
+def test_dashboard_query_paging_and_drilldown_interactions():
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required for dashboard interaction regressions")
     result = subprocess.run(
-        [node, "--test", str(Path(__file__).with_name("dashboard_findings.test.cjs"))],
+        [node, "--test", str(Path(__file__).with_name("dashboard_queries.test.cjs"))],
         capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -80,8 +80,7 @@ def test_dashboard_files_contract():
     assert 'class="header-statuses"' in html
     assert "Snapshot availability" not in html
     assert "FILTER WORKSPACE" in html
-    assert "renderAvailability" in javascript
-    assert "Defender snapshot" in javascript
+    assert "Pinned snapshot" in javascript
     assert 'id="developmentWarning"' in html
     assert "localDevelopmentOnly" in javascript
     assert ".development-warning" in stylesheet
@@ -108,7 +107,7 @@ def test_dashboard_streams_snapshot_pinned_exports_without_browser_csv_buffering
     javascript = Path("dashboard/app.js").read_text()
     html = Path("dashboard/index.html").read_text()
     export_body = javascript.split("async function exportDashboardCsv(")[1].split(
-        "// Keep the existing controls"
+        "function renderFindingsList("
     )[0]
 
     assert 'form.action="/api/dashboard/export"' in export_body
@@ -118,6 +117,58 @@ def test_dashboard_streams_snapshot_pinned_exports_without_browser_csv_buffering
     assert 'id="exportFindingsCsv"' in html
     assert 'id="reloadDashboardSnapshot"' in html
     assert "New snapshot available" in html
+
+
+@pytest.mark.parametrize("view", [
+    "executive", "recommendations", "overview", "workstations", "slaDashboard",
+    "sla", "trend", "executiveSnapshot", "help",
+])
+def test_dashboard_current_navigation_has_a_matching_view(view: str):
+    html = Path("dashboard/index.html").read_text()
+
+    assert f'data-view="{view}"' in html
+    assert f'<section id="{view}"' in html
+
+
+def test_dashboard_counts_entities_without_hidden_instance_metrics():
+    html = Path("dashboard/index.html").read_text()
+    javascript = Path("dashboard/app.js").read_text()
+
+    assert "supporting evidence, not additional vulnerabilities" in html
+    assert 'id="slaDashboardVisuals"' in html
+    assert 'id="executiveSnapshotManagement"' in html
+    assert 'id="lifecycleDetailTable"' in html
+    assert 'id="newCveCount"' in html
+    assert 'id="newMachineCount"' in html
+    assert 'id="fixedWindowCveCount"' in html
+    assert 'id="fixedWindowMachineCount"' in html
+    assert '<option value="findings">' not in html
+    assert "technical-metric" not in html
+    assert "TechnicalEvidence" not in html
+    assert "newFindingCount" not in html
+    assert "fixedWindowFindingCount" not in html
+    assert "function renderLegacyDashboard" not in javascript
+    assert "function filteredFindings" not in javascript
+    assert "refreshLegacyTracking" not in javascript
+    assert "entity-sla-status" in javascript
+    assert "request.filters.includeFindingEvidence=false" in javascript
+    assert "request.filters.managementReporting=true" in javascript
+
+
+def test_handoff_includes_local_setup_and_retained_storage_contract():
+    guide = Path("PROJECT-GUIDE.md").read_text()
+    ignore = Path(".gitignore").read_text().splitlines()
+
+    assert "git clone https://github.com/ktigges/MDVM-View.git" in guide
+    assert "pip install -e" in guide
+    assert "authoritative Terraform state" in guide
+    assert "overwrite=False" in guide
+    assert "current/manifest.json" in guide
+    assert "A machine is vulnerable to a CVE" in guide
+    assert Path("bump-version.sh").is_file()
+    assert "bump-version.sh" not in ignore
+    assert "build/" in ignore
+    assert "*.egg-info/" in ignore
 
 
 def test_dashboard_filter_workspace_uses_compact_combined_toolbar():
@@ -140,14 +191,6 @@ def test_dashboard_filter_workspace_uses_compact_combined_toolbar():
     assert ".filter-toggle[aria-expanded=\"true\"]" in stylesheet
     assert "function sizeFilterPanel()" in javascript
     assert "overflow-wrap:anywhere" in stylesheet
-
-
-def test_executive_sla_heading_describes_its_metrics():
-    html = Path("dashboard/index.html").read_text()
-
-    assert "SLA RESULTS AND CURRENT RISK" in html
-    assert "Observed remediation against SLA and critical findings still detected" in html
-    assert "How finding remediation is performing" not in html
 
 
 def test_dashboard_scope_does_not_repeat_active_view():
@@ -178,98 +221,6 @@ def test_recommendation_detail_uses_fullscreen_navigation():
     assert "box-shadow:0 30px 80px" in stylesheet
     assert "backdrop-filter:blur(1.5px)" in stylesheet
     assert "drawer-mode" not in javascript
-
-
-def test_recommendation_preview_is_anchored_to_hovered_row():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-
-    assert 'id="recommendationPreview" class="recommendation-preview" role="status" hidden' in html
-    assert "row.getBoundingClientRect()" in javascript
-    assert "preview.style.left" in javascript
-    assert "preview.style.top" in javascript
-    assert 'row.addEventListener("mouseleave",hide)' in javascript
-    assert 'row.addEventListener("blur",hide)' in javascript
-    assert "max-height:calc(100vh - 24px)" in stylesheet
-    assert html.index('id="recommendationPreview"') > html.index("</main>")
-    assert ".recommendation-preview{display:none!important}" not in stylesheet
-    assert 'bindRecommendationPreviews("recommendationTable"' in javascript
-    assert 'bindRecommendationPreviews("priorityTable"' in javascript
-    assert 'bindRecommendationPreviews("remediationOutcomeTable"' in javascript
-    assert 'bindRecommendationPreviews("remediationTable"' in javascript
-
-
-def test_dashboard_distinguishes_sla_targets_and_task_due_dates():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert "Selected-period finding results against severity-based SLA targets" in html
-    assert 'id="slaPolicySummary"' in html
-    assert "state.slaPolicy=snapshot.slaPolicy" in javascript
-    assert "Current dataset policy" in javascript
-    assert "Targets start at the collector's first observation" in javascript
-    assert "Weekly remediation task due-date history" in html
-    assert "<h2>Recommendations</h2>" in html
-    assert "Priority sorting puts actions with unresolved exposure first" in html
-    assert "orders by severity, Defender score, affected machines, and unique CVEs" in html
-
-
-def test_dashboard_orders_all_recommendation_surfaces_highest_first():
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert "const SEVERITY_RANK={Critical:4,High:3,Medium:2,Low:1}" in javascript
-    assert "function compareRecommendations(a,b)" in javascript
-    assert "row.RecommendationSeverity||recommendationSeverity(row)" in javascript
-    assert "recommendationSeverity(row,impact.rows)" in javascript
-    assert "recommendationSeverity(row,linked)" in javascript
-    assert "state.recommendations.filter(recommendationMatches).sort(compareRecommendations)" in javascript
-    assert '.filter(row=>state.severity==="All"||row.RecommendationSeverity===state.severity).sort(compareRecommendations)' in javascript
-    assert "recommendationImpactRows(recommendations).filter(row=>row.OpenFindings>0).slice(0,limit)" in javascript
-    assert "state.detailRecommendationIds=[...new Set(filteredRecommendations().map" in javascript
-
-
-def test_dashboard_groups_scale_out_instances_as_configurable_workloads():
-    javascript = Path("dashboard/app.js").read_text()
-    configuration = Path("dashboard/config.js").read_text()
-
-    assert "function remediationWorkload(row)" in javascript
-    assert "virtualMachineScaleSets" in javascript
-    assert "function configuredWorkload(row)" in javascript
-    assert "function actionableWorkloadCount(rows)" in javascript
-    assert '"id": "generated-scale-hosts"' in configuration
-    assert '"operator": "prefix"' in configuration
-    assert '"value": "gen-"' in configuration
-    assert '"ActionableWorkloads"' in javascript
-    assert '"WorkloadType","InstanceCount"' in javascript
-
-
-def test_dashboard_exposes_shared_recommendation_work_status_filter():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert "Filter recommendations by dashboard status" in html
-    assert "This dropdown only filters the list" in html
-    assert '<option value="InProgress">Only in progress</option>' in html
-    assert '<option value="NeedsReassignment">Only needs reassignment</option>' in html
-    assert '<option value="Untracked">Only untracked / not started</option>' in html
-    assert "Selected recommendation status:" in html
-    assert 'id="recommendationCurrentStatus" class="recommendation-current-status" hidden' in html
-    assert "Set dashboard status: In progress" in html
-    assert "stored against this recommendation ID" not in html
-    assert 'recommendationTrackingFilter:"All"' in javascript
-    assert "TrackingUpdatedBy" in javascript
-    assert "TrackingUserId" in javascript
-    assert "TrackingUpdatedUtc" in javascript
-    assert "Last updated by ${tracking.updatedByDisplayName}" in javascript
-    assert "recommendationWorkStatus" in javascript
-    assert 'const columns=["ExposureStatus","RecommendationName","RecommendationSeverity"' in javascript
-    assert "recommendationTrackingLocalPreview" in javascript
-    assert "recommendationWorkSwitch" not in javascript
-    assert 'aria-label="Working here:' not in javascript
-    assert "Use the compact ON/OFF switch" not in html
-    assert 'id="recommendationCatalogStatus"' in html
-    assert 'id="recommendationWorkspaceFilters"' in html
 
 
 def test_dashboard_executive_subtiles_have_visible_contrast():
@@ -314,176 +265,6 @@ def test_dashboard_uses_microsoft_vulnerability_management_branding():
     assert "#f25022" in stylesheet
 
 
-def test_dashboard_severity_sla_drilldown_contract():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert "Remediation position" not in html
-    assert "Current SLA state in this filter context" not in html
-    assert all(
-        element_id in html
-        for element_id in (
-            'id="executiveSlaBreakdown"',
-            'id="statisticsSlaBreakdown"',
-        )
-    )
-    assert "showSlaSeverityDetail" in javascript
-    assert "sla-severity-link" in javascript
-    assert "Remediation observed within policy SLA" in javascript
-    assert "Remediation observed outside policy SLA" in javascript
-    assert "FixedFindings:0,OpenFindings:0" in javascript
-    assert "fixed on ${fmt(item.fixedMachines.size)} machine" in javascript
-    assert "remain open on ${fmt(item.openMachines.size)} machine" in javascript
-    assert "View machines and CVEs" in javascript
-    assert "recommendationMachineEvidence" in javascript
-    assert "Remediated UTC" in javascript
-    assert "Latest remediated UTC" in javascript
-    assert "machine-evidence-header" in javascript
-    assert "Currently open machines" in javascript
-    assert "select one to see its CVEs" in javascript
-    assert "Machines with fixes" in javascript
-    assert "Machines still exposed" in javascript
-
-
-def test_dashboard_treats_remediation_activity_as_supporting_context():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert "GLOBAL VULNERABILITY SLA · FINDING-LEVEL RESULTS" in html
-    assert 'id="weeklyTaskDueTable"' in html
-    assert "Machine/CVE SLA tracking and remediation outcomes" in html
-    assert "Remediation activity context" in html
-    assert 'id="remediationActivitySection" data-feature="remediation-activity" hidden' in html
-    assert 'id="remediationTaskHistorySection" data-feature="remediation-activity" hidden' in html
-    assert 'id="remediateTaskDueBreakdown"' not in html
-    assert "const remediationActivityEnabled=diagnosticsConfig.showExperimentalEndpoints===true" in javascript
-    assert "...(remediationActivityEnabled?[{name:\"remediation-activities\"" in javascript
-    assert "if(remediationActivityEnabled)renderRemediationActivities" in javascript
-    assert "if(remediationActivityEnabled)renderTaskDueHistory" in javascript
-    assert "taskDueStatus" in javascript
-    assert "CompletedByDueDate" in javascript
-    assert "CompletedAfterDueDate" in javascript
-    assert "PolicySLAWithin" in javascript
-    assert "PolicySLAOutside" in javascript
-    assert "renderStatisticsPeriod" in javascript
-
-
-def test_dashboard_orders_remediation_by_priority():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert "Highest effective severity, then current things to fix" in html
-    assert "Active first, then task priority, overdue state, and due date" in html
-    assert '["RecommendationSeverity","SeverityScore","RecommendationName"' in javascript
-    assert ".sort((a,b)=>compareRecommendations(a,b)||(b.NewToday+b.ReopenedToday)" in javascript
-    assert "const priorityRank={critical:4,high:3,medium:2,low:1}" in javascript
-
-
-def test_dashboard_shows_endpoint_remediation_impact():
-    javascript = Path("dashboard/app.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-
-    assert "endpointRemediationImpact" in javascript
-    assert "ENDPOINT REMEDIATION IMPACT" in javascript
-    assert "Before" in javascript
-    assert "Confirmed" in javascript
-    assert "Pending" in javascript
-    assert "Current" in javascript
-    assert "Delta" in javascript
-    assert ".endpoint-impact" in stylesheet
-
-
-def test_dashboard_exposes_workstation_and_recommendation_outcomes():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert 'data-view="workstations"' in html
-    assert 'id="workstationTable"' in html
-    assert "Operating queue (derived)" in html
-    assert "Inferred from asset evidence, not a Defender assignment" in html
-    assert 'id="scopeBar"' in html
-    assert 'id="resetFilters"' in html
-    assert 'id="remediationOutcomeTable"' in html
-    assert "renderWorkstations" in javascript
-    assert "renderRemediationOutcomes" in javascript
-    assert "Open findings · before latest refresh" in javascript
-    assert "Findings fixed · latest refresh" in javascript
-    assert "BeforeToCurrent" in javascript
-    assert "showRecommendationOutcome" in javascript
-    assert "View machines and CVEs" in javascript
-    assert "FixedDevicesToday" in javascript
-    assert "FindingsFixedToday" in javascript
-    assert "Remaining exposed machines" in javascript
-    assert "remediationResult" in javascript
-    assert "Remediated ${fmt(assets)} asset" in javascript
-    assert "CurrentThingsToFix" in javascript
-    assert "RemediationResult" in javascript
-    assert "Remediation started" in javascript
-
-
-def test_dashboard_prioritizes_recommendations_not_individual_findings():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert 'data-view="priority"' not in html
-    assert '<option value="priority">Priority</option>' in html
-    assert "priorityRecommendationRows" in javascript
-    assert "renderPriority" in javascript
-    assert "SuppressRecommendationHandoff:true" in javascript
-    assert "RecommendationSeverity" in javascript
-    assert "AffectedMachines" in javascript
-    assert "RelatedCves" in javascript
-    assert "RemediationStarted" in javascript
-    assert "Number(b.SeverityScore||0)-Number(a.SeverityScore||0)" in javascript
-    assert '["PriorityScore","Severity","CveId"' not in javascript
-
-
-def test_dashboard_selected_work_item_honors_search_context():
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert "linked.some(matchesSearch)||machines.some(matchesSearch)" in javascript
-    assert "openRows.filter(item=>String(item.RecommendationId||\"\")===id)" in javascript
-    assert "recommendationSearchMatch||matchesSearch(row)" in javascript
-    assert "Affected machines" in javascript
-    assert "Linked CVEs" in javascript
-    assert "No impacted machines match the current filters." in javascript
-
-
-def test_dashboard_supports_entity_pivots_for_recommendations_cves_and_machines():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-
-    assert 'id="pivotDetails"' in html
-    assert "selectedEntity" in javascript
-    assert "selectEntity" in javascript
-    assert "pivotToRecommendation" in javascript
-    assert "pivotToCve" in javascript
-    assert "pivotToMachine" in javascript
-    assert "renderRecommendationPivot" in javascript
-    assert "renderCvePivot" in javascript
-    assert "renderMachinePivot" in javascript
-    assert 'selectEntity("machine",id,true)' in javascript
-    assert 'id="pivotContext"' in html
-    assert "Close detail returns to" in javascript
-    assert 'id="pivotRecommendationNav"' in html
-    assert "pivotHandoffNote" not in html + javascript
-    assert "Dashboard work status is stored against" not in html
-    assert "loadCveDetail" in javascript
-    assert "/api/data/cve-details/${encodeURIComponent(key)}.json" in javascript
-    assert 'apiFetch("/api/dashboard/query"' in javascript
-    assert 'load("vulnerabilities")' not in javascript
-    assert "CVE detail" in javascript
-    assert "Collected from Defender vulnerabilities API" in javascript
-    assert "Open vulnerabilities in Defender" in javascript
-    assert "Selected: Recommendation" in javascript
-    assert "Selected: CVE" in javascript
-    assert "Selected: Machine" in javascript
-    assert "CVEs affecting this machine across the filtered recommendations" in javascript
-    assert "Other CVEs on the same filtered machines" in javascript
-    assert ".pivot-details" in stylesheet
-
-
 def test_finding_lifecycle_badges_explain_their_meaning():
     javascript = Path("dashboard/app.js").read_text()
     stylesheet = Path("dashboard/styles.css").read_text()
@@ -493,202 +274,6 @@ def test_finding_lifecycle_badges_explain_their_meaning():
     assert 'class="lifecycle-status ${esc(value)} lifecycle-tooltip"' in javascript
     assert 'data-tooltip="${esc(description)}"' in javascript
     assert ".lifecycle-tooltip:hover::after,.lifecycle-tooltip:focus-visible::after" in stylesheet
-
-
-def test_dashboard_has_independent_exportable_executive_snapshot():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-    configuration = Path("dashboard/config.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-
-    assert 'data-view="executiveSnapshot"' in html
-    assert '<span class="nav-label">Summary</span>' in html
-    assert html.index('data-view="executiveSnapshot"') > html.index('data-view="trend"')
-    assert "Executive SLA Snapshot" in html
-    assert 'id="executiveSnapshotPeriod"' in html
-    assert 'id="executiveSnapshotStart"' in html
-    assert 'id="executiveSnapshotEnd"' in html
-    assert 'id="executiveSnapshotSubscription"' in html
-    assert 'id="executiveSnapshotOwner"' in html
-    assert 'id="executiveSnapshotUnit"' in html
-    assert 'aria-label="Finding-level SLA compliance by severity"' in html
-    assert '<option value="machines">Machines</option>' in html
-    assert '<option value="cves">Vulnerabilities (CVEs)</option>' in html
-    assert '<option value="recommendations">Recommendations</option>' in html
-    assert 'id="executiveSnapshotManagement"' in html
-    assert 'id="executiveSnapshotTechnicalEvidence"' in html
-    assert 'id="executiveSlaMeterValue"' in html
-    assert 'id="executiveSlaMeterText"' in html
-    assert 'id="executiveSlaTargetMarker"' in html
-    assert "90% reporting target" not in html
-    assert 'id="printExecutiveSnapshot"' in html
-    assert 'id="exportExecutiveSnapshotCsv"' in html
-    assert 'id="executiveSubscriptionConcentration"' in html
-    assert 'id="executiveOwnerConcentration"' in html
-    assert "function renderExecutiveSnapshot()" in javascript
-    assert "function executiveSnapshotPeriods(latestDate)" in javascript
-    assert "function executiveSnapshotScope()" in javascript
-    assert "function executiveRecommendationWorkload(current,scopeRows)" in javascript
-    assert "function printExecutiveSnapshot()" in javascript
-    assert "function exportExecutiveSnapshotCsv()" in javascript
-    assert 'executiveSnapshotPeriod:"30days"' in javascript
-    assert 'executiveSnapshotUnit:"machines"' in javascript
-    assert "Elevated SLA exposure" not in javascript
-    assert 'statusCard.className="executive-severity-status-grid"' in javascript
-    assert "<small>SLA compliance</small>" in javascript
-    assert 'row.Severity.toLowerCase()' in javascript
-    assert "Management action required" not in javascript
-    assert '"Pending evidence"' in javascript
-    assert '"Open more than 90 days"' in javascript
-    assert "Data current through" in javascript
-    assert "function syncExecutiveSnapshotFilters()" in javascript
-    assert "function renderExecutiveConcentration(" in javascript
-    assert '"Reopened finding rate"' in javascript
-    assert '"Endpoint reporting freshness"' in javascript
-    assert '"Observed remediation velocity"' in javascript
-    assert '"Fully remediated"' in javascript
-    assert '"Partially remediated"' in javascript
-    assert '"Still open"' in javascript
-    assert '"With outside-SLA findings"' in javascript
-    assert "The SLA percentage and color remain based on finding deadlines." in javascript
-    assert "not a separate recommendation SLA clock" in javascript
-    assert 'ReportRepresentation:recommendationMode?"Recommendation workload":"Finding instances"' in javascript
-    assert "estimated days" not in javascript.lower()
-    assert "projected backlog" not in javascript.lower()
-    assert ".executive-concentration-row" in stylesheet
-    assert ".executive-sla-meter" in stylesheet
-    assert "meterHue=" in javascript
-    assert "meter.style.backgroundColor" in javascript
-    assert "state.slaPolicy?.complianceTargetPercent" in javascript
-    assert "no compliance target configured" in javascript
-    assert "target=90" not in javascript
-    assert "background-color .2s ease" in stylesheet
-    assert ".executive-severity-status-grid" in stylesheet
-    assert "article.critical" in stylesheet
-    assert "article.high" in stylesheet
-    assert "article.medium" in stylesheet
-    assert "article.low" in stylesheet
-    assert "strong.Critical" in stylesheet
-    assert "strong.High" in stylesheet
-    assert "strong.Medium" in stylesheet
-    assert "strong.Low" in stylesheet
-    assert 'order: ["executive", "recommendations", "overview", "workstations", "slaDashboard", "sla", "trend", "executiveSnapshot", "help"]' in configuration
-    assert "body.executive-snapshot-print .story:not(#executiveSnapshot)" in stylesheet
-    assert "@media print" in stylesheet
-
-
-def test_dashboard_renders_only_active_heavy_view():
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert 'state.activeView==="executive"' in javascript
-    assert 'state.activeView==="overview"' in javascript
-    assert 'state.activeView==="workstations"' in javascript
-    assert 'state.activeView==="trend"' in javascript
-    assert "function activateView(view)" in javascript
-    assert "state.activeView=view;render();" in javascript
-
-
-def test_dashboard_opens_cve_detail_dialog_before_pivoting():
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert "showCveDetailDialog" in javascript
-    assert 'function pivotToCve(row){const id=normalizedCve(row.CveId||row.id||row);if(id)showCveDetailDialog(id);}' in javascript
-    assert 'id="dialogCveDetailTable"' in javascript
-    assert 'id="dialogCveMachines"' in javascript
-    assert 'id="dialogCveRecommendations"' in javascript
-    assert 'id="dialogRelatedCves"' in javascript
-    assert "Loading Defender vulnerability detail" in javascript
-    assert "pivotFromDialog" in javascript
-
-
-def test_dashboard_uses_statistics_tab_without_ownership_story():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert 'data-view="trend"' in html
-    assert 'data-view="trend"' in html
-    assert '<span class="nav-label">Reporting</span>' in html
-    assert "<h2>Vulnerability reporting and change over time</h2>" in html
-    assert 'id="statisticsPeriod"' in html
-    assert "This week vs previous week" in html
-    assert "Latest run vs previous run" in html
-    assert "Custom range vs preceding equal range" in html
-    assert 'id="statisticsSlaBreakdown"' in html
-    assert "Selected-period finding results against severity-based SLA targets" in html
-    assert 'data-view="ownership"' not in html
-
-
-def test_reporting_uses_retained_collection_run_history_for_trajectory():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert 'id="collectionRunTrend"' in html
-    assert "Collection-run workload trajectory" in html
-    assert "Completed snapshots from the last 90 days" in html
-    assert "function buildRunHistoryPoints()" in javascript
-    assert "Number(row.NewFindings||0)+Number(row.ReopenedFindings||0)" in javascript
-    assert "function renderRunHistoryTrend()" in javascript
-    assert 'anchor:"collectionRunTrend"' in javascript
-
-
-def test_lifecycle_entity_selector_and_latest_run_change_filter_are_wired():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert "Change activity by entity" in html
-    assert 'reportingEntity:"machines"' in javascript
-    assert 'id="reportingChange"' in html
-    assert '<option value="Fixed" selected>Confirmed fixed</option>' in html
-    assert '<option value="PendingConfirmation">Pending confirmation</option>' in html
-    assert '<option value="PendingVerification">Pending verification</option>' in html
-    assert '<option value="DetectionReturned">Detection returned</option>' in html
-    assert 'id="lifecycleDetailTable"' in html
-    assert "function originMatches(row)" in javascript
-    assert 'state.reportingEntity=event.target.value;renderLifecycleReporting()' in javascript
-    assert 'state.reportingChange=event.target.value;renderLifecycleReporting()' in javascript
-    assert 'state.reportingChange==="All"||row.EventType===state.reportingChange' in javascript
-    assert 'table("lifecycleDetailTable",columns,detailRows,onSelect)' in javascript
-    assert "Export detail CSV" in html
-    assert 'class="latest-run-changes-toggle"' in html
-    assert "Show only findings changed since the previous run" in html
-    assert "function latestRunChangeMatches(row)" in javascript
-    assert "state.latestRunChangesOnly" in javascript
-    assert 'items.push(["Run changes","New, reopened, or fixed since previous run"])' in javascript
-    assert '"Limit workspace to newly observed vulnerabilities"' in javascript
-    assert "not necessarily the interval since the previous collection" in javascript
-    assert "View period evidence" not in javascript
-    assert 'rel="icon" type="image/png" href="favicon.png?' in html
-    assert Path("dashboard/favicon.png").is_file()
-    assert "Vulnerability activity in the 24 hours ending at latest collection" in javascript
-    assert 'id="ownership"' not in html
-    assert 'id="assignmentTable"' not in html
-    assert "renderOwnership" not in javascript
-
-
-def test_dashboard_reauthenticates_once_when_easy_auth_session_expires():
-    javascript = Path("dashboard/app.js").read_text()
-    evidence_javascript = Path("dashboard/data-evidence.js").read_text()
-
-    for source in (javascript, evidence_javascript):
-        assert "async function apiFetch(path,options)" in source
-        assert "if(response.status!==401)return response" in source
-        assert "if(!reauthenticationStarted)" in source
-        assert 'location.assign(`/.auth/login/aad?post_login_redirect_uri=${encodeURIComponent(returnPath)}`)' in source
-    assert 'apiFetch("/api/dashboard/query"' in javascript
-    assert 'apiFetch("/api/auth")' in javascript
-    assert "apiFetch(`/api/data/cve-details/${encodeURIComponent(key)}.json`)" in javascript
-
-
-def test_cve_rows_open_description_and_report_detail_failures():
-    javascript = Path("dashboard/app.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-
-    assert 'title="View CVE description and evidence"' in javascript
-    assert "<span>CVE DESCRIPTION</span>" in javascript
-    assert "detail?.Description" in javascript
-    assert "CVE detail could not be loaded:" in javascript
-    assert "CVE detail request failed:" in javascript
-    assert ".cve-link{" in stylesheet
 
 
 def test_dashboard_shows_global_filters_as_chips_and_clears_selected_work_item():
@@ -716,279 +301,6 @@ def test_dashboard_defaults_to_vulnerabilities_devices_and_cloud():
     assert 'value="Cloud" checked' in html
     assert '"defaultRecommendationTypes": ["Vulnerability"]' in configuration
     assert '"defaultDomains": ["Devices", "Cloud"]' in configuration
-
-
-def test_dashboard_can_hide_devices_outside_a_snapshot_relative_reporting_window():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-    configuration = Path("dashboard/config.js").read_text()
-
-    assert 'id="hideNonReporting" type="checkbox"' in html
-    assert 'id="reportingDays"' in html
-    for days in (7, 14, 30, 60, 90):
-        assert f'value="{days}">Last reported within {days} days' in html
-    assert '"defaultHideNonReporting": false' in configuration
-    assert '"defaultReportingDays": 30' in configuration
-    assert "datasetSnapshotMs" in javascript
-    assert "row.LastSeenUtc" in javascript
-    assert "snapshot-state.reportingDays*86400000" in javascript
-    assert "reportingMatches(row)" in javascript
-    assert "reportingLinked=linked.filter(reportingMatches)" in javascript
-    assert "linked=(state.findingsByRecommendation.get(id)||[]).filter(reportingMatches)" in javascript
-    assert "machineInScope=row=>" in javascript
-    assert "subscriptionMatches(row)&&reportingMatches(row)" in javascript
-    assert "function trendScopedFindings()" in javascript
-    assert "item.DeviceId===row.DeviceId&&item.DataOrigin===row.DataOrigin&&reportingMatches(item)" in javascript
-    assert 'state.hideNonReporting=Boolean(filterConfig.defaultHideNonReporting)' in javascript
-    assert '`Within ${state.reportingDays} days`' in javascript
-
-
-def test_attention_required_vulnerability_recommendations_remain_in_vulnerability_scope():
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert r"/\bvulnerabilit(?:y|ies)\b/.test(text)" in javascript
-    assert '`${row.RecommendationName||""} ${row.SubCategory||""}`' in javascript
-
-
-def test_dashboard_carries_remediation_outcomes_into_weekly_history():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert "periodRemediationOutcome" in javascript
-    assert 'id="statisticsPeriodCards"' in html
-    assert 'id="statisticsPeriodTable"' in html
-    assert '["Week","Days","New","Fixed","AssetsRemediated","FindingsResolved","RemediationResult"' in javascript
-    assert "Net finding change" in javascript
-    assert "Ending open findings" in javascript
-
-
-def test_dashboard_filters_by_normalized_asset_classification():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert 'id="assetClassFilter"' in html
-    assert '<option value="AzureCloud">Azure / Cloud</option>' in html
-    assert '<option value="TraditionalIT">Traditional IT</option>' in html
-    assert "Azure resource metadata → Defender machine tag → inventory fallback" in html
-    assert "assetClassMatches" in javascript
-    assert 'state.assetClass="All"' in javascript
-    assert '$("assetClassFilter").value="All"' in javascript
-
-
-def test_dashboard_filters_all_views_by_subscription():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert 'id="subscriptionFilter"' in html
-    assert "No subscription" in html
-    assert "subscriptionMatches" in javascript
-    assert 'state.subscription="All"' in javascript
-    assert '$("subscriptionFilter").value="All"' in javascript
-    assert "SubscriptionId" in javascript
-    assert '{name:"subscriptions",key:"subscriptions",label:"subscriptions",required:false}' in javascript
-    assert "state.subscriptionInventoryById" in javascript
-    assert "subscription.SubscriptionName" in javascript
-
-
-def test_dashboard_endpoint_inventory_defines_scope_and_temporal_filtering():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert 'data-view="workstations"' in html
-    assert '<span class="nav-label">Endpoint assets</span>' in html
-    assert "<h2>Endpoint device inventory</h2>" in html
-    assert "Cloud resources without endpoint device records are not counted here" in html
-    assert '{name:"devices",key:"devices",label:"device inventory",required:true}' in javascript
-    assert "state.devices.filter(device=>" in javascript
-    assert "inventoryDeviceMatches(device)" in javascript
-    assert 'findingScopeRestrictsInventory=state.newPeriodFilter||state.latestRunChangesOnly||state.exposureStatus!=="DetectedAndPending"' in javascript
-    assert "!findingScopeRestrictsInventory||scopedDevices.has(device.DeviceId)" in javascript
-    assert 'state.domains.has(findingDomain(row))' in javascript
-    assert 'id="includeDiscoveredAssets" type="checkbox"' in html
-    assert '"defaultIncludeDiscoveredOnly": false' in Path("dashboard/config.js").read_text()
-    assert 'state.includeDiscoveredOnly||device.OnboardingStatus==="Onboarded"' in javascript
-    assert 'coverage=assessed?"Endpoint assessed":item.OpenFindings||item.PendingFindings?"Limited evidence":"Not assessed"' in javascript
-    assert '"Health status: Active"' in javascript
-    assert "this does not mean active vulnerabilities" in javascript
-    assert '"Detected endpoint findings"' in javascript
-    assert '"Endpoints pending verification"' in javascript
-    assert '["OpenFindings","PendingFindings","Critical","High","Medium","Low"].includes(column)&&row.VulnerabilityCoverage==="Not assessed"' in javascript
-    assert '["DeviceName","WorkloadType","InstanceCount","OSPlatform","AssetClass","Subscription","HealthStatus","OnboardingStatus","VulnerabilityCoverage","LastSeenUtc","OpenFindings","PendingFindings","Critical","High","Medium","Low"]' in javascript
-
-
-def test_dashboard_has_severity_based_finding_and_recommendation_sla_graphs():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert 'id="findingSlaGraph"' in html
-    assert 'id="recommendationSlaGraph"' in html
-    assert 'id="statisticsSlaCards"' in html
-    assert 'id="statisticsSlaBreakdown"' in html
-    assert "Finding outcomes by severity" in html
-    assert "Selected-period finding results against severity-based SLA targets" in html
-    assert "Recommendation outcomes by severity" in html
-    assert "findingSlaSeverityRows" in javascript
-    assert "recommendationSlaSeverityRows" in javascript
-    assert 'row.SlaStatus==="OpenWithinSla"' in javascript
-    assert "Detected within SLA" in javascript
-    assert "Observed remediation pending verification" in javascript
-    assert "Open findings overdue" in javascript
-    assert "Remediation observed within SLA" in javascript
-    assert "Remediation observed outside SLA" in javascript
-    assert "Recommendations with overdue detections" in javascript
-
-
-def test_dashboard_reports_latest_run_executive_deltas():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-
-    assert 'id="executiveDeltaContext"' in html
-    assert '{name:"finding-events",key:"findingEvents",label:"finding history",required:false}' in javascript
-    assert "comparableRunSnapshots" in javascript
-    assert "since previous run" in javascript
-    assert "New findings since previous run" in javascript
-    assert "Findings fixed since previous run" in javascript
-    assert 'label:"Detected findings overdue"' in javascript
-    assert 'label:"Confirmed since previous run"' in javascript
-    assert "metric-delta" in javascript
-    assert ".metric-delta.good" in stylesheet
-    assert ".metric-delta.bad" in stylesheet
-
-
-def test_dashboard_separates_detection_confirmation_and_sla_timing():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-
-    assert 'id="exposureStatusFilter"' in html
-    assert '<option value="DetectedOnly">Detected only</option>' in html
-    assert '<option value="PendingOnly">Pending evidence only</option>' in html
-    assert 'id="pendingOnlyFilter"' in html
-    assert "Pending only button above" in html
-    assert "SLA results always use the first qualified absence" in html
-    assert 'exposureStatus:"DetectedAndPending"' in javascript
-    assert "PENDING_FINDING_STATUSES" in javascript
-    assert "DETECTED_FINDING_STATUSES" in javascript
-    assert "slaResolved" in javascript
-    assert "EffectiveRemediationUtc" in javascript
-    assert "ConfirmationRunsCompleted" in javascript
-    assert "ConfirmationRunsRequired" in javascript
-    assert 'state.exposureStatus==="PendingOnly"?"DetectedAndPending":"PendingOnly"' in javascript
-    assert 'PendingFindings:pendingRows.length' in javascript
-    assert "SLA remediations pending verification" in javascript
-    assert ".lifecycle-status.PendingConfirmation" in stylesheet
-    assert ".lifecycle-status.PendingVerification" in stylesheet
-    assert ".filterbar .exposure-status-filter{grid-column:1/span 6!important;grid-row:3}" in stylesheet
-    assert ".pending-filter-shortcut[aria-pressed=\"true\"]" in stylesheet
-
-
-def test_statistics_view_is_presented_as_reporting():
-    html = Path("dashboard/index.html").read_text()
-
-    assert 'data-view="trend"' in html
-    assert '<span class="nav-label">Reporting</span>' in html
-    assert "Vulnerability reporting and change over time" in html
-    assert "Workload and SLA statistics" not in html
-    assert "New findings" in html
-    assert "Ending open findings" in html
-
-
-def test_dashboard_shows_severity_and_subscription_coverage_panel():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-
-    assert 'id="severityCards"' in html
-    assert "Severity and subscription coverage" in html
-    assert "severityCardItems" in javascript
-    assert "Critical open" in javascript
-    assert "High open" in javascript
-    assert "Medium open" in javascript
-    assert "Low open" in javascript
-    assert "Cloud findings" in javascript
-    assert "Subscriptions represented" in javascript
-
-
-def test_dashboard_has_executive_tab_with_donut_visuals():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-
-    assert 'data-view="executive"' in html
-    assert 'id="executive" class="story active"' in html
-    assert "Story 0" not in html
-    assert 'id="recommendationSeverityPie"' in html
-    assert 'id="findingSeverityPie"' in html
-    assert 'id="assetExposurePie"' in html
-    assert "renderDonut" in javascript
-    assert "recommendationSeverityPie" in javascript
-    assert ".donut" in stylesheet
-
-
-def test_dashboard_connects_executive_workload_sla_and_recommendation_impact():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-    configuration = Path("dashboard/config.js").read_text()
-
-    assert 'id="secureScoreCard"' in html
-    assert 'id="executiveWorkload"' in html
-    assert 'id="executiveSlaPerformance"' in html
-    assert 'id="executiveRecommendationImpact"' in html
-    assert 'id="recommendationPreview"' in html
-    assert 'id="pivotBackdrop"' in html
-    assert "latestSecureScore" in javascript
-    assert 'row.DataOrigin==="Live"' in javascript
-    assert "recommendationImpactRows" in javascript
-    assert "VulnerabilityMix" in javascript
-    assert "CveExamples" in javascript
-    assert "FixImpact" in javascript
-    assert "bindRecommendationPreviews" in javascript
-    assert "setTimeout(()=>show(index,row,event.clientX),350)" in javascript
-    assert html.index('id="recommendationPreview"') > html.index("</main>")
-    assert "RECOMMENDATION INVENTORY" not in html
-    assert "<h2>Recommendations</h2>" in html
-    assert 'selectEntity("recommendation",id,true)' in javascript
-    assert 'order: ["executive", "recommendations", "overview", "workstations", "slaDashboard", "sla", "trend", "executiveSnapshot", "help"]' in configuration
-
-
-def test_dashboard_executive_summary_uses_readable_visual_hierarchy():
-    html = Path("dashboard/index.html").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-
-    assert "subsection-heading executive-impact-heading" in html
-    assert "Note: one recommendation can address many findings, devices, and CVEs." in html
-    assert ".executive-impact-heading{align-items:flex-end;justify-content:flex-start;gap:14px}" in stylesheet
-    assert ".new-activity-metrics span{color:#354f61;font-size:12px" in stylesheet
-    assert ".decision-metric small{font-size:12px!important" in stylesheet
-    assert ".donut-legend span{font-size:13px}" in stylesheet
-
-
-def test_dashboard_shows_ui_revision_below_live_snapshot():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-    configuration = Path("dashboard/config.js").read_text()
-    deployment = Path("infra/deploy.sh").read_text()
-
-    assert "Live snapshot" in html
-    assert 'id="freshnessLocalText"' in html
-    assert 'id="revisionText"' in html
-    assert "formatUtc" in javascript
-    assert "const formatLocal=" in javascript
-    assert "Local time with UTC below" in html
-    assert "<strong>${esc(formatLocal(row.SnapshotTimeUtc))}</strong>" in javascript
-    assert "UTC: ${esc(formatUtc(row.SnapshotTimeUtc))}" in javascript
-    assert '$("freshnessText").textContent=latest?formatLocal(latest.SnapshotTimeUtc)' in javascript
-    assert '$("freshnessLocalText").textContent=latest?`UTC: ${formatUtc(latest.SnapshotTimeUtc)}`' in javascript
-    assert "Web version ${presentation.version||\"unversioned\"}" in javascript
-    assert "UI revision ${presentation.revision?formatUtc(presentation.revision)" in javascript
-    assert ".freshness .revision-text{display:block!important" in stylesheet
-    assert re.search(r'version: "\d{4}\.\d{2}\.\d{2}\.\d+"', configuration)
-    assert re.search(r'revision: "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"', configuration)
-    assert 'ui_revision="$(date -u' in deployment
-    assert "Packaged dashboard version $dashboard_version, UI revision $ui_revision" in deployment
-    assert "Could not stamp all dashboard asset versions" in deployment
 
 
 def test_dashboard_customer_logo_placeholder_is_hidden_by_default():
@@ -1081,66 +393,6 @@ def test_primary_navigation_clears_selected_work_item_between_views():
     assert "const viewChanged=state.activeView!==view;" in activate_view
     assert "if(viewChanged)clearSelectedWorkItem();" in activate_view
     assert activate_view.index("if(viewChanged)clearSelectedWorkItem();") < activate_view.index("state.activeView=view;render();")
-
-
-def test_dashboard_supports_new_vulnerability_period_analysis_and_filtering():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-
-    assert 'id="newPeriod"' in html
-    assert '<option value="day">Latest 24 hours ending at collection</option>' in html
-    assert '<option value="week">Latest 7 days ending at collection</option>' in html
-    assert '<option value="month">Latest 30 days ending at collection</option>' in html
-    assert '<option value="custom">Custom date range</option>' in html
-    assert "RECENTLY FIRST SEEN" not in html
-    assert '<label class="new-activity-period">Date window<select id="newPeriod">' in html
-    assert 'id="newPeriodCustom" class="new-period-custom" hidden' in html
-    assert 'id="applyNewPeriodFilter"' in html
-    assert 'id="newActivityBar"' in html
-    assert 'data-new-view="workstations"' in html
-    assert "function newPeriodRange()" in javascript
-    assert "function firstObservedMatches(row)" in javascript
-    assert "function fixedInPeriodMatches(row)" in javascript
-    assert "function renderNewActivity()" in javascript
-    assert "firstSeenScope=range?filteredFindings(false,true,false):[]" in javascript
-    assert "remediationScope=range?filteredFindings(false,false,false):[]" in javascript
-    assert "rows=firstSeenScope.filter(firstObservedMatches)" in javascript
-    assert "fixedRows=remediationScope.filter(fixedInPeriodMatches)" in javascript
-    assert 'id="fixedWindowFindingCount"' in html
-    assert 'id="fixedWindowCveCount"' in html
-    assert 'id="fixedWindowMachineCount"' in html
-    assert 'id="fixedWindowRecommendationCount"' in html
-    assert 'class="window-metric" data-fixed-view="overview"' in html
-    assert 'class="window-metric" data-fixed-view="workstations"' in html
-    assert 'class="window-metric" data-fixed-view="recommendations"' in html
-    assert 'document.querySelectorAll("[data-fixed-view]")' in javascript
-    assert "state.remediationPeriodFilter=true" in javascript
-    assert "state.exposureStatus=\"All\"" in javascript
-    assert "Remediation observed" in javascript
-    assert ".filterbar .severity-filter{grid-column:1/span 2!important;grid-row:2}" in stylesheet
-    assert ".filterbar .latest-run-change-filter{grid-column:1/span 6!important;grid-row:5}" in stylesheet
-    assert ".window-metric:hover,.new-activity-metrics .window-metric:focus-visible" in stylesheet
-    assert "cursor:pointer" in stylesheet
-    assert "counts use each finding's first-seen or fixed timestamp inside this UTC window" in javascript
-    assert ".new-activity-bar{" in stylesheet
-
-
-def test_reporting_exposes_weekly_operational_workflow():
-    html = Path("dashboard/index.html").read_text()
-    javascript = Path("dashboard/app.js").read_text()
-    stylesheet = Path("dashboard/styles.css").read_text()
-
-    assert 'id="weeklyWorkflowCards"' in html
-    assert 'id="weeklyRiskTable"' in html
-    assert "Machines with risk still open at period end" in html
-    assert "function renderWeeklyWorkflow(current,previous)" in javascript
-    assert "EndingRiskMachines:new Set(endingRows.map" in javascript
-    assert "NewlyAffectedMachines:new Set(newRows.map" in javascript
-    assert 'table("weeklyRiskTable"' in javascript
-    assert 'riskRows,row=>pivotToMachine(row)' in javascript
-    assert 'riskRows,row=>showDetail(row.Representative)' not in javascript
-    assert ".weekly-workflow-cards{grid-template-columns:repeat(4" in stylesheet
 
 
 def test_reporting_exposes_customer_workflow_help():

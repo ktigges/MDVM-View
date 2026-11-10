@@ -305,14 +305,14 @@ def test_refresh_failure_retains_ready_snapshot_and_reports_error(caplog):
     assert "retaining any ready snapshot" in caplog.text
 
 
-def test_shared_defaults_agree_with_actual_browser_state():
+def test_shared_defaults_agree_with_actual_browser_request():
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js required to verify browser default parity")
     script = r"""
 const fs=require("node:fs"),vm=require("node:vm");
-const source=fs.readFileSync("dashboard/app.js","utf8").split("\n");
-const context=vm.createContext({window:{},Map,Set});
+const sourceText=fs.readFileSync("dashboard/app.js","utf8"),source=sourceText.split("\n");
+const context=vm.createContext({window:{},Map,Set,$:()=>null});
 vm.runInContext(fs.readFileSync("dashboard/config.js","utf8"),context);
 for(const line of source){
   if(line.startsWith("const presentation=")||line.startsWith("const filterConfig=")||
@@ -320,17 +320,17 @@ for(const line of source){
      line.startsWith("const DEFAULT_DOMAINS=")||line.startsWith("const DEFAULT_REPORTING_DAYS=")||
      line.startsWith("const state="))vm.runInContext(line,context);
 }
-console.log(vm.runInContext(`JSON.stringify(Object.fromEntries(
- Object.entries(state).filter(([k,v])=>v===null||["string","number","boolean"].includes(typeof v)||v instanceof Set)
- .map(([k,v])=>[k,v instanceof Set?[...v]:v]).concat([["workloadGrouping",workloadGroupingConfig]])
-))`,context));
+vm.runInContext("const dashboardQuery={snapshot:{snapshotId:'test'}};const FINDINGS_PAGE_SIZE=100;",context);
+vm.runInContext(sourceText.slice(sourceText.indexOf("function dashboardFilters()"),sourceText.indexOf("function invalidateDashboardChannel(")),context);
+console.log(vm.runInContext("JSON.stringify(dashboardRequest().filters)",context));
 """
     result = subprocess.run([node, "-e", script], cwd=ROOT, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     browser = json.loads(result.stdout)
-    browser.pop("slaPolicy")
-    browser.pop("recommendationTrackingEnabled")
-    browser.pop("recommendationTrackingLocalPreview")
+    # snapshot_query_payload supplies these from the selected snapshot and store.
+    for key in ("slaPolicy", "recommendationTrackingEnabled",
+                "recommendationTrackingLocalPreview", "recommendationTracking"):
+        browser.pop(key)
     assert _cache_filters(browser) == initial_filters(ROOT / "dashboard/config.js")
 
 
@@ -364,6 +364,30 @@ def test_custom_dates_are_part_of_cache_key():
         ("executiveSnapshotPeriod", "executiveSnapshotStart"),
     ]:
         assert _cache_filters({mode: "custom", start: "2026-10-01"})[start] == "2026-10-01"
+
+
+def test_persistent_default_rejects_changed_scope_policy_and_response_version(tmp_path, monkeypatch):
+    from vulnerability_view import dashboard_queries
+
+    original = engine(tmp_path)
+    filters = initial_filters(ROOT / "dashboard/config.js")
+    filters["slaPolicy"] = {"policyVersion": "original"}
+    payload = {"view": "executive", "filters": filters, "limit": 100}
+    original.prepare(payload)
+    expected = original.cached(payload)
+    for index in range(30):
+        original.products.save_document(f"filtered:{index}", {"index": index})
+
+    restored = engine(tmp_path)
+    assert restored.cached(payload) == expected
+    for changed in (
+        {"severity": "Critical"},
+        {"slaPolicy": {"policyVersion": "changed"}},
+    ):
+        assert restored.cached({**payload, "filters": {**filters, **changed}}) is None
+
+    monkeypatch.setattr(dashboard_queries, "PREPARED_RESPONSE_VERSION", dashboard_queries.PREPARED_RESPONSE_VERSION + 1)
+    assert engine(tmp_path).cached(payload) is None
 
 
 def test_real_lifespan_prepares_indexes_then_queries_every_view_on_demand(tmp_path, monkeypatch, capsys):
@@ -475,6 +499,83 @@ def test_persistent_startup_warms_all_views_and_restores_without_reingestion(tmp
     assert any("/products-v1/" in name and name.endswith("/complete.json") for name in service.blobs)
     assert any("/search-v1/" in name and name.endswith("/complete.json") for name in service.blobs)
     assert any("/history-v10/" in name and name.endswith("/complete.json") for name in service.blobs)
+
+
+def test_persistent_defaults_survive_filtered_query_churn_and_restart(tmp_path, monkeypatch):
+    from test_dashboard_cache import Service, cache
+    from vulnerability_view import dashboard_server
+
+    data = tmp_path / "dashboard/data"
+    data.mkdir(parents=True)
+    for name, rows in datasets().items():
+        (data / f"{name}.json").write_text(json.dumps(rows))
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/sla-policies.json").write_text('{"policies":[]}')
+    service = Service()
+    monkeypatch.setattr(dashboard_server, "DashboardDerivedCache", lambda *args, **kwargs: cache(service))
+    settings = Settings(
+        dashboard_data_source="local", dashboard_auth_enabled=False,
+        dashboard_static_dir=str(ROOT / "dashboard"), dashboard_derived_cache_container="viewer-cache",
+    )
+    expected = {}
+
+    async def verify():
+        for restart in range(2):
+            if restart:
+                original_query = DashboardQueryEngine.query
+
+                def require_cached(engine, payload):
+                    if not payload.get("filters", {}).get("search"):
+                        assert engine.cached(payload) is not None, payload["view"]
+                    return original_query(engine, payload)
+
+                monkeypatch.setattr(DashboardQueryEngine, "query", require_cached)
+            application = create_app(settings, project_root=tmp_path)
+            async with application.router.lifespan_context(application):
+                preparation = application.state.dashboard_preparation
+                for _ in range(1000):
+                    if preparation.diagnostics()["readySnapshotId"]:
+                        break
+                    await asyncio.sleep(.01)
+                assert preparation.diagnostics()["status"] == "ready", preparation.diagnostics()
+                with application.state.dashboard_snapshots.acquire(preparation.metadata()["snapshotId"]) as entry:
+                    filters = {
+                        **initial_filters(ROOT / "dashboard/config.js"), "slaPolicy": entry.policy,
+                        "recommendationTrackingEnabled": False,
+                        "recommendationTrackingLocalPreview": False, "recommendationTracking": [],
+                    }
+                    prepared_keys = set(entry.engine._prepared)
+                    for index in range(30):
+                        payload = {
+                            "view": "help", "filters": {**filters, "search": f"unmatched-{index}"},
+                        }
+                        entry.engine.query(payload)
+                        entry.engine._responses.clear()
+                        entry.engine.query(payload)
+                    assert len(prepared_keys) == len(PREPARED_VIEWS)
+                    assert set(entry.engine._prepared) == prepared_keys
+                    if not restart:
+                        cache(service).publish_extra(
+                            entry.engine, "products-v1", entry.engine.products.path,
+                            limit=64 * 1024**2, validate=entry.engine.products.validate,
+                            lock=entry.engine.products.lock,
+                        )
+                    for view in PREPARED_VIEWS:
+                        payload = {
+                            "view": view, "filters": filters,
+                            "mode": "cves" if view == "overview" else "findings", "limit": 100,
+                        }
+                        result = entry.engine.cached(payload)
+                        assert result is not None, f"{view} lost its prepared result after cache churn"
+                        if restart:
+                            assert result == expected[view]
+                        else:
+                            expected[view] = result
+                    assert entry.engine.cached({
+                        "view": "executive", "filters": {**filters, "severity": "Critical"},
+                    }) is None
+
+    asyncio.run(verify())
 
 
 @pytest.mark.parametrize("fail_summary", [False, True])

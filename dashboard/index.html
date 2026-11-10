@@ -1,6 +1,6 @@
 <!--
   Author: Kevin Tigges
-  Last modified: 2026-11-05
+  Last modified: 2026-11-10
   Purpose: Define the versioned vulnerability dashboard page structure and readable controls.
 -->
 <!doctype html>
@@ -10,7 +10,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
   <link rel="icon" type="image/png" href="favicon.png?v=20261009-2216">
-  <link rel="stylesheet" href="styles.css?v=20261110-sla-dashboard">
+  <link rel="stylesheet" href="styles.css?v=2026.11.10.7">
 </head>
 <body>
   <header class="topbar">
@@ -134,7 +134,7 @@
       <section class="new-activity-metric-group" aria-labelledby="firstSeenMetricLabel">
         <strong id="firstSeenMetricLabel">First seen in window</strong>
         <div class="new-activity-metrics">
-          <button type="button" class="technical-metric" data-new-view="overview" data-findings-mode="findings" aria-describedby="newFindingHelp"><span>finding instances</span><strong id="newFindingCount">0</strong><small id="newFindingHelp" class="activity-metric-help" role="tooltip">Findings first seen during the selected dates. Each finding is one vulnerability in one software version on one machine, so the same vulnerability can appear many times. This is not the number of patches needed. The count uses the loaded collection and your filters. Click to see the individual findings.</small></button>
+
           <button type="button" data-new-view="overview" data-findings-mode="cves" aria-describedby="newCveHelp"><span>distinct CVEs</span><strong id="newCveCount">0</strong><small id="newCveHelp" class="activity-metric-help" role="tooltip">Different vulnerabilities found in new detections during the selected dates. The same CVE on 100 machines counts once. A CVE is the reference number for a known vulnerability. New here means newly detected on a matching machine, not newly discovered worldwide. The count uses the loaded collection and your filters. Click to see these vulnerabilities.</small></button>
           <button type="button" data-new-view="workstations" aria-describedby="newMachineHelp"><span>machines with new detections</span><strong id="newMachineCount">0</strong><small id="newMachineHelp" class="activity-metric-help" role="tooltip">Machines with at least one finding first seen during the selected dates. Each machine counts once, even if several vulnerabilities were detected. These are new findings, not necessarily new machines. The count uses the loaded collection and your filters. Click to see the machines.</small></button>
           <button type="button" data-new-view="recommendations" aria-describedby="newRecommendationHelp"><span>recommendations</span><strong id="newRecommendationCount">0</strong><small id="newRecommendationHelp" class="activity-metric-help" role="tooltip">Recommendations linked to findings first seen during the selected dates. Each recommendation counts once, even if it covers many machines or vulnerabilities. An existing recommendation can appear here when new findings are added. The count uses the loaded collection and your filters. Click to see the recommendations.</small></button>
@@ -143,7 +143,7 @@
       <section class="new-activity-metric-group corrected" aria-labelledby="correctedMetricLabel">
         <strong id="correctedMetricLabel">Remediation observed in the same window</strong>
         <div class="new-activity-metrics corrected-metrics">
-          <button type="button" class="window-metric technical-metric" data-fixed-view="overview" data-findings-mode="findings" aria-describedby="fixedFindingHelp"><span>remediation observations</span><strong id="fixedWindowFindingCount">0</strong><small id="fixedFindingHelp" class="activity-metric-help" role="tooltip">Findings that stopped appearing during the selected dates while the machine was still reporting. This includes confirmed fixes and fixes awaiting another collection to confirm. The date is when the change was first noticed, not the exact patch time. The count uses the loaded collection and your filters, except the detected/fixed filter. Click to see the findings.</small></button>
+
           <button type="button" class="window-metric" data-fixed-view="overview" data-findings-mode="cves" aria-describedby="fixedCveHelp"><span>distinct CVEs with fixes</span><strong id="fixedWindowCveCount">0</strong><small id="fixedCveHelp" class="activity-metric-help" role="tooltip">Different vulnerabilities with at least one fix first noticed during the selected dates. Each CVE counts once, even if fixes were seen on many machines. Some fixes are still awaiting confirmation. The vulnerability may remain on other machines or software versions, or return later. The count uses the loaded collection and your filters, except the detected/fixed filter. Click to see these vulnerabilities.</small></button>
           <button type="button" class="window-metric" data-fixed-view="workstations" aria-describedby="fixedMachineHelp"><span>machines with fixes</span><strong id="fixedWindowMachineCount">0</strong><small id="fixedMachineHelp" class="activity-metric-help" role="tooltip">Machines with at least one fix first noticed during the selected dates. Each machine counts once, even if several findings disappeared. Some fixes are still awaiting confirmation, and other vulnerabilities may remain on the same machine. This does not mean the machine is fully fixed. The count uses the loaded collection and your filters, except the detected/fixed filter. Click to see the machines.</small></button>
           <button type="button" class="window-metric" data-fixed-view="recommendations" aria-describedby="fixedRecommendationHelp"><span>recommendations with observed progress</span><strong id="fixedWindowRecommendationCount">0</strong><small id="fixedRecommendationHelp" class="activity-metric-help" role="tooltip">A recommendation counts once when at least one linked finding stopped appearing during the selected dates. A finding is one vulnerability in one software version on one machine. For example, one finding disappearing on one machine is enough to count the recommendation, even if it covers hundreds of machines. Some fixes are still awaiting confirmation. The same vulnerability may remain in other software on that machine or on other machines. This does not mean the recommendation is finished. The count uses the loaded collection and your filters, except the detected/fixed filter. Click to see the recommendations.</small></button>
@@ -183,33 +183,7 @@
     <section id="executive" class="story active">
     <div id="executiveManagement"></div>
     <article id="secureScoreCard" class="secure-score-card supporting-score"></article>
-    <details id="executiveTechnicalEvidence" class="technical-evidence" hidden><summary>Technical finding-instance evidence (load on demand)</summary>
-    <section class="executive-band" aria-label="Executive security posture">
-      <div class="executive-heading"><div><span>EXECUTIVE POSTURE</span><h2>Current security posture</h2></div><p>Filtered remediation posture, Microsoft Secure Score, and policy SLA outcomes</p></div>
-      <div class="executive-decision-grid">
-        <article class="decision-panel primary-kpis"><div class="decision-panel-title"><span>WORK TO DO NOW</span><h3>Current exposure and latest-run change</h3><small id="executiveDeltaContext">Loading comparable runs</small></div><div id="executiveWorkload" class="decision-metrics"></div></article>
-        <article class="decision-panel sla-kpis"><div class="decision-panel-title"><span>SLA RESULTS AND CURRENT RISK</span><h3>Observed remediation against SLA and critical findings still detected</h3></div><div id="executiveSlaPerformance" class="decision-metrics"></div></article>
-      </div>
-    </section>
-      <div class="subsection-heading executive-impact-heading"><div><span>RECOMMENDATION IMPACT</span><h3>Highest-impact actions</h3></div><p class="impact-warning">Note: one recommendation can address many findings, devices, and CVEs.</p></div>
-      <div id="executiveRecommendationImpact" class="recommendation-impact-grid compact-impact"></div>
-      <div class="exec-visual-grid">
-        <article class="panel"><div class="panel-title"><h3>Recommendation severity</h3><span>Current filter context</span></div><div id="recommendationSeverityPie" class="donut-panel"></div></article>
-        <article class="panel"><div class="panel-title"><h3>Finding severity</h3><span>Open and unresolved findings</span></div><div id="findingSeverityPie" class="donut-panel"></div></article>
-        <article class="panel"><div class="panel-title"><h3>Asset exposure</h3><span>Current findings by asset class</span></div><div id="assetExposurePie" class="donut-panel"></div></article>
-      </div>
-      <div class="subsection-heading"><div><span>CURRENT EXPOSURE MIX</span><h3>Severity and subscription coverage</h3></div></div>
-      <div id="severityCards" class="metric-grid compact"></div>
-      <div class="subsection-heading"><div><span>LATEST COLLECTION MOVEMENT</span><h3>Overall finding movement between the latest runs</h3></div><p>Every value counts finding instances; machine counts are shown beneath each total.</p></div>
-      <article class="panel latest-run-panel">
-        <div class="panel-title"><div><h3 id="executiveRunMovementTitle">Latest-run comparison</h3><span id="executiveRunMovementContext">Loading comparable runs</span></div><label class="latest-run-change-toggle-label"><input class="latest-run-changes-toggle" type="checkbox"> Show only findings changed since the previous run</label></div>
-        <div id="executiveRunMovement" class="decision-metrics latest-run-metrics"></div>
-        <p id="executiveRunEquation" class="latest-run-equation"></p>
-      </article>
-      <div class="subsection-heading"><div><span>GLOBAL VULNERABILITY SLA · FINDING-LEVEL RESULTS</span><h3>Defender-confirmed finding fixes against severity SLA windows</h3></div><p>Every value below counts finding instances: one CVE detected on one machine.</p></div>
-      <div class="panel sla-severity-panel"><div class="table-wrap"><table id="executiveSlaBreakdown"></table></div></div>
-      <div id="overviewSlaCards" class="metric-grid compact sla-summary"></div>
-    </details>
+
     </section>
     <section id="executiveSnapshot" class="story executive-snapshot">
       <div class="executive-snapshot-header">
@@ -225,30 +199,7 @@
         </div>
       </div>
       <div id="executiveSnapshotManagement"></div>
-      <details id="executiveSnapshotTechnicalEvidence" class="technical-evidence" hidden><summary>Technical finding-instance evidence (load on demand)</summary>
-      <section class="executive-status-band">
-        <div id="executiveSnapshotStatus" class="executive-severity-status-grid" aria-label="Finding-level SLA compliance by severity"></div>
-        <div id="executiveSnapshotKpis" class="executive-kpi-grid"></div>
-      </section>
-      <section class="executive-sla-position" aria-labelledby="executiveSlaPositionTitle">
-        <div><span>FINDING-LEVEL SLA PERFORMANCE</span><h3 id="executiveSlaPositionTitle">Observed finding-level SLA performance</h3><p id="executiveSnapshotUnitNote">Each value represents one vulnerability finding on one machine.</p></div>
-        <div class="executive-sla-meter-wrap"><div class="executive-sla-meter"><i id="executiveSlaMeterValue"></i><b id="executiveSlaTargetMarker" aria-hidden="true" hidden></b></div><div class="executive-sla-meter-labels"><span>0%</span><strong id="executiveSlaMeterText">Calculating</strong><span>100%</span></div></div>
-      </section>
-      <p id="executiveSnapshotNarrative" class="executive-narrative"></p>
-      <div class="executive-snapshot-grid">
-        <article class="panel executive-chart-panel"><div class="panel-title"><div><h3>Exposure movement</h3><span>New, fixed, and ending-open finding instances</span></div></div><div id="executiveSnapshotTrend" class="executive-trend-chart"></div></article>
-        <article class="panel executive-chart-panel"><div class="panel-title"><div><h3>Open risk by severity</h3><span>Finding instances unresolved at period end</span></div></div><div id="executiveSnapshotSeverity" class="executive-severity-chart"></div></article>
-      </div>
-      <div class="executive-snapshot-grid executive-concentration-grid">
-        <article class="panel"><div class="panel-title"><div><h3>Risk concentration by subscription</h3><span>Open finding instances at period end</span></div></div><div id="executiveSubscriptionConcentration" class="executive-concentration-chart"></div></article>
-        <article class="panel"><div class="panel-title"><div><h3>Risk concentration by operating team</h3><span>Derived ownership from collected asset evidence</span></div></div><div id="executiveOwnerConcentration" class="executive-concentration-chart"></div></article>
-      </div>
-      <div class="executive-snapshot-grid">
-        <article class="panel"><div class="panel-title"><div><h3 id="executiveSlaTableTitle">SLA performance by severity</h3><span id="executiveSlaTableContext">Remediation observed during the selected period</span></div></div><div class="table-wrap executive-table-wrap"><table id="executiveSnapshotSlaTable"></table></div></article>
-        <article class="panel"><div class="panel-title"><div><h3>Highest remaining management risks</h3><span>Recommendations ranked by severity and open impact</span></div></div><div class="table-wrap executive-table-wrap"><table id="executiveSnapshotRiskTable"></table></div></article>
-      </div>
-      <article class="panel"><div class="panel-title"><div><h3>Recommendation workload and management risks</h3><span>Recommendation-level progress with paged machine and CVE drill-downs</span></div></div><div class="table-wrap executive-table-wrap"><table id="executiveSnapshotRecommendationTable"></table></div></article>
-      </details>
+
       <footer class="executive-report-footer"><span id="executiveSnapshotGenerated"></span><span>Source: Microsoft Defender observations retained by Vulnerability View</span></footer>
     </section>
     <section id="overview" class="story">
@@ -305,21 +256,7 @@
     <section id="sla" class="story">
       <div class="section-heading"><div><h2>Machine/CVE SLA tracking and remediation outcomes</h2></div></div>
       <div id="slaManagement"></div>
-      <details id="slaTechnicalEvidence" class="technical-evidence" hidden><summary>Technical finding-instance SLA evidence (load on demand)</summary>
-      <div id="slaCards" class="metric-grid"></div>
-      <div class="subsection-heading"><div><span>RECOMMENDATION OUTCOMES</span><h3>Things to fix: before, fixed, and current</h3></div><p>Finding-instance outcomes grouped by recommendation</p></div>
-      <div id="remediationOutcomeCards" class="metric-grid compact"></div>
-      <div class="panel recommendation-outcomes"><div class="panel-title"><h3>Priority remediation outcomes</h3><span>Highest effective severity, then current things to fix</span></div><div class="table-wrap"><table id="remediationOutcomeTable"></table></div></div>
-      <div class="sla-graph-grid">
-        <article class="panel sla-graph-panel"><div class="panel-title"><h3 id="findingSlaGraphTitle">Finding outcomes by severity</h3><span>Detected, remediation observed, and evidence-pending outcomes against policy SLA</span></div><div id="findingSlaGraph" class="sla-bar-chart" role="region" aria-labelledby="findingSlaGraphTitle"></div></article>
-        <article class="panel sla-graph-panel"><div class="panel-title"><h3 id="recommendationSlaGraphTitle">Recommendation outcomes by severity</h3><span>Distinct recommendations represented in each finding outcome</span></div><div id="recommendationSlaGraph" class="sla-bar-chart recommendation-sla-chart" role="region" aria-labelledby="recommendationSlaGraphTitle"></div></article>
-      </div>
-      <div class="notice"><strong>How confirmation and SLA timing work</strong><p>The first qualified complete snapshot where a finding is absent is the effective remediation time used for SLA. The finding remains visibly pending until another complete snapshot confirms the absence. Wholesale device-level disappearance requires corroborating evidence and does not provisionally satisfy SLA.</p></div>
-      <section id="remediationActivitySection" data-feature="remediation-activity" hidden>
-        <div id="remediationActivityCards" class="metric-grid compact"></div>
-        <article class="panel"><div class="panel-title"><h3>Remediation activity context</h3><span>Active first, then task priority, overdue state, and due date</span></div><div class="table-wrap"><table id="remediationTable"></table></div></article>
-      </section>
-      </details>
+
     </section>
 
     <section id="trend" class="story">
@@ -346,19 +283,7 @@
         </div>
       </section>
       <div id="trendManagement"></div>
-      <details id="trendWorkflowEvidence" class="technical-evidence" hidden><summary>Technical machine exposure detail</summary>
-      <section class="panel weekly-workflow" aria-labelledby="weeklyWorkflowTitle">
-        <div class="panel-title"><div><h3 id="weeklyWorkflowTitle">Weekly vulnerability workflow</h3><span id="weeklyWorkflowContext">Fixed work, remaining exposure, and machines still carrying risk in the selected comparison window</span></div></div>
-        <div id="weeklyWorkflowCards" class="metric-grid weekly-workflow-cards"></div>
-        <div class="weekly-workflow-guide">
-          <span><strong>1. Validate progress</strong> Review confirmed fixes and pending evidence below. Confirmation may occur later, but SLA timing uses the first qualified absence.</span>
-          <span><strong>2. Work remaining risk</strong> Use the machine table to identify endpoints that still have detected findings, then click a row for its CVEs and recommendations.</span>
-          <span><strong>3. Explain the change</strong> Compare this period with the preceding period, then use lifecycle detail to show exactly which findings, machines, CVEs, or recommendations changed.</span>
-        </div>
-        <div class="panel-title weekly-risk-title"><div><h3>Machines with risk still open at period end</h3><span id="weeklyRiskContext">Distinct machines with unresolved finding instances</span></div></div>
-        <div class="table-wrap weekly-risk-wrap"><table id="weeklyRiskTable"></table></div>
-      </section>
-      </details>
+
       <section class="panel lifecycle-reporting" aria-labelledby="lifecycleReportingTitle">
         <div class="panel-title"><div><h3 id="lifecycleReportingTitle">Change activity by entity</h3><span>Observed changes are distinct from full resolution in the summary above</span></div><div class="reporting-actions"><label>Entity<select id="reportingEntity"><option value="machines">Machines</option><option value="cves">Vulnerabilities (CVEs)</option><option value="recommendations">Recommendations</option></select></label><label>Breakdown<select id="reportingBreakdown"><option value="All">All</option><option value="osType">OS Type</option><option value="osVersion">OS Type + Version</option></select></label><label>Change<select id="reportingChange"><option value="Fixed" selected>Confirmed fixed</option><option value="PendingConfirmation">Pending confirmation</option><option value="PendingVerification">Pending verification</option><option value="DetectionReturned">Detection returned</option><option value="New">New</option><option value="Reopened">Reopened after confirmation</option><option value="All">All changes</option></select></label><button id="exportReportingCsv" type="button">Export activity CSV</button></div></div>
         <p id="lifecycleCoverage" class="coverage-note"></p>
@@ -371,30 +296,7 @@
         <div class="table-wrap lifecycle-detail-wrap"><table id="lifecycleDetailTable"></table></div>
         <div class="table-wrap"><table id="lifecycleHistoryTable"></table></div>
       </section>
-      <details id="trendTechnicalEvidence" class="technical-evidence" hidden><summary>Technical finding-instance trends and retained counters (load on demand)</summary>
-      <div class="statistics-definitions">
-        <span><strong>New findings</strong> Finding instances first reported during the period</span>
-        <span><strong>Fixed findings</strong> Finding instances Defender stopped reporting during the period</span>
-        <span><strong>Net finding change</strong> New findings minus fixed findings</span>
-        <span><strong>Ending open findings</strong> Finding instances unresolved at period end</span>
-      </div>
-      <div id="statisticsPeriodCards" class="metric-grid statistics-period-cards"></div>
-      <article class="panel period-comparison-panel"><div class="panel-title"><h3>Selected period comparison</h3><span>Finding instances in the current global filter scope</span></div><div class="table-wrap"><table id="statisticsPeriodTable"></table></div></article>
 
-      <div class="subsection-heading"><div><span>FINDING-LEVEL SLA RESULTS</span><h3>Selected-period finding results against severity-based SLA targets</h3></div><p id="slaPolicySummary">Loading the SLA policy retained with this dataset.</p></div>
-      <div id="statisticsSlaCards" class="metric-grid compact statistics-sla-cards"></div>
-      <div class="panel sla-severity-panel"><div class="table-wrap"><table id="statisticsSlaBreakdown"></table></div></div>
-
-      <div id="collectionRunTrend" class="subsection-heading"><div><h3>Collection-run workload trajectory</h3></div></div>
-      <article class="panel chart-panel"><div class="trend-chart-head"><div><strong>Completed snapshots from the last 90 days</strong><span id="trendFilterContext" class="filter-chip"></span></div><div class="legend"><span class="new">New / reopened</span><span class="fixed">Fixed</span><span class="remaining">Open</span></div></div><div id="trendChart" class="chart"></div></article>
-      <article class="panel"><div class="panel-title"><h3>Retained collection-run totals</h3><span>Exact collector counters, distinct from current-scope reconstructed exposure</span></div><div class="table-wrap"><table id="runHistoryTable"></table></div></article>
-      <article class="panel trend-history"><div class="panel-title"><h3>Weekly change history</h3><span>Select New or Fixed for recommendation, CVE, and machine details</span></div><div class="weekly-legend"><span><i class="new-key"></i>New</span><span><i class="fixed-key"></i>Fixed</span></div><div id="weeklyTrendChart" class="weekly-chart"></div><div class="table-wrap"><table id="weeklyComparisonTable"></table></div></article>
-      <section id="remediationTaskHistorySection" data-feature="remediation-activity" hidden>
-        <div class="subsection-heading"><div><h3>Weekly remediation task due-date history</h3></div></div>
-        <div id="trendTaskDueCards" class="metric-grid compact task-due-summary"></div>
-        <article class="panel task-history"><div class="panel-title"><h3>Remediation task performance over time</h3><span>Separate from Defender-confirmed finding remediation</span></div><div class="table-wrap"><table id="weeklyTaskDueTable"></table></div></article>
-      </section>
-      </details>
     </section>
 
     <section id="help" class="story workflow-help-story">
@@ -420,7 +322,7 @@
   <aside id="recommendationPreview" class="recommendation-preview" role="status" hidden></aside>
   <button id="pivotBackdrop" class="pivot-backdrop" type="button" aria-label="Close recommendation details" hidden></button>
   <dialog id="detailDialog"><button id="closeDialog" aria-label="Close">&times;</button><p class="eyebrow">FINDING DETAIL</p><h2 id="detailTitle"></h2><div class="detail-actions"><a id="defenderDeviceLink" class="action-link primary" href="https://security.microsoft.com/machines" target="_blank" rel="noopener" hidden>Open device in Defender</a><span id="detailActionStatus" class="action-status"></span></div><div id="detailBody"></div></dialog>
-  <script src="config.js?v=20261110-sla-dashboard"></script>
-  <script src="app.js?v=20261110-sla-dashboard"></script>
+  <script src="config.js?v=2026.11.10.7"></script>
+  <script src="app.js?v=2026.11.10.7"></script>
 </body>
 </html>

@@ -10,6 +10,10 @@ reads that data; it does not patch devices, change Defender findings, or send
 workflow status back to Defender. Optional recommendation status is shared
 coordination inside this application.
 
+The [project guide](PROJECT-GUIDE.md) is the engineering handoff: local setup,
+counting rules, collection, lifecycle, SLA, caches, source map, design decisions,
+and protected operational records.
+
 ## What it does
 
 - Groups vulnerability findings by CVE, recommendation, device, subscription,
@@ -21,11 +25,11 @@ coordination inside this application.
 - Provides current exposure, history, CSV exports, and an Executive Snapshot
   for management reporting.
 
-A **finding instance** is one CVE in a specific software product/version on one
-device. The same CVE in the same product/version on 100 devices is 100 instances,
-but one distinct CVE. Instances are not attacks or separate patch jobs; one
-update can resolve many. Dashboard totals apply to the selected snapshot and
-filters, not a sum of repeated scans.
+A **vulnerability** is one machine vulnerable to one CVE, regardless of affected
+software products or versions. The dashboard counts distinct CVEs and distinct
+machines separately, never software-record or machine/CVE totals as headline
+metrics. Software evidence remains available internally for confirmation and
+audit. Counts apply to the selected snapshot and filters, not repeated scans.
 
 ## What it is built with
 
@@ -87,12 +91,13 @@ publication, startup, caches, queries, and the relevant source files.
 
 | View | Purpose |
 |---|---|
-| Summary | Current machines/workload instances, unique CVEs, and severity totals; compact SLA status counts by severity |
+| Summary | Distinct machines, CVEs, and recommendations; separate entity severity and SLA status |
 | Recommendations | One action catalog with exposure filters, Priority ranking, and machine/CVE sorting |
-| Vulnerabilities | Unique CVEs by default, with search, paging, and optional technical evidence |
+| Vulnerabilities | Unique CVEs with search, paging, and machine/recommendation drill-downs |
 | Endpoint assets | Device inventory and the evidence behind affected-device totals |
-| Remediate (SLA) | Machine/CVE SLA outcomes and completion graphs |
-| Reporting | Machine/CVE SLA progress, lifecycle changes, and filtered exports |
+| SLA | Distinct unresolved CVEs and machines, deadlines, full clearances, and calendar comparisons |
+| Remediate (SLA) | Separate CVE and machine progress and SLA status |
+| Reporting | Distinct-entity progress, lifecycle changes, and filtered exports |
 | Executive Snapshot | Unique machines, CVEs, and recommendations; improved and fully resolved progress for a selected period and scope |
 | How to use | Workflow and count definitions inside the application |
 

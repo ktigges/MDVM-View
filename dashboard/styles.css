@@ -1,6 +1,6 @@
 /*
  * Author: Kevin Tigges
- * Last modified: 2026-11-05
+ * Last modified: 2026-11-10
  * Purpose: Style the readable vulnerability dashboard layout, navigation, status, and visualizations.
  */
 
@@ -344,10 +344,7 @@ main{width:100%;max-width:1600px!important;min-width:0;padding:22px clamp(16px,2
 .metric-help,th[title],td[title]{cursor:help}
 .tracking-status[class],#recommendationTrackingStatus{color:#145b91;font-weight:800}
 .pivot-panel.fullscreen-mode #pivotCards{grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr))!important}
-.technical-metric{display:none!important}
-.technical-evidence{margin:18px 0;padding:14px;border:1px solid var(--border,#ccd9e2);border-radius:10px;background:var(--panel,#fff)}
-.technical-evidence>summary,.management-detail>summary{cursor:pointer;font-weight:650;padding:8px 0}
-.technical-evidence[open]>summary{margin-bottom:16px}
+.management-detail>summary{cursor:pointer;font-weight:650;padding:8px 0}
 .management-report{display:grid;gap:16px;margin-bottom:20px}
 .management-report .section-heading,.management-report .subsection-heading{margin-bottom:0}
 .management-report .coverage-note,.management-definitions{margin:0;line-height:1.55}
@@ -422,7 +419,7 @@ body.pivot-detail-open .pivot-panel.fullscreen-mode{top:calc(var(--workspace-con
   .quick-filters .severity-filter{max-width:130px}
 }
 @media(max-width:720px){.severity-total-grid{grid-template-columns:1fr 1fr}.management-report .metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media print{.technical-evidence,.management-detail:not([open]),.management-report .server-pagination{display:none!important}.management-report{gap:8px}.management-report .metric{break-inside:avoid}.management-severity{break-inside:avoid}}
+@media print{.management-detail:not([open]),.management-report .server-pagination{display:none!important}.management-report{gap:8px}.management-report .metric{break-inside:avoid}.management-severity{break-inside:avoid}}
 .sla-dashboard-visuals{display:grid;gap:20px;margin-top:18px}
 .sla-hero-grid,.sla-calendar-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
 .sla-hero-card{display:flex;align-items:center;gap:20px;padding:22px;border-top:5px solid #7893a3}

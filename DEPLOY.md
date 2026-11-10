@@ -147,7 +147,8 @@ not deploy the dashboard Web App to Azure. The Web App runs locally and reads
 the collector's current live dataset from Azure Storage.
 
 This is not the recommended hosted deployment. Local use is maintained
-separately in the [Local development README](docs/local/README.md).
+separately in [Local evaluation](docs/local-evaluation.md) and
+[Development](docs/development.md).
 
 1. Clone the repository and enter its directory:
 
