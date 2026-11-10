@@ -46,7 +46,7 @@ def test_sla_dashboard_compares_completed_calendar_periods(snapshot, week, month
     assert (periods[4]["start"], periods[4]["end"]) == preceding_month
 
 
-def test_dedicated_sla_dashboard_counts_pairs_and_keeps_confirmed_rates_separate(tmp_path):
+def test_dedicated_sla_dashboard_counts_entities_and_keeps_confirmed_rates_separate(tmp_path):
     data = datasets(0)
     data["findings"] = [
         finding(0, CveId="CVE-PENDING", FindingStatus="PendingConfirmation",
@@ -59,7 +59,9 @@ def test_dedicated_sla_dashboard_counts_pairs_and_keeps_confirmed_rates_separate
                             "FindingHistoryStartUtc": "2026-08-01T00:00:00Z"}]
     result = engine(tmp_path, data).query(request("slaDashboard"))
     report = result["metadata"]["slaDashboard"]
-    current = report["periods"][0]
+    assert report["unit"] == "distinct-entities"
+    assert report["periods"][0]["machines"] == report["periods"][0]["cves"]
+    current = report["periods"][0]["cves"]
     assert current["openWithin"] == current["openOverdue"] == current["unknownOpen"] == 1
     assert current["openWithinPercent"] == 50
     assert current["completedWithin"] == current["awaitingConfirmation"] == 1
@@ -79,14 +81,15 @@ def test_sla_calendar_history_gaps_are_not_zero_or_success(tmp_path):
                             "FindingHistoryStartUtc": "2026-10-23T00:00:00Z"}]
     report = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]
     assert report["periods"][0]["coverage"] == "partial"
-    assert report["periods"][0]["completionPercent"] is None
+    assert report["periods"][0]["cves"]["completionPercent"] is None
     for period in report["periods"][1:]:
         assert period["coverage"] == "unavailable"
-        assert period["openWithinPercent"] is None
-        assert period["completionPercent"] is None
-        assert period["openWithin"] is None
+        for entity in ("cves", "machines"):
+            assert period[entity]["openWithinPercent"] is None
+            assert period[entity]["completionPercent"] is None
+            assert period[entity]["openWithin"] is None
     filtered = engine(tmp_path, data).query(request("slaDashboard", severity="Low"))
-    assert filtered["metadata"]["slaDashboard"]["periods"][0]["openWithinPercent"] is None
+    assert filtered["metadata"]["slaDashboard"]["periods"][0]["cves"]["openWithinPercent"] is None
 
 
 def test_sla_dashboard_calendar_outcomes_use_their_own_period_and_deadline(tmp_path):
@@ -105,6 +108,7 @@ def test_sla_dashboard_calendar_outcomes_use_their_own_period_and_deadline(tmp_p
     data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
                             "FindingHistoryStartUtc": "2026-07-01T00:00:00Z"}]
     periods = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]["periods"]
+    periods = [period["cves"] for period in periods]
     assert periods[0]["completionPercent"] == 50
     assert [period["completionPercent"] for period in periods[1:]] == [0, 100, 0, 100]
     assert all(period["confirmedFixes"] == 1 for period in periods[1:])
@@ -119,9 +123,9 @@ def test_sla_dashboard_partial_calendar_period_is_withheld(tmp_path):
     periods = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]["periods"]
     assert periods[1]["coverage"] == "complete"
     assert periods[2]["coverage"] == "partial"
-    assert periods[2]["completionPercent"] is None
-    assert periods[2]["openWithin"] is None
-    assert periods[2]["severity"] == []
+    assert periods[2]["cves"]["completionPercent"] is None
+    assert periods[2]["cves"]["openWithin"] is None
+    assert periods[2]["cves"]["severity"] == []
 
 
 def test_sla_dashboard_unknown_only_and_no_history_never_claim_compliance(tmp_path):
@@ -132,13 +136,93 @@ def test_sla_dashboard_unknown_only_and_no_history_never_claim_compliance(tmp_pa
                 EffectiveRemediationUtc="2026-10-24T11:00:00Z"),
     ]
     report = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]
-    current = report["periods"][0]
-    assert current["coverage"] == "unavailable"
+    assert report["periods"][0]["coverage"] == "unavailable"
+    current = report["periods"][0]["cves"]
     assert current["unknownOpen"] == 2
     assert current["openWithinPercent"] is current["completionPercent"] is None
     assert current["confirmedFixes"] == 0
     assert current["awaitingConfirmation"] == current["observedFixes"] == 1
-    assert all(period["completionPercent"] is None for period in report["periods"][1:])
+    assert all(period["cves"]["completionPercent"] is None for period in report["periods"][1:])
+
+
+def test_sla_dashboard_does_not_multiply_cves_machines_or_software(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="one", CveId="CVE-SHARED", Severity="High"),
+        finding(1, DeviceId="two", CveId="CVE-SHARED", Severity="High"),
+        finding(2, DeviceId="one", CveId="CVE-OTHER", Severity="Medium", SlaDueUtc="2026-10-23T00:00:00Z"),
+        finding(3, DeviceId="three", CveId="CVE-UNKNOWN", Severity="Medium", SlaDueUtc=None),
+        finding(4, DeviceId="one", CveId="CVE-UNKNOWN", Severity="Medium", SlaDueUtc=None),
+    ] * 100
+    report = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]
+    current = report["periods"][0]
+    for entity in ("cves", "machines"):
+        assert current[entity]["totalOpen"] == 3
+        assert sum(row["totalOpen"] for row in current[entity]["severity"]) == 3
+        assert current[entity]["openWithin"] == current[entity]["openOverdue"] == current[entity]["unknownOpen"] == 1
+    assert {row["label"]: row["totalOpen"] for row in current["cves"]["severity"]} == {
+        "Critical": 0, "High": 1, "Medium": 2, "Low": 0,
+    }
+    assert {row["label"]: row["totalOpen"] for row in current["machines"]["severity"]} == {
+        "Critical": 0, "High": 2, "Medium": 1, "Low": 0,
+    }
+    assert "totalOpen" not in current
+
+
+@pytest.mark.parametrize("view", ["executive", "overview", "sla", "trend", "executiveSnapshot"])
+def test_shared_sla_panels_use_distinct_entities_even_after_cache_restore(tmp_path, view):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="one", CveId="CVE-SHARED"),
+        finding(1, DeviceId="two", CveId="CVE-SHARED"),
+    ] * 100
+    result = engine(tmp_path, data).query(request(view))
+    restored = engine(tmp_path, data).query(request(view))
+    prefix = view + "Management"
+    graph = result["charts"][prefix + "SlaSnapshot"]
+    assert graph == restored["charts"][prefix + "SlaSnapshot"]
+    assert graph["kind"] == "entity-sla-status"
+    assert [(row["label"], row["totalOpen"]) for row in graph["rows"]] == [("CVEs", 1), ("Machines", 2)]
+    assert all(value == 0 for value, _ in result["cards"][prefix + "FixActivity"])
+    assert not any("MachineCve" in column for column in result["tables"][prefix + "ComparisonTable"]["columns"])
+
+
+def test_sla_entity_full_clearance_is_not_partial_or_pending_progress(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="one", CveId="CVE-SHARED", FindingStatus="Fixed", FixedUtc="2026-10-24T11:00:00Z"),
+        finding(1, DeviceId="two", CveId="CVE-SHARED"),
+        finding(2, DeviceId="one", CveId="CVE-OPEN"),
+        finding(3, DeviceId="three", CveId="CVE-FIXED", FindingStatus="Fixed", FixedUtc="2026-10-24T11:00:00Z"),
+        finding(4, DeviceId="four", CveId="CVE-PENDING", FindingStatus="PendingConfirmation",
+                EffectiveRemediationUtc="2026-10-24T11:00:00Z"),
+    ] * 30
+    current = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]["periods"][0]
+    for entity in ("cves", "machines"):
+        assert current[entity]["totalOpen"] == 3
+        assert current[entity]["confirmedFixes"] == current[entity]["completedWithin"] == 1
+        assert current[entity]["improved"] == current[entity]["awaitingConfirmation"] == 1
+        assert current[entity]["observedFixes"] == 3
+
+
+def test_full_clearance_assesses_earlier_late_and_unknown_components(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="one", CveId="CVE-SHARED", FindingStatus="Fixed",
+                FirstObservedUtc="2026-08-01T00:00:00Z", FixedUtc="2026-09-20T00:00:00Z",
+                SlaDueUtc="2026-09-19T00:00:00Z"),
+        finding(1, DeviceId="two", CveId="CVE-SHARED", FindingStatus="Fixed",
+                FixedUtc="2026-10-24T11:00:00Z"),
+        finding(2, DeviceId="three", CveId="CVE-UNKNOWN", FindingStatus="Fixed",
+                FirstObservedUtc="2026-08-01T00:00:00Z", FixedUtc="2026-09-20T00:00:00Z", SlaDueUtc=None),
+        finding(3, DeviceId="four", CveId="CVE-UNKNOWN", FindingStatus="Fixed",
+                FixedUtc="2026-10-24T11:00:00Z"),
+    ]
+    current = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]["periods"][0]
+    assert current["cves"]["confirmedFixes"] == 2
+    assert current["cves"]["completedLate"] == current["cves"]["completedUnknown"] == 1
+    assert current["cves"]["completedWithin"] == 0
+    assert current["machines"]["confirmedFixes"] == current["machines"]["completedWithin"] == 2
 
 
 @pytest.mark.parametrize("view", ["executive", "executiveSnapshot", "trend", "overview"])
@@ -155,9 +239,10 @@ def test_observed_progress_totals_include_pending_without_claiming_completed_sla
     result = engine(tmp_path, data).query(request(view))
     prefix = view + "Management"
     assert result["cards"][prefix + "FixActivity"] == [
-        [2, "Total observed machine/CVE fixes"],
-        [1, "Machine/CVE fixes observed — awaiting confirmation"],
-        [1, "Confirmed machine/CVE fixes"],
+        [1, "CVEs fully cleared"], [0, "CVEs improved, still unresolved"],
+        [1, "CVEs with fixes awaiting confirmation"],
+        [0, "Machines fully cleared"], [1, "Machines improved, still unresolved"],
+        [1, "Machines with fixes awaiting confirmation"],
     ]
     row = result["tables"][prefix + "MachineTable"]["items"][0]
     assert row["TotalObservedFixes"] == 2
@@ -274,7 +359,7 @@ def test_management_sla_completion_denominator_excludes_open_and_unknown_outcome
     assert severity["High"]["within"] is None
     assert severity["Unknown"]["assessed"] == 0
     assert severity["Unknown"]["completedUnknown"] == 1
-    assert result["charts"]["executiveSnapshotManagementSlaSeverity"]["kind"] == "sla-completion"
+    assert result["charts"]["executiveSnapshotManagementSlaSeverity"]["kind"] == "entity-sla-status"
 
 
 def test_recommendation_type_scope_classifies_catalog_once_not_per_evidence_row(tmp_path):
@@ -579,9 +664,10 @@ def test_observed_fixes_are_visible_before_confirmation_without_completed_sla(tm
     severity = next(row for row in sla["severity"] if row["label"] == "High")
     assert severity["awaitingConfirmation"] == 1 and severity["assessed"] == 0
     assert result["cards"][prefix + "FixActivity"] == [
-        [1, "Total observed machine/CVE fixes"],
-        [1, "Machine/CVE fixes observed — awaiting confirmation"],
-        [0, "Confirmed machine/CVE fixes"],
+        [0, "CVEs fully cleared"], [0, "CVEs improved, still unresolved"],
+        [1, "CVEs with fixes awaiting confirmation"],
+        [0, "Machines fully cleared"], [0, "Machines improved, still unresolved"],
+        [1, "Machines with fixes awaiting confirmation"],
     ]
     exported = list(engine(tmp_path, data).iter_export({**request(view), "table": prefix + "MachineTable"}))
     assert exported[0]["FixesAwaitingConfirmation"] == 1
@@ -693,13 +779,12 @@ def test_summary_headlines_exclude_sla_and_snapshot_status_categories_do_not_ove
         "Machines with open risk", "Open vulnerabilities (unique CVEs)",
     ]
     graph = result["charts"]["executiveManagementSlaSnapshot"]
-    assert graph["kind"] == "sla-status"
-    high = next(row for row in graph["rows"] if row["label"] == "High")
-    assert {key: high[key] for key in ("openWithin", "openOverdue", "completedWithin", "completedLate", "unknownDeadline")} == {
-        "openWithin": 2, "openOverdue": 1, "completedWithin": 1, "completedLate": 1, "unknownDeadline": 2,
+    assert graph["kind"] == "entity-sla-status"
+    cves = next(row for row in graph["rows"] if row["label"] == "CVEs")
+    assert {key: cves[key] for key in ("openWithin", "openOverdue", "completedWithin", "completedLate", "unknownOpen", "completedUnknown")} == {
+        "openWithin": 2, "openOverdue": 1, "completedWithin": 1, "completedLate": 1, "unknownOpen": 1, "completedUnknown": 1,
     }
-    assert sum(high[key] for key in ("openWithin", "openOverdue", "completedWithin", "completedLate", "unknownDeadline")) == 7
-    assert high["unknownOpen"] == high["completedUnknown"] == 1
+    assert cves["totalOpen"] + cves["confirmedFixes"] == 7
 
 
 def test_machine_cve_sla_unknown_deadlines_do_not_become_success(tmp_path):
@@ -732,8 +817,8 @@ def test_pending_fix_has_real_open_deadline_status_until_confirmed(tmp_path, due
     assert pair["ProgressStatus"] == "Fix observed — awaiting confirmation"
     assert pair["SlaStatus"] == status
     cards = dict((label, value) for value, label in detail["cards"]["pivotCards"])
-    assert cards["Total observed machine/CVE fixes"] == 1
-    assert cards["Machine/CVE SLA compliance"] == "Waiting for data"
+    assert cards["CVEs with confirmed or pending fixes"] == 1
+    assert cards["Confirmed CVEs on time"] == "Waiting for data"
 
 
 def test_machine_cve_sla_machine_detail_and_csv_include_fixed_and_remaining(tmp_path):

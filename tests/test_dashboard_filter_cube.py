@@ -2,6 +2,9 @@ import random
 
 import pytest
 
+from vulnerability_view import dashboard_filter_cube as cube
+from vulnerability_view.dashboard_queries import DAY, OBSERVED_FIX_STATUSES, RESOLVED
+
 from test_dashboard_queries import SNAPSHOT, datasets, engine, finding
 from test_dashboard_read_model import canonical
 
@@ -148,3 +151,90 @@ def test_filtered_cve_plan_uses_membership_and_primary_evidence_locators(tmp_pat
         plan = [row["detail"] for row in db.execute("EXPLAIN QUERY PLAN " + sql)]
         assert any("SEARCH f USING INTEGER PRIMARY KEY" in step for step in plan)
         assert not any("filter_cves" in step for step in plan)
+
+
+def test_rollups_hash_groups_not_findings_and_skip_empty_period_histograms(tmp_path, monkeypatch):
+    data = datasets(0)
+    data["findings"] = [
+        finding(
+            index, DeviceId="same-device", DeviceName="same-host", RecommendationId="rec-0",
+            CveId="" if index % 3 == 0 else f"CVE-2026-{index % 2:04d}",
+            FirstObservedUtc="2026-01-01T00:00:00Z", FirstSeenUtc="2026-01-01T00:00:00Z",
+            FindingStatus="Open", FixedUtc=None, EffectiveRemediationUtc=None,
+        )
+        for index in range(600)
+    ]
+    calls = {"key": 0, "histogram": 0}
+    original_key = cube._key
+
+    def key(*values):
+        calls["key"] += 1
+        return original_key(*values)
+
+    class Histogram(cube.Histogram):
+        def step(self, cve, rowid):
+            calls["histogram"] += 1
+            super().step(cve, rowid)
+
+    monkeypatch.setattr(cube, "_key", key)
+    monkeypatch.setattr(cube, "Histogram", Histogram)
+    e = engine(tmp_path, data)
+    e.read_model.prepare({})
+    with e._connect() as db:
+        assert e.read_model.attach(db, {})
+        count = db.execute("SELECT count(*) FROM read_model.filter_buckets").fetchone()[0]
+        assert calls["key"] == count
+        assert calls["histogram"] == 400
+        for row in db.execute("SELECT * FROM read_model.filter_buckets"):
+            for label in cube.PERIODS:
+                for prefix in ("new", "fixed"):
+                    assert row[f"{prefix}_{label}_count"] == 0
+                    assert row[f"{prefix}_{label}_hist"] == b""
+
+
+def test_dimension_grouping_preserves_original_hash_groups_and_period_memberships(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(
+            index, DeviceId="same-device", DeviceName="same-host", RecommendationId="rec-0",
+            SubscriptionId=(1, 1.0, "1", "", None)[index % 5],
+            CveId=("", None, "CVE-2026-0001", "CVE-2026-0002")[index % 4],
+            FirstObservedUtc=("2026-01-01T00:00:00Z", SNAPSHOT)[index % 2],
+            EffectiveRemediationUtc=(None, SNAPSHOT)[index % 2],
+            FindingStatus=("Open", "Fixed", "PendingVerification")[index % 3],
+        )
+        for index in range(120)
+    ]
+    e = engine(tmp_path, data)
+    e.read_model.prepare({})
+    with e._connect() as db:
+        assert e.read_model.attach(db, {})
+        cube.register(db)
+        e._finding_scope(db, "reference_findings", "1", [], {})
+        db.execute(f"CREATE TEMP VIEW reference_source AS SELECT f.*,({RESOLVED}) _resolved FROM reference_findings f")
+        dimensions = ",".join("s." + field for field in cube.DIMENSIONS)
+        periods = []
+        for label, days in cube.PERIODS.items():
+            for prefix, field in (("new", "_observed"), ("fixed", "_effective")):
+                condition = f"s.{field} BETWEEN {e.snapshot - days * DAY} AND {e.snapshot}"
+                if prefix == "fixed":
+                    condition += f" AND s.FindingStatus IN {OBSERVED_FIX_STATUSES}"
+                periods.extend((
+                    f"sum(coalesce({condition},0)) {prefix}_{label}_count",
+                    f"cube_histogram(CASE WHEN {condition} THEN c.id END,s._rowid) {prefix}_{label}_hist",
+                ))
+        expected = db.execute(f"""
+            SELECT cube_key({dimensions}) _key,{dimensions},
+              min(s._rowid) _sample_finding,count(*) findings,cube_histogram(c.id,s._rowid) cve_hist,
+              {','.join(periods)}
+            FROM reference_source s LEFT JOIN read_model.filter_cves c ON c.CveId=s._cve
+            GROUP BY _key ORDER BY _key
+        """).fetchall()
+        actual = db.execute("SELECT * FROM read_model.filter_buckets ORDER BY _key").fetchall()
+        assert len(actual) == len(expected)
+        for left, right in zip(actual, expected, strict=True):
+            for name in right.keys():
+                if name.endswith("_hist"):
+                    assert sorted(cube.members(left[name])) == sorted(cube.members(right[name]))
+                else:
+                    assert left[name] == right[name], name

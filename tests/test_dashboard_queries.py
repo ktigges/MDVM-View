@@ -761,6 +761,42 @@ def test_optimized_workload_expressions_preserve_python_rules_and_vmss_precedenc
         ]
 
 
+@pytest.mark.parametrize("field", ["DeviceId", "DeviceName", "RecommendationId"])
+@pytest.mark.parametrize("operator", ["exact", "prefix", "contains"])
+def test_unmatched_interned_workload_rules_do_not_run_for_each_finding(tmp_path, field, operator):
+    data = datasets(60)
+    filters = {"workloadGrouping": {"rules": [
+        {"id": "missing", "field": field, "operator": operator, "value": "absent-o'brien"},
+    ]}}
+    e = engine(tmp_path, data)
+    e._ensure("findings")
+    with e._connect(filters) as db:
+        e._finding_scope(db, "scoped", "1", [], filters)
+        sql = db.execute("SELECT sql FROM sqlite_temp_master WHERE name='scoped'").fetchone()[0]
+        assert "unicode_lower" not in sql
+        rows = db.execute("SELECT _workload,_workload_name,_workload_type FROM scoped ORDER BY _rowid")
+        assert [tuple(row) for row in rows] == [e._workload(row, filters) for row in data["findings"]]
+
+
+def test_workload_dictionary_prefilter_does_not_skip_matches_in_other_interned_fields(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="MÜNCHEN O'Brien", DeviceName="ordinary-host", RecommendationId=12),
+        finding(1, DeviceId="device-1", DeviceName="other-host", RecommendationId="12"),
+    ]
+    filters = {"workloadGrouping": {"rules": [
+        {"id": "unicode", "field": "DeviceId", "operator": "contains", "value": "münchen"},
+        {"id": "number", "field": "RecommendationId", "operator": "exact", "value": "12"},
+        {"id": "unmatched-host", "field": "DeviceName", "operator": "contains", "value": "münchen"},
+    ]}}
+    e = engine(tmp_path, data)
+    e._ensure("findings")
+    with e._connect(filters) as db:
+        e._finding_scope(db, "scoped", "1", [], filters)
+        actual = db.execute("SELECT _workload,_workload_name,_workload_type FROM scoped ORDER BY _rowid")
+        assert [tuple(row) for row in actual] == [e._workload(row, filters) for row in data["findings"]]
+
+
 @pytest.mark.parametrize("view", [
     "executive", "overview", "workstations", "recommendations", "priority", "sla",
     "trend", "executiveSnapshot", "help",

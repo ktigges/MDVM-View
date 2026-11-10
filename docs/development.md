@@ -137,6 +137,13 @@ expensive. The current design addresses those costs in several places:
 The [runtime reference](application-flow.md#7-web-app-startup-indexing-memory-and-caches)
 describes their current behavior and limits.
 
+Filter-rollup construction groups findings before hashing bucket keys and only
+feeds eligible rows into period histograms. Workload rules on interned fields
+are omitted from per-finding expressions only when the shared dictionary proves
+they cannot match. These startup optimizations preserve SLA calculations,
+evidence ordering, and existing cache formats; they do not require a query-index
+or read-model version change.
+
 ## Query-index maintenance
 
 Published indexes belong to the immutable run. A format-incompatible index is

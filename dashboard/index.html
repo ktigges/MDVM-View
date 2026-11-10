@@ -125,10 +125,10 @@
 
   <section id="newActivityBar" class="new-activity-bar" aria-labelledby="newActivityTitle">
     <div class="new-activity-heading">
-      <strong id="newActivityTitle">Finding activity in the 24 hours ending at latest collection</strong>
+      <strong id="newActivityTitle">Vulnerability activity in the 24 hours ending at latest collection</strong>
       <label class="new-activity-period">Date window<select id="newPeriod"><option value="day">Latest 24 hours ending at collection</option><option value="week">Latest 7 days ending at collection</option><option value="month">Latest 30 days ending at collection</option><option value="custom">Custom date range</option></select></label>
       <fieldset id="newPeriodCustom" class="new-period-custom" hidden><legend>Custom activity dates</legend><label>From<input id="newPeriodStart" type="date"></label><label>Through<input id="newPeriodEnd" type="date"></label></fieldset>
-      <small id="newActivityContext">Counts use each finding's first-seen or effective-remediation timestamp inside this UTC window; it is not necessarily the interval since the previous collection</small>
+      <small id="newActivityContext">Distinct CVE and machine counts use first-observed or remediation-observed timestamps inside this UTC window; it is not necessarily the interval since the previous collection</small>
     </div>
     <div class="new-activity-metric-groups">
       <section class="new-activity-metric-group" aria-labelledby="firstSeenMetricLabel">
@@ -150,7 +150,7 @@
         </div>
       </section>
     </div>
-    <button id="toggleNewPeriodFilter" class="new-activity-action" type="button">Limit workspace to these first-seen findings</button>
+    <button id="toggleNewPeriodFilter" class="new-activity-action" type="button">Limit workspace to newly observed vulnerabilities</button>
   </section>
 
   <main>
@@ -183,7 +183,7 @@
     <section id="executive" class="story active">
     <div id="executiveManagement"></div>
     <article id="secureScoreCard" class="secure-score-card supporting-score"></article>
-    <details id="executiveTechnicalEvidence" class="technical-evidence"><summary>Technical finding-instance evidence (load on demand)</summary>
+    <details id="executiveTechnicalEvidence" class="technical-evidence" hidden><summary>Technical finding-instance evidence (load on demand)</summary>
     <section class="executive-band" aria-label="Executive security posture">
       <div class="executive-heading"><div><span>EXECUTIVE POSTURE</span><h2>Current security posture</h2></div><p>Filtered remediation posture, Microsoft Secure Score, and policy SLA outcomes</p></div>
       <div class="executive-decision-grid">
@@ -225,7 +225,7 @@
         </div>
       </div>
       <div id="executiveSnapshotManagement"></div>
-      <details id="executiveSnapshotTechnicalEvidence" class="technical-evidence"><summary>Technical finding-instance evidence (load on demand)</summary>
+      <details id="executiveSnapshotTechnicalEvidence" class="technical-evidence" hidden><summary>Technical finding-instance evidence (load on demand)</summary>
       <section class="executive-status-band">
         <div id="executiveSnapshotStatus" class="executive-severity-status-grid" aria-label="Finding-level SLA compliance by severity"></div>
         <div id="executiveSnapshotKpis" class="executive-kpi-grid"></div>
@@ -256,13 +256,13 @@
       <div id="overviewManagement"></div>
       <div class="split">
         <article class="panel wide">
-          <div class="panel-title"><h3 id="findingsListTitle">Vulnerability findings</h3><span id="findingsListContext">All findings matching workspace filters</span></div>
+          <div class="panel-title"><h3 id="findingsListTitle">Distinct vulnerabilities (CVEs)</h3><span id="findingsListContext">Unique CVEs matching workspace filters</span></div>
           <div class="findings-list-controls">
-            <label>Show<select id="findingsMode" aria-describedby="findingInstancesHelp" title="Each CVE is counted once, even when it affects multiple machines or software versions."><option value="cves">Distinct CVEs</option><option value="findings">Technical finding instances</option></select></label>
+            <label>Show<select id="findingsMode" aria-describedby="findingInstancesHelp" title="Each CVE is counted once, even when it affects multiple machines or software versions."><option value="cves">Distinct CVEs</option></select></label>
             <label>Search workspace<input id="findingsSearch" type="search" placeholder="CVE, software, machine..." aria-describedby="findingsSearchHelp"></label>
             <small id="findingsSearchHelp">Search applies to all matching records, not just this page, and updates workspace counts.</small>
           </div>
-          <details class="finding-count-help"><summary>What counts as a finding instance?</summary><p id="findingInstancesHelp">One finding instance is one CVE detected in a specific software product/version on one device. The same CVE in the same product/version on 100 devices means <strong>100 finding instances, 1 distinct CVE, and 100 affected devices</strong>. Different affected products or versions on one device can add instances. Findings are not attacks or separate repair jobs: one update can remove many instances. Totals reflect the selected snapshot and workspace filters, including recommendation type and exposure status; they are not a sum of repeated scans. Active totals exclude pending and confirmed-fixed evidence.</p><p>For scale, 100 CVEs each detected in one product/version on 100 devices means <strong>10,000 exposure instances, 100 distinct CVEs, and 100 affected devices</strong>. Device counts and recommendations describe the remediation workload; exposure instances describe how widely vulnerabilities are present, not a severity-weighted risk score. A recommendation's distinct CVE total combines CVEs across its matching devices. Each device can have a smaller, different set.</p></details>
+          <details class="finding-count-help"><summary>How vulnerabilities are counted</summary><p id="findingInstancesHelp">A machine is vulnerable to a CVE once, regardless of how many affected software products or versions are reported. This list counts each CVE once across all matching machines. Affected-machine counts are separate; software records are supporting evidence, not additional vulnerabilities. Active totals exclude pending and confirmed-fixed evidence.</p></details>
           <div class="table-wrap"><table id="findingsTable"></table></div>
           <nav class="findings-pagination" aria-label="Finding list pages">
             <span id="findingsPageStatus" role="status" aria-live="polite"></span>
@@ -297,7 +297,7 @@
     </section>
 
     <section id="slaDashboard" class="story">
-      <div class="section-heading"><div><span>REMEDIATION AND DEADLINES</span><h2>SLA remediation status</h2></div><p>Unresolved backlog and confirmed fixes, by severity and completed calendar period. Not yet due does not mean remediated.</p></div>
+      <div class="section-heading"><div><span>REMEDIATION AND DEADLINES</span><h2>SLA remediation status</h2></div><p>Distinct CVEs and affected machines, counted separately by severity and completed calendar period. Not yet due does not mean remediated.</p></div>
       <p id="slaDashboardContext" class="coverage-note"></p>
       <div id="slaDashboardVisuals" class="sla-dashboard-visuals"></div>
     </section>
@@ -305,7 +305,7 @@
     <section id="sla" class="story">
       <div class="section-heading"><div><h2>Machine/CVE SLA tracking and remediation outcomes</h2></div></div>
       <div id="slaManagement"></div>
-      <details id="slaTechnicalEvidence" class="technical-evidence"><summary>Technical finding-instance SLA evidence (load on demand)</summary>
+      <details id="slaTechnicalEvidence" class="technical-evidence" hidden><summary>Technical finding-instance SLA evidence (load on demand)</summary>
       <div id="slaCards" class="metric-grid"></div>
       <div class="subsection-heading"><div><span>RECOMMENDATION OUTCOMES</span><h3>Things to fix: before, fixed, and current</h3></div><p>Finding-instance outcomes grouped by recommendation</p></div>
       <div id="remediationOutcomeCards" class="metric-grid compact"></div>
@@ -346,7 +346,7 @@
         </div>
       </section>
       <div id="trendManagement"></div>
-      <details id="trendWorkflowEvidence" class="technical-evidence"><summary>Technical machine exposure detail</summary>
+      <details id="trendWorkflowEvidence" class="technical-evidence" hidden><summary>Technical machine exposure detail</summary>
       <section class="panel weekly-workflow" aria-labelledby="weeklyWorkflowTitle">
         <div class="panel-title"><div><h3 id="weeklyWorkflowTitle">Weekly vulnerability workflow</h3><span id="weeklyWorkflowContext">Fixed work, remaining exposure, and machines still carrying risk in the selected comparison window</span></div></div>
         <div id="weeklyWorkflowCards" class="metric-grid weekly-workflow-cards"></div>
@@ -371,7 +371,7 @@
         <div class="table-wrap lifecycle-detail-wrap"><table id="lifecycleDetailTable"></table></div>
         <div class="table-wrap"><table id="lifecycleHistoryTable"></table></div>
       </section>
-      <details id="trendTechnicalEvidence" class="technical-evidence"><summary>Technical finding-instance trends and retained counters (load on demand)</summary>
+      <details id="trendTechnicalEvidence" class="technical-evidence" hidden><summary>Technical finding-instance trends and retained counters (load on demand)</summary>
       <div class="statistics-definitions">
         <span><strong>New findings</strong> Finding instances first reported during the period</span>
         <span><strong>Fixed findings</strong> Finding instances Defender stopped reporting during the period</span>
@@ -400,8 +400,8 @@
     <section id="help" class="story workflow-help-story">
       <div class="section-heading"><div><span>CUSTOMER WORKFLOW</span><h2>How to use Vulnerability View</h2></div><p>A practical daily workflow for choosing, tracking, and validating vulnerability remediation.</p></div>
       <div class="workflow-help-body">
-        <section><h3>Dedicated SLA dashboard</h3><p><strong>SLA</strong> shows unresolved counts split into not yet due, overdue, and deadline unknown, separately from confirmed fixes; <strong>Remediate</strong> retains the work lists. Not yet due does not mean remediated. Pending fixes remain open risk. The on-time percentage assesses only confirmed fixes with known deadlines. No confirmed fixes shows <strong>No confirmed fixes to assess</strong>; confirmed fixes without known deadlines show <strong>No known completion deadlines to assess</strong>.</p><p>Week over week compares the last completed Monday–Sunday UTC week with the week before. Month over month compares the last completed calendar month with the month before. Changes are counts of unresolved outcomes or confirmed fixes, not percentage points. Periods without full retained history show <strong>Waiting for data</strong>, not zero. Each severity shows its retained policy targets.</p></section>
-        <section><h3>Management totals and progress</h3><p>Management summaries count unique machines, unique vulnerabilities (CVEs), and recommendations. A CVE on 500 machines is one vulnerability, not 500 vulnerabilities. Software and version evidence does not multiply the headline totals.</p><p><strong>Improved</strong> means confirmed exposure was removed during the period but risk remains. <strong>Fully resolved</strong> means confirmed remediation occurred during the period and no unresolved exposure remains for that entity in the selected scope. Pending verification remains open. Overdue risk means at least one unresolved exposure is past its policy deadline; unknown deadlines are not compliant results.</p><p>Technical finding-instance evidence is collapsed and loads on demand. Management PDFs exclude it. Each entity table provides status, drill-down, and an export of all matching entity rows. Activity tables show observed changes, not proof of full resolution.</p></section>
+        <section><h3>Dedicated SLA dashboard</h3><p><strong>SLA</strong> counts distinct CVEs and distinct machines separately, never finding rows or machine/CVE combinations. Software products and versions are supporting evidence. Each entity appears once at its highest unresolved severity. A CVE is fully cleared only when no in-scope machine remains vulnerable to it; a machine is fully cleared only when no in-scope CVE remains unresolved. Partial clearance is improved, not fully cleared. Not yet due does not mean remediated. Pending fixes remain unresolved. On-time assessment covers fully cleared entities with known deadlines.</p><p>Week over week compares the last completed Monday–Sunday UTC week with the week before. Month over month compares the last completed calendar month with the month before. Changes are entity counts, not percentage points. Periods without full retained history show <strong>Waiting for data</strong>, not zero. Each severity shows its retained policy targets.</p></section>
+        <section><h3>Management totals and progress</h3><p>Management summaries count unique machines, unique vulnerabilities (CVEs), and recommendations. A CVE on 500 machines is one vulnerability, not 500 vulnerabilities. Software and version evidence does not multiply the headline totals.</p><p><strong>Improved</strong> means confirmed exposure was removed during the period but risk remains. <strong>Fully resolved</strong> means confirmed remediation occurred during the period and no unresolved exposure remains for that entity in the selected scope. Pending verification remains open. Overdue risk means at least one unresolved exposure is past its policy deadline; unknown deadlines are not compliant results.</p><p>Finding-instance views and counts are not displayed. Underlying collection evidence is retained. Each entity table provides status, drill-down, and an export of all matching entity rows. Activity tables show observed changes, not proof of full resolution.</p></section>
         <section class="workflow-help-start"><h3>Daily workflow</h3><ol><li><strong>Confirm freshness.</strong> Check Data refreshed and recent collection runs. Do not make decisions from a failed or unexpectedly old collection.</li><li><strong>Understand movement.</strong> Review First seen and Remediation observed in the selected UTC window. Use changes since the previous run when you specifically need run-to-run movement.</li><li><strong>Choose work.</strong> Filter by severity, subscription, asset class, or domain. Use Exposure status → Pending evidence only, or the Pending only shortcut, to isolate findings awaiting confirmation or corroboration.</li><li><strong>Coordinate remediation.</strong> Open a recommendation to identify machines and CVEs. Set the dashboard status to In progress when tracking is enabled; perform the actual change through approved management tools.</li><li><strong>Validate after collection.</strong> Amber Pending confirmation means the finding had one qualified absence. Amber Pending verification means the device-level disappearance still needs corroboration. Confirmed fixed remains separate.</li><li><strong>Report and escalate.</strong> Use Reporting for lifecycle, SLA, and period comparisons. Escalate critical or outside-SLA work that remains blocked.</li></ol></section>
         <section><h3>Common customer scenarios</h3><div class="workflow-scenarios">
           <article><strong>Daily triage</strong><p>Select the latest 24-hour window. Review First seen, then open high-impact recommendations to identify affected machines and CVEs.</p></article>
@@ -409,7 +409,7 @@
           <article><strong>Work an overdue backlog</strong><p>Filter to Critical or High and review open findings outside SLA. Prioritize recommendations that remove the largest current exposure.</p></article>
           <article><strong>Investigate work that did not clear</strong><p>Find recommendations marked fixed awaiting collection but still detected after the latest successful run, then inspect the remaining machines.</p></article>
         </div></section>
-        <section class="workflow-help-definitions"><h3>Read the numbers correctly</h3><dl><div><dt>Finding instance</dt><dd>One CVE detected in a specific software product/version on one device. The same CVE in the same product/version on 100 devices means 100 instances but 1 distinct CVE. Different affected products or versions on one device can add instances. This is not a count of attacks or separate fixes; one update can remove many instances. Counts reflect the selected snapshot and workspace filters, not a sum of repeated scans. Active totals exclude pending and confirmed-fixed evidence.</dd></div><div><dt>Machine count</dt><dd>Distinct endpoint devices represented by those findings. Cloud-only resources may not appear in endpoint inventory.</dd></div><div><dt>First seen window</dt><dd>Findings whose first-seen timestamp falls inside the displayed UTC range anchored to the latest collection.</dd></div><div><dt>Remediation observed</dt><dd>The first qualified absence used for SLA timing. Evidence can remain pending until a later snapshot confirms the absence.</dd></div><div><dt>Pending confirmation</dt><dd>The specific finding is absent from one qualified complete snapshot and needs the configured confirming run.</dd></div><div><dt>Pending verification</dt><dd>The device or all device evidence disappeared, so remediation is not yet credited without corroboration.</dd></div><div><dt>Previous-run changes</dt><dd>New, reopened, pending, returned, or confirmed findings between comparable collections.</dd></div><div><dt>Dashboard status</dt><dd>Shared coordination state attached to a recommendation ID. It does not update Defender or perform remediation.</dd></div></dl></section>
+        <section class="workflow-help-definitions"><h3>Read the numbers correctly</h3><dl><div><dt>Vulnerability</dt><dd>A machine is vulnerable to a CVE once, regardless of affected software products or versions. Dashboard totals count distinct CVEs and distinct machines separately. Software records support the assessment and do not multiply either count.</dd></div><div><dt>Machine count</dt><dd>Distinct endpoint devices with matching vulnerability evidence. Cloud-only resources may not appear in endpoint inventory.</dd></div><div><dt>First seen window</dt><dd>Vulnerability observations first recorded inside the displayed UTC range anchored to the latest collection.</dd></div><div><dt>Remediation observed</dt><dd>The first qualified absence used for SLA timing. Evidence can remain pending until a later snapshot confirms the absence.</dd></div><div><dt>Pending confirmation</dt><dd>Previously detected evidence is absent from one qualified complete snapshot and needs the configured confirming run.</dd></div><div><dt>Pending verification</dt><dd>The device or all device evidence disappeared, so remediation is not yet credited without corroboration.</dd></div><div><dt>Previous-run changes</dt><dd>New, reopened, pending, returned, or confirmed vulnerability evidence between comparable collections.</dd></div><div><dt>Dashboard status</dt><dd>Shared coordination state attached to a recommendation ID. It does not update Defender or perform remediation.</dd></div></dl></section>
       </div>
     </section>
 

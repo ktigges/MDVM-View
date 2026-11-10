@@ -654,12 +654,12 @@ def test_lifecycle_entity_selector_and_latest_run_change_filter_are_wired():
     assert "function latestRunChangeMatches(row)" in javascript
     assert "state.latestRunChangesOnly" in javascript
     assert 'items.push(["Run changes","New, reopened, or fixed since previous run"])' in javascript
-    assert '"Limit workspace to these first-seen findings"' in javascript
+    assert '"Limit workspace to newly observed vulnerabilities"' in javascript
     assert "not necessarily the interval since the previous collection" in javascript
     assert "View period evidence" not in javascript
     assert 'rel="icon" type="image/png" href="favicon.png?' in html
     assert Path("dashboard/favicon.png").is_file()
-    assert "Finding activity in the 24 hours ending at latest collection" in javascript
+    assert "Vulnerability activity in the 24 hours ending at latest collection" in javascript
     assert 'id="ownership"' not in html
     assert 'id="assignmentTable"' not in html
     assert "renderOwnership" not in javascript
