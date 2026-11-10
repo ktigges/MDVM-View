@@ -827,11 +827,11 @@ def test_sla_ignores_exposure_and_period_filters_and_uses_first_absence(tmp_path
     assert cards["Finding instances observed"] == 5
     assert cards["Findings confirmed fixed"] == 2
     assert cards["SLA remediations pending verification"] == 2
-    assert cards["Remediation observed within policy SLA"] == 2
-    assert cards["Remediation observed outside policy SLA"] == 1
+    assert cards["Remediation observed within policy SLA"] == 1
+    assert cards["Remediation observed outside policy SLA"] == 0
     assert cards["Detected findings overdue"] == 1
     high = result["slaGraphs"]["findingSlaGraph"]["rows"][1]
-    assert high["FixedWithinSLA"] == 2
+    assert high["FixedWithinSLA"] == 1
     assert high["PendingVerification"] == 2
     assert result["scope"]["findings"] == 0
 
@@ -892,6 +892,8 @@ def test_new_and_remediation_activity_have_independent_scope(tmp_path):
                 FirstObservedUtc="2026-01-01T00:00:00Z", EffectiveRemediationUtc="2026-10-24T03:00:00Z"),
         finding(3, FindingStatus="Fixed", FirstObservedUtc="2026-01-01T00:00:00Z", FixedUtc="2026-10-24T04:00:00Z"),
         finding(4, FirstObservedUtc="2026-10-24T13:00:00Z"),
+        finding(5, FindingStatus="PendingConfirmation", FirstObservedUtc="2026-01-01T00:00:00Z",
+                EffectiveRemediationUtc="2026-10-24T03:00:00Z"),
     ]
     result = engine(tmp_path, data).query({"view": "overview", "filters": {"exposureStatus": "DetectedOnly", "newPeriodFilter": True}})
     assert result["activity"]["newFindings"] == 1
@@ -1051,7 +1053,7 @@ def test_broad_activity_uses_covering_index_without_changing_counts(tmp_path):
     })
     assert broad["activity"] == selective["activity"]
     assert broad["activity"]["newFindings"] == 3
-    assert broad["activity"]["fixedFindings"] == 3
+    assert broad["activity"]["fixedFindings"] == 2
     statements = []
     with e._connect() as db:
         db.set_trace_callback(statements.append)

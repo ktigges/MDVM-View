@@ -1,7 +1,10 @@
+from datetime import datetime
+
 import pytest
 
 from test_dashboard_queries import datasets, engine, finding, historical_os_data
 from vulnerability_view import dashboard_management
+from vulnerability_view.live_collector import reconcile_live_findings
 
 
 def management_data():
@@ -123,7 +126,8 @@ def test_management_sla_completion_denominator_excludes_open_and_unknown_outcome
     result = engine(tmp_path, data).query(request())
     sla = result["metadata"]["management"]["sla"]["periods"][0]
     assert sla["CompliancePercent"] == 100
-    assert sla["outcomes"] == {"WithinSLA": 1, "LateSLA": 0, "UnknownSLA": 1, "Remaining": 1, "Fixed": 2}
+    assert sla["outcomes"] == {"WithinSLA": 1, "LateSLA": 0, "UnknownSLA": 1, "Remaining": 1, "Fixed": 2,
+                               "AwaitingConfirmation": 0}
     severity = {row["label"]: row for row in sla["severity"]}
     assert severity["Critical"]["assessed"] == severity["Critical"]["completedWithin"] == 1
     assert severity["Critical"]["within"] == 100
@@ -414,6 +418,119 @@ def test_machine_cve_sla_pending_is_never_completed(tmp_path, status):
     row = result["tables"]["executiveSnapshotManagementMachineTable"]["items"][0]
     assert row["FixedCVEs"] == 0 and row["PendingEvidence"] == "Yes"
 
+@pytest.mark.parametrize("view", ["executive", "overview", "sla", "trend", "executiveSnapshot"])
+def test_observed_fixes_are_visible_before_confirmation_without_completed_sla(tmp_path, view):
+    data = datasets(0)
+    row = finding(
+        0, FindingStatus="PendingConfirmation", EffectiveRemediationUtc="2026-10-24T11:00:00Z",
+        SlaStatus="FixedWithinSla", FixedUtc="",
+    )
+    data["findings"] = [dict(row, FindingKey=f"duplicate-{i}") for i in range(10)]
+    result = engine(tmp_path, data).query(request(view))
+    prefix = view + "Management"
+    sla = result["metadata"]["management"]["sla"]["periods"][0]
+    assert sla["outcomes"]["AwaitingConfirmation"] == 1
+    assert sla["outcomes"]["Fixed"] == sla["outcomes"]["WithinSLA"] == sla["outcomes"]["LateSLA"] == 0
+    assert sla["CompliancePercent"] is None
+    machine = result["tables"][prefix + "MachineTable"]["items"][0]
+    assert machine["FixesAwaitingConfirmation"] == 1
+    assert machine["SLACompliance"] == "Waiting for data"
+    assert machine["ProgressStatus"] == "Fix observed — awaiting confirmation"
+    severity = next(row for row in sla["severity"] if row["label"] == "High")
+    assert severity["awaitingConfirmation"] == 1 and severity["assessed"] == 0
+    assert result["cards"][prefix + "FixActivity"] == [
+        [1, "Machine/CVE fixes observed — awaiting confirmation"],
+        [0, "Confirmed machine/CVE fixes"],
+    ]
+    exported = list(engine(tmp_path, data).iter_export({**request(view), "table": prefix + "MachineTable"}))
+    assert exported[0]["FixesAwaitingConfirmation"] == 1
+
+
+@pytest.mark.parametrize("status", ["Open", "DetectionReturned", "PendingVerification", "StaleDevice", "Unknown"])
+def test_observed_fix_requires_all_machine_cve_evidence_to_clear(tmp_path, status):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, FindingStatus="PendingConfirmation", EffectiveRemediationUtc="2026-10-24T11:00:00Z"),
+        finding(1, DeviceId="device-0", CveId="CVE-2026-0000", FindingStatus=status),
+    ]
+    result = engine(tmp_path, data).query(request())
+    sla = result["metadata"]["management"]["sla"]["periods"][0]
+    assert sla["outcomes"]["AwaitingConfirmation"] == 0
+    assert sla["outcomes"]["Fixed"] == 0 and sla["CompliancePercent"] is None
+
+
+def test_confirmed_fix_is_attributed_to_first_absence_not_confirmation(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, FindingStatus="Fixed", FirstObservedUtc="2026-10-20T00:00:00Z",
+                FixedUtc="2026-10-24T11:00:00Z", FixedConfirmedUtc="2026-10-24T11:00:00Z",
+                EffectiveRemediationUtc="2026-10-23T11:00:00Z", SlaDueUtc="2026-10-23T12:00:00Z"),
+    ]
+    e = engine(tmp_path, data)
+    result = e.query(request(executiveSnapshotPeriod="custom", executiveSnapshotStart="2026-10-23",
+                             executiveSnapshotEnd="2026-10-23"))
+    sla = result["metadata"]["management"]["sla"]["periods"][0]
+    assert sla["outcomes"]["WithinSLA"] == 1
+    assert sla["outcomes"]["LateSLA"] == sla["outcomes"]["AwaitingConfirmation"] == 0
+    assert sla["CompliancePercent"] == 100
+    machine = result["tables"]["executiveSnapshotManagementMachineTable"]["items"][0]
+    assert machine["FixedCVEs"] == 1
+
+
+def test_daily_collection_to_dashboard_confirmation_and_returned_detection(tmp_path):
+    observed = "2026-10-22T11:00:00Z"
+    first_absence = "2026-10-23T11:00:00Z"
+    confirmed_at = "2026-10-24T11:00:00Z"
+    previous = [
+        finding(0, DeviceId="one", FirstObservedUtc=observed, SnapshotTimeUtc=observed,
+                SlaDueUtc="2026-10-23T12:00:00Z", SlaPolicyVersion="retained"),
+        finding(1, DeviceId="one", FirstObservedUtc=observed, SnapshotTimeUtc=observed),
+    ]
+    devices = [{"DeviceId": "one", "HealthStatus": "Active", "OnboardingStatus": "Onboarded",
+                "LastSeenUtc": first_absence}]
+    pending = reconcile_live_findings(
+        [previous[1]], previous, datetime.fromisoformat(first_absence), "day-2", devices,
+    )
+    data = datasets(0)
+    data["findings"] = pending
+    result = engine(tmp_path / "pending", data, snapshot_time=first_absence).query(request())
+    sla = result["metadata"]["management"]["sla"]["periods"][0]
+    assert sla["outcomes"]["AwaitingConfirmation"] == 1
+    assert sla["outcomes"]["Fixed"] == 0 and sla["CompliancePercent"] is None
+
+    devices[0]["LastSeenUtc"] = confirmed_at
+    confirmed = reconcile_live_findings(
+        [previous[1]], pending, datetime.fromisoformat(confirmed_at), "day-3", devices,
+    )
+    data["findings"] = confirmed
+    result = engine(tmp_path / "confirmed", data, snapshot_time=confirmed_at).query(request(
+        executiveSnapshotPeriod="custom", executiveSnapshotStart="2026-10-23", executiveSnapshotEnd="2026-10-23",
+    ))
+    sla = result["metadata"]["management"]["sla"]["periods"][0]
+    assert sla["outcomes"]["WithinSLA"] == sla["outcomes"]["Fixed"] == 1
+    assert sla["outcomes"]["LateSLA"] == sla["outcomes"]["AwaitingConfirmation"] == 0
+
+    data["findings"] = reconcile_live_findings(
+        previous, pending, datetime.fromisoformat(confirmed_at), "day-3-returned", devices,
+    )
+    result = engine(tmp_path / "returned", data, snapshot_time=confirmed_at).query(request())
+    sla = result["metadata"]["management"]["sla"]["periods"][0]
+    assert sla["outcomes"]["AwaitingConfirmation"] == sla["outcomes"]["Fixed"] == 0
+    assert sla["CompliancePercent"] is None
+    assert next(row for row in data["findings"] if row["FindingKey"] == previous[0]["FindingKey"])["FindingStatus"] == "DetectionReturned"
+
+
+def test_unqualified_or_undated_absence_never_becomes_observed_fix(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, FindingStatus="PendingVerification", EffectiveRemediationUtc="2026-10-24T11:00:00Z"),
+        finding(1, FindingStatus="PendingConfirmation", EffectiveRemediationUtc=""),
+        finding(2, FindingStatus="DetectionReturned", EffectiveRemediationUtc=""),
+    ]
+    sla = engine(tmp_path, data).query(request())["metadata"]["management"]["sla"]["periods"][0]
+    assert sla["outcomes"]["AwaitingConfirmation"] == sla["outcomes"]["Fixed"] == 0
+    assert sla["CompliancePercent"] is None
+
 
 def test_summary_headlines_exclude_sla_and_snapshot_status_categories_do_not_overlap(tmp_path):
     data = datasets(0)
@@ -450,7 +567,7 @@ def test_machine_cve_sla_unknown_deadlines_do_not_become_success(tmp_path):
     result = engine(tmp_path, data).query(request())
     row = result["tables"]["executiveSnapshotManagementMachineTable"]["items"][0]
     assert row["FixedCVEs"] == row["CompletedUnknownSLA"] == 1
-    assert row["SLACompliance"] == "Not assessed"
+    assert row["SLACompliance"] == "Waiting for data"
 
 
 def test_machine_cve_sla_machine_detail_and_csv_include_fixed_and_remaining(tmp_path):
@@ -500,7 +617,7 @@ def test_machine_cve_sla_detail_uses_executive_custom_period_and_resolution_scop
     })
     rows = result["tables"]["pivotSlaCveTable"]["items"]
     assert {row["CveId"]: row["ProgressStatus"] for row in rows} == {
-        "CVE-A": "Fixed", "CVE-B": "Open", "CVE-C": "Open",
+        "CVE-A": "Confirmed fixed", "CVE-B": "Open", "CVE-C": "Open",
     }
 
 

@@ -32,7 +32,7 @@ const truthy=value=>value===true||value==="True"||value==="true";
 const open=row=>row.FindingStatus!=="Fixed";
 const pending=row=>PENDING_FINDING_STATUSES.has(String(row.FindingStatus||""));
 const detected=row=>DETECTED_FINDING_STATUSES.has(String(row.FindingStatus||""));
-const slaResolved=row=>["FixedWithinSla","FixedOutsideSla"].includes(row.SlaStatus)&&Boolean(row.EffectiveRemediationUtc||row.FixedUtc);
+const slaResolved=row=>row.FindingStatus==="Fixed"&&["FixedWithinSla","FixedOutsideSla"].includes(row.SlaStatus)&&Boolean(row.EffectiveRemediationUtc||row.FixedUtc);
 function exposureStatusMatches(row){return state.exposureStatus==="All"||state.exposureStatus==="DetectedAndPending"&&row.FindingStatus!=="Fixed"&&row.FindingStatus!=="OutOfScope"||state.exposureStatus==="DetectedOnly"&&detected(row)||state.exposureStatus==="PendingOnly"&&pending(row)||state.exposureStatus==="ConfirmedFixed"&&row.FindingStatus==="Fixed";}
 function findingLifecycleLabel(status){return{Open:"Detected",Reopened:"Reopened",DetectionReturned:"Detection returned",PendingConfirmation:"Pending confirmation",PendingVerification:"Pending verification",Fixed:"Confirmed fixed",StaleDevice:"Stale device",OutOfScope:"Out of scope",Unknown:"Unknown evidence"}[status]||status||"Unknown";}
 function findingLifecycleDescription(status){return{Open:"Defender currently reports this vulnerability on the endpoint. It remains open while awaiting remediation or a later Defender reassessment showing it absent.",Reopened:"Defender reports this vulnerability again after it was previously confirmed fixed.",DetectionReturned:"The finding disappeared once but returned before remediation could be confirmed.",PendingConfirmation:"The individual finding was absent from one qualified collection and is awaiting a second collection to confirm the fix.",PendingVerification:"All findings for the device disappeared together, so remediation cannot yet be confirmed.",Fixed:"The finding remained absent through the required confirmation collection and is confirmed fixed.",StaleDevice:"The finding is absent, but the device has not reported recently enough to infer remediation.",OutOfScope:"The device is offboarded, unsupported, or outside the qualified collection scope.",Unknown:"The finding is absent, but machine evidence is insufficient to determine its lifecycle state."}[status]||"Lifecycle state reported by Vulnerability View.";}
@@ -358,7 +358,7 @@ function newPeriodRange(){const snapshot=datasetSnapshotMs();if(!Number.isFinite
 /** Match a finding first observed inside the selected period. */
 function firstObservedMatches(row){const range=newPeriodRange(),observed=Date.parse(row.FirstObservedUtc||row.FirstSeenUtc);return Boolean(range)&&Number.isFinite(observed)&&observed>=range.start&&observed<=range.end;}
 /** Match a finding fixed inside the selected period. */
-function fixedInPeriodMatches(row){const range=newPeriodRange(),fixed=Date.parse(row.EffectiveRemediationUtc||row.FixedUtc);return Boolean(range)&&Number.isFinite(fixed)&&fixed>=range.start&&fixed<=range.end;}
+function fixedInPeriodMatches(row){const range=newPeriodRange(),fixed=Date.parse(row.EffectiveRemediationUtc||row.FixedUtc);return ["Fixed","Reopened","PendingConfirmation"].includes(row.FindingStatus)&&Boolean(range)&&Number.isFinite(fixed)&&fixed>=range.start&&fixed<=range.end;}
 /** Match findings with a lifecycle change between the latest comparable runs. */
 function latestRunChangeMatches(row){const snapshots=comparableRunSnapshots();if(snapshots.length<2)return false;const start=snapshots[0].time,end=snapshots[1].time,inRange=value=>{const time=Date.parse(value);return Number.isFinite(time)&&time>start&&time<=end;};return inRange(row.FirstObservedUtc||row.FirstSeenUtc)||inRange(row.ReopenedUtc)||inRange(row.FixedUtc);}
 /** Return a recommendation's shared workflow state. */
@@ -380,11 +380,11 @@ function filteredRemediations(){return state.remediations.filter(row=>{const id=
 /** Filtered summary for the dashboard. */
 function filteredSummary(){return state.summary.filter(row=>(state.origin==="Both"||row.DataOrigin===state.origin)&&(state.severity==="All"||row.Severity===state.severity)&&assetClassMatches(row)&&subscriptionMatches(row)&&state.domains.has(findingDomain(row))&&(state.team==="All"||row.OwnerTeam===state.team));}
 /** Sla card items for the dashboard. */
-function slaCardItems(rows){const current=rows.filter(row=>["OpenWithinSla","OpenOutsideSla"].includes(row.SlaStatus)),resolved=rows.filter(slaResolved),confirmed=rows.filter(row=>row.FindingStatus==="Fixed");return[[rows.length,"Finding instances observed"],[confirmed.length,"Findings confirmed fixed"],[resolved.filter(pending).length,"SLA remediations pending verification"],[resolved.filter(row=>row.SlaStatus==="FixedWithinSla").length,"Remediation observed within policy SLA"],[resolved.filter(row=>row.SlaStatus==="FixedOutsideSla").length,"Remediation observed outside policy SLA"],[current.filter(row=>row.SlaStatus==="OpenOutsideSla").length,"Detected findings overdue"]];}
+function slaCardItems(rows){const current=rows.filter(row=>["OpenWithinSla","OpenOutsideSla"].includes(row.SlaStatus)),resolved=rows.filter(slaResolved),confirmed=rows.filter(row=>row.FindingStatus==="Fixed");return[[rows.length,"Finding instances observed"],[confirmed.length,"Findings confirmed fixed"],[rows.filter(pending).length,"SLA remediations pending verification"],[resolved.filter(row=>row.SlaStatus==="FixedWithinSla").length,"Remediation observed within policy SLA"],[resolved.filter(row=>row.SlaStatus==="FixedOutsideSla").length,"Remediation observed outside policy SLA"],[current.filter(row=>row.SlaStatus==="OpenOutsideSla").length,"Detected findings overdue"]];}
 /** Severity card items for the dashboard. */
 function severityCardItems(rows){const openRows=rows.filter(open),subscriptionCount=new Set(openRows.map(row=>row.SubscriptionId).filter(Boolean)).size;return[[openRows.filter(row=>row.Severity==="Critical").length,"Critical open"],[openRows.filter(row=>row.Severity==="High").length,"High open"],[openRows.filter(row=>row.Severity==="Medium").length,"Medium open"],[openRows.filter(row=>row.Severity==="Low").length,"Low open"],[openRows.filter(row=>row.AssetClass==="AzureCloud").length,"Cloud findings"],[subscriptionCount,"Subscriptions represented"]];}
 /** Sla severity rows for the dashboard. */
-function slaSeverityRows(rows){return["Critical","High","Medium","Low"].map(severity=>{const scoped=rows.filter(row=>row.Severity===severity),within=scoped.filter(row=>slaResolved(row)&&row.SlaStatus==="FixedWithinSla").length,outside=scoped.filter(row=>slaResolved(row)&&row.SlaStatus==="FixedOutsideSla").length,total=within+outside;return{Severity:severity,FixedWithinSLA:within,FixedOutsideSLA:outside,PendingVerification:scoped.filter(row=>slaResolved(row)&&pending(row)).length,OpenOutsideSLA:scoped.filter(row=>row.SlaStatus==="OpenOutsideSla").length,SLACompliance:total?`${Math.round(within/total*1000)/10}%`:"—",SlaSeverityPoint:true};});}
+function slaSeverityRows(rows){return["Critical","High","Medium","Low"].map(severity=>{const scoped=rows.filter(row=>row.Severity===severity),within=scoped.filter(row=>slaResolved(row)&&row.SlaStatus==="FixedWithinSla").length,outside=scoped.filter(row=>slaResolved(row)&&row.SlaStatus==="FixedOutsideSla").length,total=within+outside;return{Severity:severity,FixedWithinSLA:within,FixedOutsideSLA:outside,PendingVerification:scoped.filter(pending).length,OpenOutsideSLA:scoped.filter(row=>row.SlaStatus==="OpenOutsideSla").length,SLACompliance:total?`${Math.round(within/total*1000)/10}%`:"Waiting for data",SlaSeverityPoint:true};});}
 /** Display the exact SLA policy retained with the current dataset. */
 function renderSlaPolicySummary(){if(!state.slaPolicy)return;const policies=Array.isArray(state.slaPolicy.policies)?state.slaPolicy.policies:[],labels=policies.map(policy=>`${policy.severity}${policy.knownExploitRequired?" + known exploit":""}: ${fmt(policy.slaDays)} day${Number(policy.slaDays)===1?"":"s"}`),configuredTarget=Number(state.slaPolicy.complianceTargetPercent),targetText=Number.isFinite(configuredTarget)&&configuredTarget>0&&configuredTarget<=100?` Executive compliance target: ${Math.round(configuredTarget*10)/10}%.`:" No executive compliance target is configured.";$("slaPolicySummary").textContent=labels.length?`Current dataset policy (${state.slaPolicy.policyVersion||"unversioned"}): ${labels.join(" · ")}. Targets start at the collector's first observation; they are not remediation-task due dates.${targetText}`:`This dataset's SLA policy contains no severity due-day policies.${targetText}`;}
 /** Finding sla severity rows for the dashboard. */
@@ -554,6 +554,8 @@ function metricHelp(label){return({
   "Related recommendations":"Distinct recommendations linked to this item's exposure evidence in the current filters. One machine can have several recommendations, and one recommendation can address many CVEs or exposure instances. Select a related recommendation row to open its details.",
   "Evidence rows":"Software-version exposure records in the current filters, including active, pending, or fixed evidence when selected. Several records may share a CVE or device; these are not unique CVEs.",
   "Machines with detections":"Distinct devices with at least one active exposure in the current filters. Pending-only devices are excluded.",
+  "Machine/CVE fixes observed — awaiting confirmation":"Vulnerabilities that stopped appearing on a machine during the selected dates and need another collection to confirm the fix. Each vulnerability counts once per machine, and it must be gone from all affected software on that machine. These fixes are not yet included in completed SLA results. If the vulnerability returns, the fix is no longer counted as waiting for confirmation.",
+  "Confirmed machine/CVE fixes":"Vulnerabilities confirmed gone from all affected software on a machine. Each vulnerability counts once per machine. Normally, two complete collections must show it missing while the machine is still actively reporting. The fix is dated to the first time it was missing, not the later confirmation. Other vulnerabilities may still remain on the machine.",
 })[exposureLabel(label)]||"";}
 function cards(id,items,hint="Current filter context"){$(id).innerHTML=items.map(([value,label,itemHint])=>{const detail=itemHint??hint,help=metricHelp(label);return`<div class="metric"${help?` title="${esc(help)}"`:""}><span class="label${help?" metric-help":""}"${help?` tabindex="0" aria-label="${esc(`${exposureLabel(label)}. ${help}`)}"`:""}>${esc(exposureLabel(label))}</span><strong class="value">${typeof value==="number"?fmt(value):esc(value)}</strong>${detail?`<span class="hint">${esc(detail)}</span>`:""}</div>`;}).join("");}
 /** Header label for the dashboard. */
@@ -1501,13 +1503,14 @@ function renderDashboardChart(id,chart){
   if(chart.kind==="sla-completion"){
     $(id).innerHTML=(chart.rows||[]).map(row=>{
       const assessed=Number(row.assessed),within=Number(row.within),late=Number(row.late);
-      const outcome=assessed>0?`${within.toFixed(1)}% on time · ${fmt(row.completedWithin)} / ${fmt(assessed)} assessed completions`:"Not assessed — no completed outcomes with known deadlines";
+      const assessable=assessed>0&&row.within!=null&&row.late!=null&&Number.isFinite(within)&&Number.isFinite(late);
+      const outcome=assessable?`${within.toFixed(1)}% on time · ${fmt(row.completedWithin)} / ${fmt(assessed)} assessed completions`:"Waiting for data — confirmed completions with known deadlines are required";
       return`<div class="sla-completion-row">
         <strong>${esc(row.label)}</strong><span>${esc(outcome)}</span>
         <div class="sla-completion-track" role="img" aria-label="${esc(`${row.label}: ${outcome}`)}">
-          ${assessed>0?`<i class="sla-completion-within" style="width:${Math.max(0,Math.min(100,within))}%"></i><i class="sla-completion-late" style="width:${Math.max(0,Math.min(100,late))}%"></i>`:""}
+          ${assessable?`<i class="sla-completion-within" style="width:${Math.max(0,Math.min(100,within))}%"></i><i class="sla-completion-late" style="width:${Math.max(0,Math.min(100,late))}%"></i>`:""}
         </div>
-        <small>${fmt(row.completedWithin)} on time · ${fmt(row.completedLate)} late · ${fmt(row.completedUnknown)} completed with unknown deadlines (excluded)</small>
+        <small>${fmt(row.completedWithin)} on time · ${fmt(row.completedLate)} late · ${fmt(row.completedUnknown)} completed with unknown deadlines (excluded) · ${fmt(row.awaitingConfirmation)} fixes observed, awaiting confirmation (excluded)</small>
       </div>`;
     }).join("");
     return;
@@ -1620,6 +1623,13 @@ function ensureManagementReport(view){
       <div class="section-heading"><div><span>MACHINES AND VULNERABILITIES</span><h2>${view==="executive"?"Current machines and vulnerabilities":"Open risk and confirmed progress"}</h2></div></div>
       <p id="${prefix}Context" class="coverage-note"></p>
       <div id="${prefix}Cards" class="metric-grid"></div>
+      <div id="${prefix}FixActivity" class="metric-grid"></div>
+      <p class="coverage-note">Day-over-day fixes appear at the first qualified absence as <strong>Fix observed — awaiting confirmation</strong>.
+        Another consecutive qualified collection confirms the fix; a returned detection revokes it.
+        Offline devices or disappearance of the entire device vulnerability feed do not qualify.
+        Provisional fixes remain in open risk and are excluded from completed SLA outcomes.
+        Confirmed fixes are attributed to the first qualified absence, not the confirmation date.
+        This measures observed clearance, not the exact patch-installation time.</p>
       <div id="${prefix}Severity" class="management-severity"></div>
       <p class="coverage-note">Each machine/workload instance is counted once, at its highest remaining CVE severity in this scope.
         Workload groups are not collapsed into a single machine. Each unique CVE is counted once at its highest remaining severity across the selected machines.
@@ -1633,7 +1643,8 @@ function ensureManagementReport(view){
         <p id="${prefix}SlaPolicy" class="coverage-note"></p>
         <p class="coverage-note">Each CVE has one SLA outcome on each machine, regardless of software/version duplicates.
           A CVE is fixed on that machine only when all matching evidence is confirmed cleared.
-          Completion uses the last confirmed removal and the earliest applicable deadline; missing deadlines remain unknown unless lateness is already known.
+          After confirmation, completion is dated to the latest first qualified absence across matching software evidence and uses the earliest applicable deadline.
+          Missing deadlines remain unknown unless lateness is already known.
           Compliance = on-time completed machine/CVE outcomes ÷ completed outcomes with known deadlines. Open, pending, and unknown outcomes are excluded from that percentage, not counted as success.</p>
         <div class="executive-snapshot-grid">
           <article class="panel"><div class="panel-title"><h3>On-time rate of completed outcomes by severity</h3><span>Not the percentage of open risk remediated</span></div><div id="${prefix}SlaSeverity"></div></article>
@@ -1665,12 +1676,18 @@ function renderManagementSla(view,sla){
   if(!root||!sla)return;
   const current=sla.periods?.[0];
   if(!current)return;
-  const compliance=current.CompliancePercent==null?"Not assessed":`${Number(current.CompliancePercent).toFixed(1)}%`;
   const outcomes=current.outcomes,history=sla.history;
-  const counts=outcomes?`${fmt(outcomes.WithinSLA)} / ${fmt(outcomes.WithinSLA+outcomes.LateSLA)} assessed completions were on time · ${fmt(outcomes.LateSLA)} late · ${fmt(outcomes.UnknownSLA)} completed with unknown deadlines (excluded).`:"Completed-outcome counts unavailable for this response.";
-  root.innerHTML=`<strong>${esc(compliance)} on-time rate among assessed machine/CVE completions</strong>
+  const assessed=outcomes?outcomes.WithinSLA+outcomes.LateSLA:0;
+  const compliance=current.CompliancePercent==null||!Number.isFinite(assessed)||assessed<=0
+    ?"Waiting for data — confirmed completions with known deadlines are required"
+    :`${Number(current.CompliancePercent).toFixed(1)}% on-time rate among assessed machine/CVE completions`;
+  const counts=outcomes?`${fmt(outcomes.WithinSLA)} / ${fmt(assessed)} assessed completions were on time · ${fmt(outcomes.LateSLA)} late · ${fmt(outcomes.UnknownSLA)} completed with unknown deadlines (excluded) · ${fmt(outcomes.AwaitingConfirmation)} fixes observed, awaiting confirmation (excluded).`:"Completed-outcome counts unavailable for this response.";
+  root.innerHTML=`<strong>${esc(compliance)}</strong>
     <span>${esc(counts)}</span>
     <span>This is not overall remediation progress. Open-risk machine and CVE totals above are excluded from this completion percentage.</span>
+    <span>Confirmation requires consecutive qualified collections while the device is active and fresh.
+      Confirmed clearance is dated to the first qualified absence, not the later confirmation cycle.
+      A returned detection cancels an unconfirmed fix. Observation dates are not exact patch-installation timestamps.</span>
     <span>Existing recorded deadlines remain in force; this deployment does not restart the SLA clock.
       Tracking updates when a new successful collection supplies evidence. Results are assessed at the pinned snapshot time.</span>
     ${history?.startUtc?`<span>Retained history begins ${esc(formatUtc(history.startUtc))} · ${fmt(history.snapshots)} recorded snapshots. Earlier CVE catalog dates are not machine-observation history.</span>`:"<span>Retained run-history coverage is unavailable; long-term SLA performance cannot be established.</span>"}

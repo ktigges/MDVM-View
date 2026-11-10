@@ -234,20 +234,37 @@ periods identify partial history.
 
 Management SLA uses **one outcome per device ID + CVE ID**, not one per software
 version. A pair completes only when no evidence remains unresolved and a
-confirmed removal falls in the period. Its completion time is the last
-confirmed removal and its deadline is the earliest retained applicable deadline.
+confirmed removal falls in the period. After confirmation, its completion time
+is the latest first-qualified-absence timestamp across its software evidence
+(`EffectiveRemediationUtc`, falling back to `FixedUtc`), and its deadline is the
+earliest retained applicable deadline.
 Any known lateness wins; otherwise missing deadlines are unknown, not success.
 On-time percentage divides completed-on-time pairs by completed pairs with
 known outcomes. Open/pending and unknown outcomes never enter that denominator.
 The same CVE can be fixed on one machine and remain open on another.
 The severity chart exposes each numerator, assessed denominator, late count,
 and excluded unknown-deadline completion count. Empty severity buckets say
-Not assessed, not 100%. A 100% on-time completion rate does not mean all risk
+Waiting for data, not 100%. A 100% on-time completion rate does not mean all risk
 has been remediated. The overall completion counts and retained observation
 start/snapshot count are visible alongside the chart.
 
+First-day qualified absence is reported separately as **Fix observed — awaiting
+confirmation**, not a completed SLA outcome. `AwaitingConfirmation` counts
+machine/CVE pairs only if all unresolved software evidence is
+`PendingConfirmation`, with a usable `EffectiveRemediationUtc` in the selected
+period. Unqualified verification, stale/offline devices, returned detections,
+and partial software clearance do not qualify. Confirmation retains the first
+absence date; an interrupted qualified sequence restarts that date. Pending
+rows keep open SLA status in collection output, and older provisional fixed-SLA
+labels are excluded from the technical completed-outcome calculation.
+Activity cards, period comparisons, machine/CVE rows, detail, and CSVs expose
+the provisional/confirmed distinction without multiplying software evidence.
+Viewer read-model, filter-rollup, and prepared-response identities are advanced
+when these calculations change; retained collection evidence and published
+query indexes are not rewritten.
+
 Summary contains only current machine/CVE headline totals, their severity
-breakdowns, and a compact SLA-by-severity status table. It does not show
+breakdowns, observed/confirmed fix activity, and a compact SLA-by-severity status table. It does not show
 compliance percentages, progress charts, period comparisons, or detailed
 remediation tables. Detailed SLA analysis remains in Executive Snapshot,
 Reporting, and Remediate. The compact table separates open-within-deadline,

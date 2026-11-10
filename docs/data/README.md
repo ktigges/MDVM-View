@@ -229,6 +229,15 @@ Unknown metadata is not evidence of no exploit or a zero CVSS score.
 | `PriorityScore` | Application score, 0 through 100 |
 | `PriorityExplanation` | Components of that score |
 
+`PendingConfirmation` means a fix was observed at its first qualified absence,
+not that remediation is confirmed. Its `EffectiveRemediationUtc` supports daily
+progress, while `SlaStatus` remains open and the row is excluded from completed
+SLA outcomes. A second consecutive qualified absence confirms it by default;
+the first absence remains the effective clearance date. An interruption in
+qualified observations restarts the absence sequence. Older retained rows with
+provisional fixed-SLA labels are not treated as completed merely because of
+that label.
+
 #### Assignment placeholders
 
 Live normalization leaves `AssignedTeam`, `AssignedEngineer`, and

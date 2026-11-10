@@ -469,26 +469,35 @@ test("shared activity tiles put full-width labels before their counts",()=>{
   assert.match(css,/\.new-activity-metrics button,\.new-activity-metrics \.window-metric\{[^}]*grid-template-columns:minmax\(0,1fr\)/);
 });
 
-test("activity tiles explain distinct counts, evidence timestamps and partial fixes on hover and focus",()=>{
+test("activity tiles explain counts and partial fixes in plain language on hover and focus",()=>{
   const tiles=[...html.matchAll(/<button\b([^>]*data-(new|fixed)-view=[^>]*)>(.*?)<\/button>/g)];
   assert.equal(tiles.length,8);
   for(const [,attributes,kind,markup] of tiles){
     const helpId=attributes.match(/aria-describedby="([^"]+)"/)?.[1];
     assert.ok(helpId);
     assert.ok(markup.includes(`<small id="${helpId}" class="activity-metric-help" role="tooltip">`));
-    assert.match(markup,/selected UTC date window/);
-    assert.match(markup,/pinned snapshot and workspace filters/);
-    assert.match(markup,kind==="new"?/FirstObservedUtc, falling back to FirstSeenUtc/:/EffectiveRemediationUtc.*falling back to FixedUtc/);
-    if(kind==="fixed")assert.match(markup,/ignores the current exposure-status filter/);
+    assert.match(markup,/selected dates/);
+    assert.match(markup,/loaded collection and your filters/);
+    assert.doesNotMatch(markup,/non-empty|FirstObservedUtc|FirstSeenUtc|EffectiveRemediationUtc|FixedUtc|DeviceId|RecommendationId|pinned snapshot/i);
+    if(kind==="fixed"){
+      assert.match(markup,/awaiting.*confirm/);
+      assert.match(markup,/except the detected\/fixed filter/);
+    }
   }
   assert.match(html,/same CVE on 100 machines counts once/);
-  assert.match(html,/not necessarily newly onboarded machines/);
-  assert.match(html,/not a count of newly created recommendations/);
-  assert.match(html,/does not mean the CVE is fully resolved across the fleet/);
-  assert.match(html,/not a count of fully remediated machines/);
-  assert.match(html,/does not mean the recommendation is completed/);
+  assert.match(html,/not necessarily new machines/);
+  assert.match(html,/existing recommendation can appear here/);
+  assert.match(html,/vulnerability may remain on other machines or software versions/);
+  assert.match(html,/does not mean the machine is fully fixed/);
+  assert.match(html,/does not mean the recommendation is finished/);
   const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
   assert.match(css,/button:hover \.activity-metric-help,\.new-activity-metrics button:focus-visible \.activity-metric-help\{display:block\}/);
+  for(const selector of [/\.lifecycle-tooltip::after\{([^}]+)\}/,/\.new-activity-metrics \.activity-metric-help\{([^}]+)\}/]){
+    const style=css.match(selector)?.[1];
+    assert.ok(style);
+    assert.match(style,/background:#fff4cc;color:#33270a/);
+    assert.match(style,/border:1px solid #b7791f/);
+  }
 });
 
 test("summary decision tiles put titles above million-record values",async()=>{
@@ -1059,17 +1068,47 @@ test("Executive Snapshot retains detailed completion analysis and period compari
   for(const suffix of ["SlaSnapshot","SlaStatus","SlaSeverity","Movement","Progress","ComparisonTable"])assert.ok(markup.includes(`id="executiveSnapshotManagement${suffix}"`));
   const graph=app.elements.get("executiveSnapshotManagementSlaSeverity").innerHTML;
   assert.match(graph,/1 \/ 2 assessed completions/);
-  assert.match(graph,/Not assessed/);
+  assert.match(graph,/Waiting for data/);
   assert.match(graph,/1 completed with unknown deadlines \(excluded\)/);
 });
 
 test("SLA no-outcome states remain ungraded and coverage gaps stay explicit without colors",async()=>{
   const app=fixture();await tick();
   app.run(`ensureManagementReport("sla");renderManagementSla("sla",{periods:[{CompliancePercent:null}]})`);
-  assert.match(app.elements.get("slaManagementSlaStatus").innerHTML,/Not assessed/);
+  assert.match(app.elements.get("slaManagementSlaStatus").innerHTML,/Waiting for data/);
   assert.ok(!app.elements.get("slaManagementSlaStatus").innerHTML.includes("100.0%"));
   app.run(`renderManagementSla("sla",{coverageGap:true,periods:[{CompliancePercent:null}]})`);
   assert.match(app.elements.get("slaManagementSlaStatus").innerHTML,/Coverage gap/);
+});
+
+test("provisional fixes are visible without inventing a completed SLA rate",async()=>{
+  const app=fixture();await tick();
+  app.run(`ensureManagementReport("executiveSnapshot");
+    renderManagementSla("executiveSnapshot",{periods:[{CompliancePercent:100,outcomes:{WithinSLA:0,LateSLA:0,UnknownSLA:0,AwaitingConfirmation:5}}]});
+    renderDashboardChart("executiveSnapshotManagementSlaSeverity",{kind:"sla-completion",rows:[{label:"High",within:null,late:null,assessed:0,completedWithin:0,completedLate:0,completedUnknown:0,awaitingConfirmation:5}]});`);
+  const status=app.elements.get("executiveSnapshotManagementSlaStatus").innerHTML;
+  assert.match(status,/Waiting for data/);
+  assert.match(status,/5 fixes observed, awaiting confirmation \(excluded\)/);
+  assert.ok(!status.includes("100.0%"));
+  const graph=app.elements.get("executiveSnapshotManagementSlaSeverity").innerHTML;
+  assert.match(graph,/Waiting for data/);
+  assert.match(graph,/5 fixes observed, awaiting confirmation \(excluded\)/);
+  assert.ok(!graph.includes('style="width:'));
+  const report=app.elements.get("executiveSnapshotManagement").innerHTML;
+  assert.match(report,/id="executiveSnapshotManagementFixActivity"/);
+  assert.match(report,/first qualified absence/);
+  assert.match(report,/returned detection revokes/);
+  assert.match(report,/excluded from completed SLA outcomes/);
+});
+
+test("legacy pending SLA labels never enter completed finding-level outcomes",async()=>{
+  const app=fixture();await tick();
+  app.run(`state.findings=[{FindingStatus:"PendingConfirmation",SlaStatus:"FixedWithinSla",Severity:"High",EffectiveRemediationUtc:"2026-10-24T11:00:00Z"}]`);
+  assert.equal(app.run("slaResolved(state.findings[0])"),false);
+  const row=app.run("slaSeverityRows(state.findings)[1]");
+  assert.equal(row.FixedWithinSLA,0);
+  assert.equal(row.PendingVerification,1);
+  assert.equal(row.SLACompliance,"Waiting for data");
 });
 
 test("historical severity is unavailable rather than zero before retained observations",async()=>{

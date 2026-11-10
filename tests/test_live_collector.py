@@ -1784,7 +1784,7 @@ def test_live_reconciliation_requires_two_fresh_absences_to_confirm_fixed():
     assert by_key["fixed-key"]["ConfirmationRunsCompleted"] == 1
     assert by_key["fixed-key"]["ConfirmationRunsRequired"] == 2
     assert by_key["fixed-key"]["SlaEvidenceStatus"] == "PendingConfirmation"
-    assert by_key["fixed-key"]["SlaStatus"] == "FixedWithinSla"
+    assert by_key["fixed-key"]["SlaStatus"] == "OpenWithinSla"
     assert by_key["open-key"]["FindingStatus"] == "Open"
 
     second_snapshot = datetime(2026, 9, 18, 17, 5, 9, tzinfo=timezone.utc)
@@ -1900,7 +1900,7 @@ def test_live_reconciliation_uses_first_qualified_absence_for_sla_before_confirm
     pending_rows = reconcile_live_findings([other_finding], previous + [other_finding], first_absence, "first-absence", devices)
     pending = {row["FindingKey"]: row for row in pending_rows}["finding-1"]
     assert pending["FindingStatus"] == "PendingConfirmation"
-    assert pending["SlaStatus"] == "FixedWithinSla"
+    assert pending["SlaStatus"] == "OpenWithinSla"
     assert pending["SlaEvidenceStatus"] == "PendingConfirmation"
 
     confirmation = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
@@ -1911,6 +1911,30 @@ def test_live_reconciliation_uses_first_qualified_absence_for_sla_before_confirm
     assert confirmed["SlaStatus"] == "FixedWithinSla"
     assert confirmed["EffectiveRemediationUtc"] == "2026-09-20T23:00:00Z"
     assert confirmed["FixedConfirmedUtc"] == "2026-09-21T12:00:00Z"
+
+def test_live_reconciliation_restarts_qualified_absence_after_stale_collection():
+    first = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    previous = [{
+        "FindingKey": "missing", "DeviceId": "device-1", "DataOrigin": "Live",
+        "FindingStatus": "PendingConfirmation", "Severity": "High",
+        "FirstObservedUtc": "2026-09-19T00:00:00Z",
+        "FirstAbsentUtc": "2026-09-20T00:00:00Z",
+        "EffectiveRemediationUtc": "2026-09-20T00:00:00Z",
+        "ConsecutiveAbsentCount": 1, "FixedUtc": "",
+    }]
+    present = dict(previous[0], FindingKey="present", FindingStatus="Open",
+                   FirstAbsentUtc="", EffectiveRemediationUtc="", ConsecutiveAbsentCount=0)
+    devices = [{"DeviceId": "device-1", "LastSeenUtc": "2026-09-19T00:00:00Z",
+                "HealthStatus": "Inactive", "OnboardingStatus": "Onboarded"}]
+    stale = reconcile_live_findings([present], previous, first, "stale", devices)
+    devices[0].update(HealthStatus="Active", LastSeenUtc="2026-09-21T00:00:00Z")
+    resumed = reconcile_live_findings(
+        [present], stale, datetime(2026, 9, 21, tzinfo=timezone.utc), "resumed", devices,
+    )
+    pending = next(row for row in resumed if row["FindingKey"] == "missing")
+    assert pending["FindingStatus"] == "PendingConfirmation"
+    assert pending["ConsecutiveAbsentCount"] == 1
+    assert pending["EffectiveRemediationUtc"] == "2026-09-21T00:00:00Z"
 
 
 def test_live_reconciliation_marks_detection_returned_and_revokes_provisional_sla_resolution():

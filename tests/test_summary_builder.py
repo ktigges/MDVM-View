@@ -150,7 +150,7 @@ def test_daily_summary_reports_lifecycle_evidence_states():
     assert row["OutOfScopeCount"] == 1
 
 
-def test_daily_summary_uses_effective_remediation_for_pending_sla_without_counting_confirmed_fix():
+def test_daily_summary_keeps_provisional_fixes_out_of_completed_sla():
     snapshot = datetime(2026, 9, 21, tzinfo=timezone.utc)
     finding = {
         "FindingKey": "pending", "AssetClass": "TraditionalIT", "SubscriptionId": "",
@@ -167,7 +167,12 @@ def test_daily_summary_uses_effective_remediation_for_pending_sla_without_counti
 
     today = build_daily_summary([finding], history_days=1)[0]
 
-    assert today["FixedWithinSlaCount"] == 1
+    assert today["FixedWithinSlaCount"] == 0
     assert today["OpenOutsideSlaCount"] == 0
+    assert today["OpenWithinSlaCount"] == 1
     assert today["FixedCount"] == 0
     assert today["PendingConfirmationCount"] == 1
+    finding["SnapshotTimeUtc"] = (snapshot + timedelta(hours=12)).isoformat()
+    later = build_daily_summary([finding], history_days=1)[0]
+    assert later["FixedWithinSlaCount"] == later["FixedOutsideSlaCount"] == 0
+    assert later["OpenOutsideSlaCount"] == 1
