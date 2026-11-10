@@ -205,14 +205,14 @@ function initialize(){
   for(const key of ["recommendationCatalogStatus","recommendationCatalogSort"])$(key).addEventListener("change",event=>{state[key]=event.target.value;clearSelectedWorkItem();render();});
   $("recommendationWorkspaceFilters").addEventListener("click",event=>{event.stopPropagation();setFilterExpanded(true,true);});
   $("resetRecommendationCatalog").addEventListener("click",()=>{state.recommendationCatalogStatus="All";state.recommendationCatalogSort="name";$("recommendationCatalogStatus").value="All";$("recommendationCatalogSort").value="name";clearSelectedWorkItem();render();});
-  [["severityFilter","severity"],["assetClassFilter","assetClass"],["osTypeFilter","osType"],["subscriptionFilter","subscription"],["teamFilter","team"]].forEach(([id,key])=>$(id).addEventListener("change",event=>{state[key]=event.target.value;clearSelectedWorkItem();render();}));
-  $("exposureStatusFilter").addEventListener("change",event=>{state.exposureStatus=event.target.value;clearSelectedWorkItem();render();});
-  $("pendingOnlyFilter").addEventListener("click",()=>{state.exposureStatus=state.exposureStatus==="PendingOnly"?"DetectedAndPending":"PendingOnly";$("exposureStatusFilter").value=state.exposureStatus;clearSelectedWorkItem();render();});
-  $("hideNonReporting").addEventListener("change",event=>{state.hideNonReporting=event.target.checked;$("reportingDays").disabled=!state.hideNonReporting;clearSelectedWorkItem();render();});
-  $("reportingDays").addEventListener("change",event=>{state.reportingDays=Number(event.target.value);clearSelectedWorkItem();render();});
+  [["severityFilter","severity"],["assetClassFilter","assetClass"],["osTypeFilter","osType"],["subscriptionFilter","subscription"],["teamFilter","team"]].forEach(([id,key])=>$(id).addEventListener("change",event=>{state[key]=event.target.value;render();}));
+  $("exposureStatusFilter").addEventListener("change",event=>{state.exposureStatus=event.target.value;render();});
+  $("pendingOnlyFilter").addEventListener("click",()=>{state.exposureStatus=state.exposureStatus==="PendingOnly"?"DetectedAndPending":"PendingOnly";$("exposureStatusFilter").value=state.exposureStatus;render();});
+  $("hideNonReporting").addEventListener("change",event=>{state.hideNonReporting=event.target.checked;$("reportingDays").disabled=!state.hideNonReporting;render();});
+  $("reportingDays").addEventListener("change",event=>{state.reportingDays=Number(event.target.value);render();});
   $("includeDiscoveredAssets").addEventListener("change",event=>{state.includeDiscoveredOnly=event.target.checked;clearSelectedWorkItem();render();});
-  $("recommendationTrackingFilter").addEventListener("change",event=>{state.recommendationTrackingFilter=event.target.value;clearSelectedWorkItem();render();});
-  $("searchFilter").addEventListener("input",event=>{state.search=event.target.value.trim().toLowerCase();clearSelectedWorkItem();render();});
+  $("recommendationTrackingFilter").addEventListener("change",event=>{state.recommendationTrackingFilter=event.target.value;render();});
+  $("searchFilter").addEventListener("input",event=>{state.search=event.target.value.trim().toLowerCase();render();});
   $("newPeriod").addEventListener("change",event=>{state.newPeriod=event.target.value;initializeCustomNewPeriod();$("newPeriodCustom").hidden=state.newPeriod!=="custom";clearSelectedWorkItem();render();});
   $("applyNewPeriodFilter").addEventListener("change",event=>{state.newPeriodFilter=event.target.checked;if(state.newPeriodFilter)state.remediationPeriodFilter=false;clearSelectedWorkItem();render();});
   $("newPeriodStart").addEventListener("change",event=>{state.newPeriodStart=event.target.value;clearSelectedWorkItem();render();});
@@ -258,6 +258,10 @@ function initialize(){
   document.querySelectorAll("[data-tracking-status]").forEach(button=>button.addEventListener("click",()=>updateRecommendationTracking(button.dataset.trackingStatus)));
   $("defenderDeviceLink").addEventListener("click",()=>{const text=$("defenderDeviceLink").dataset.copyText;if(text)navigator.clipboard?.writeText(text);});
   $("closeDialog").addEventListener("click",()=>$("detailDialog").close());
+  if(typeof ResizeObserver!=="undefined"){
+    const controls=document.querySelector(".workspace-controls");
+    new ResizeObserver(()=>document.documentElement.style.setProperty("--workspace-controls-height",`${controls.getBoundingClientRect().height}px`)).observe(controls);
+  }
 }
 
 /** Rebuild indexes and generated filter options after a dataset arrives. */
@@ -299,7 +303,16 @@ function activateView(view){
 /** Defender recommendation url for the dashboard. */
 function defenderRecommendationUrl(){return DEFENDER_RECOMMENDATIONS_URL;}
 /** Clear selected work item for the dashboard. */
-function clearSelectedWorkItem(){state.selectedRecommendationId="";state.detailRecommendationIds=[];state.selectedEntity=null;state.selectedCveDialogId="";state.pivotSourceLabel="";document.body.classList.remove("pivot-detail-open");$("pivotPanel")?.classList.remove("fullscreen-mode");if($("pivotBackdrop"))$("pivotBackdrop").hidden=true;}
+function clearSelectedWorkItem(){
+  invalidateDashboardChannel(dashboardQuery.detail);
+  updateScopeLoading("detail",false);
+  if(!dashboardQuery.main.busy)hideDashboardLoadingNotice();
+  state.selectedRecommendationId="";state.detailRecommendationIds=[];state.selectedEntity=null;
+  state.selectedCveDialogId="";state.pivotSourceLabel="";
+  document.body.classList.remove("pivot-detail-open");
+  $("pivotPanel")?.classList.remove("fullscreen-mode");
+  if($("pivotBackdrop"))$("pivotBackdrop").hidden=true;
+}
 /** Update recommendation handoff status for the dashboard. */
 function updateRecommendationHandoffStatus(){const recommendation=state.recommendationsById.get(state.selectedRecommendationId);if(recommendation?.DataOrigin==="Live")$("pivotActionStatus").textContent="Opens Exposure Recommendations. Select Vulnerabilities and paste the copied reference.";}
 /** Defender device url for the dashboard. */
@@ -515,8 +528,29 @@ function renderAvailability(){
 function resetFilters(){state.origin="Both";state.severity="All";state.exposureStatus="DetectedAndPending";state.assetClass="All";state.osType="All";state.subscription="All";state.hideNonReporting=Boolean(filterConfig.defaultHideNonReporting);state.reportingDays=DEFAULT_REPORTING_DAYS;state.includeDiscoveredOnly=Boolean(filterConfig.defaultIncludeDiscoveredOnly);state.team="All";state.search="";state.newPeriod="day";state.newPeriodFilter=false;state.remediationPeriodFilter=false;state.latestRunChangesOnly=false;state.newPeriodStart="";state.newPeriodEnd="";state.recommendationTrackingFilter="All";state.recommendationTypes=new Set(DEFAULT_RECOMMENDATION_TYPES);state.domains=new Set(DEFAULT_DOMAINS);clearSelectedWorkItem();$("severityFilter").value="All";$("exposureStatusFilter").value="DetectedAndPending";$("assetClassFilter").value="All";$("osTypeFilter").value="All";$("subscriptionFilter").value="All";$("hideNonReporting").checked=state.hideNonReporting;$("reportingDays").value=String(state.reportingDays);$("reportingDays").disabled=!state.hideNonReporting;$("includeDiscoveredAssets").checked=state.includeDiscoveredOnly;$("teamFilter").value="All";$("recommendationTrackingFilter").value="All";$("searchFilter").value="";$("newPeriod").value="day";$("applyNewPeriodFilter").checked=false;$("newPeriodCustom").hidden=true;$("newPeriodStart").value="";$("newPeriodEnd").value="";document.querySelectorAll(".latest-run-changes-toggle").forEach(input=>input.checked=false);document.querySelectorAll('input[name="recommendationType"]').forEach(input=>input.checked=state.recommendationTypes.has(input.value));document.querySelectorAll('input[name="assetDomain"]').forEach(input=>input.checked=state.domains.has(input.value));render();}
 /** Active filter items for the dashboard. */
 function activeFilterItems(classLabels,subscriptionScope,typeScope,domainScope){const items=[];if(state.severity!=="All")items.push(["Severity",state.severity]);if(state.exposureStatus!=="DetectedAndPending")items.push(["Exposure",{DetectedOnly:"Detected only",PendingOnly:"Pending verification only",ConfirmedFixed:"Confirmed fixed only",All:"All lifecycle states"}[state.exposureStatus]||state.exposureStatus]);if(state.assetClass!=="All")items.push(["Asset",classLabels[state.assetClass]]);if(state.osType!=="All")items.push(["OS Type",state.osType]);if(state.subscription!=="All")items.push(["Subscription",subscriptionScope]);if(state.hideNonReporting)items.push(["Reporting",`Within ${state.reportingDays} days`]);if(state.team!=="All")items.push(["Queue",state.team]);if(state.newPeriodFilter)items.push(["First observed",newPeriodRange()?.label||"Invalid custom range"]);if(state.remediationPeriodFilter)items.push(["Remediation observed",newPeriodRange()?.label||"Invalid custom range"]);if(state.latestRunChangesOnly)items.push(["Run changes","New, reopened, or fixed since previous run"]);if(state.recommendationTrackingEnabled&&state.recommendationTrackingFilter!=="All")items.push(["Work status",recommendationTrackingLabel(state.recommendationTrackingFilter)]);if(state.recommendationTypes.size!==2)items.push(["Type",typeScope]);if(state.domains.size!==5)items.push(["Domains",domainScope]);if(state.search)items.push(["Search",state.search]);return items;}
+function removeWorkspaceFilter(label){
+  const fields={
+    Severity:["severity","severityFilter","All"],Exposure:["exposureStatus","exposureStatusFilter","DetectedAndPending"],
+    Asset:["assetClass","assetClassFilter","All"],"OS Type":["osType","osTypeFilter","All"],
+    Subscription:["subscription","subscriptionFilter","All"],Queue:["team","teamFilter","All"],
+    Search:["search","searchFilter",""],"Work status":["recommendationTrackingFilter","recommendationTrackingFilter","All"],
+  };
+  if(fields[label]){
+    const [key,id,value]=fields[label];state[key]=value;$(id).value=value;
+  }else if(label==="Reporting"){
+    state.hideNonReporting=false;$("hideNonReporting").checked=false;$("reportingDays").disabled=true;
+  }else if(label==="First observed")state.newPeriodFilter=false;
+  else if(label==="Remediation observed")state.remediationPeriodFilter=false;
+  else if(label==="Run changes")state.latestRunChangesOnly=false;
+  else if(label==="Type"||label==="Domains"){
+    const type=label==="Type",values=type?["Vulnerability","Misconfiguration"]:["Devices","Cloud","SaaS Apps","Identities","Data"];
+    state[type?"recommendationTypes":"domains"]=new Set(values);
+    document.querySelectorAll(`input[name="${type?"recommendationType":"assetDomain"}"]`).forEach(input=>input.checked=values.includes(input.value));
+  }
+  render();
+}
 /** Render scope for the dashboard. */
-function renderScope(current=filteredFindings().filter(open),recommendations=filteredRecommendations()){const classLabels={All:"All asset classifications",AzureCloud:"Azure / Cloud",TraditionalIT:"Traditional IT",Unknown:"Unknown classification"},subscriptionScope=state.subscription==="All"?"All subscriptions":state.subscription==="NoSubscription"?"No subscription":`Subscription ${subscriptionLabel(state.subscription)}`,activeButton=document.querySelector(".story-nav button.active"),activeView=activeButton?.dataset.view||state.activeView,typeScope=state.recommendationTypes.size===2?"All recommendation types":[...state.recommendationTypes].join(" + ")||"No recommendation types",domainScope=state.domains.size===5?"All asset domains":[...state.domains].join(" + ")||"No asset domains",parts=[state.severity==="All"?"All severities":state.severity,classLabels[state.assetClass],subscriptionScope],chips=activeFilterItems(classLabels,subscriptionScope,typeScope,domainScope);state.activeView=activeView;if(state.hideNonReporting)parts.push(`Reported within ${state.reportingDays} days`);if(state.team!=="All")parts.push(state.team);if(state.search)parts.push(`Search: “${state.search}”`);$("scopeSummary").textContent=parts.join(" · ");$("activeFilterChips").innerHTML=chips.length?chips.map(([label,value])=>`<span><b>${esc(label)}</b>${esc(value)}</span>`).join(""):`<span class="empty"><b>Filters</b>None applied</span>`;const bar=$("scopeBar");bar.classList.remove("scope-updated");requestAnimationFrame(()=>bar.classList.add("scope-updated"));}
+function renderScope(current=filteredFindings().filter(open),recommendations=filteredRecommendations()){const classLabels={All:"All asset classifications",AzureCloud:"Azure / Cloud",TraditionalIT:"Traditional IT",Unknown:"Unknown classification"},subscriptionScope=state.subscription==="All"?"All subscriptions":state.subscription==="NoSubscription"?"No subscription":`Subscription ${subscriptionLabel(state.subscription)}`,activeButton=document.querySelector(".story-nav button.active"),activeView=activeButton?.dataset.view||state.activeView,typeScope=state.recommendationTypes.size===2?"All recommendation types":[...state.recommendationTypes].join(" + ")||"No recommendation types",domainScope=state.domains.size===5?"All asset domains":[...state.domains].join(" + ")||"No asset domains",parts=[state.severity==="All"?"All severities":state.severity,classLabels[state.assetClass],subscriptionScope],chips=activeFilterItems(classLabels,subscriptionScope,typeScope,domainScope);state.activeView=activeView;if(state.hideNonReporting)parts.push(`Reported within ${state.reportingDays} days`);if(state.team!=="All")parts.push(state.team);if(state.search)parts.push(`Search: “${state.search}”`);$("scopeSummary").textContent=parts.join(" · ");$("severityFilter").value=state.severity;$("activeFilterChips").innerHTML=chips.length?chips.map(([label,value])=>`<button type="button" data-remove-filter="${esc(label)}" aria-label="Remove ${esc(label)} filter: ${esc(value)}"><b>${esc(label)}</b>${esc(value)} <i aria-hidden="true">&times;</i></button>`).join(""):`<span class="empty"><b>Filters</b>None applied</span>`;$("activeFilterChips").querySelectorAll("[data-remove-filter]").forEach(button=>button.addEventListener("click",()=>removeWorkspaceFilter(button.dataset.removeFilter)));const bar=$("scopeBar");bar.classList.remove("scope-updated");requestAnimationFrame(()=>bar.classList.add("scope-updated"));}
 
 /** Movement for the dashboard. */
 function movement(item){const CurrentThingsToFix=item.CurrentThingsToFix??item.CurrentOpen??0,FixedToday=item.FixedToday??item.FixedLatest??0,NewToday=item.NewToday??item.NewLatest??0,ReopenedToday=item.ReopenedToday??item.ReopenedLatest??0,BeforeLatestRefresh=CurrentThingsToFix+FixedToday-NewToday-ReopenedToday,Delta=CurrentThingsToFix-BeforeLatestRefresh;return{...item,BeforeLatestRefresh,FixedToday,NewToday,ReopenedToday,CurrentThingsToFix,BeforeToCurrent:`${fmt(BeforeLatestRefresh)} → ${fmt(CurrentThingsToFix)}`,Delta};}
@@ -554,12 +588,13 @@ function metricHelp(label){return({
   "Related recommendations":"Distinct recommendations linked to this item's exposure evidence in the current filters. One machine can have several recommendations, and one recommendation can address many CVEs or exposure instances. Select a related recommendation row to open its details.",
   "Evidence rows":"Software-version exposure records in the current filters, including active, pending, or fixed evidence when selected. Several records may share a CVE or device; these are not unique CVEs.",
   "Machines with detections":"Distinct devices with at least one active exposure in the current filters. Pending-only devices are excluded.",
+  "Total observed machine/CVE fixes":"Confirmed fixes plus fixes awaiting confirmation in the selected reporting period. Each CVE counts once per machine, after it has stopped appearing in all affected software on that machine. Pending fixes still count as open risk and are not confirmed SLA completions. A returned detection removes the provisional fix from this total.",
   "Machine/CVE fixes observed — awaiting confirmation":"Vulnerabilities that stopped appearing on a machine during the selected dates and need another collection to confirm the fix. Each vulnerability counts once per machine, and it must be gone from all affected software on that machine. These fixes are not yet included in completed SLA results. If the vulnerability returns, the fix is no longer counted as waiting for confirmation.",
   "Confirmed machine/CVE fixes":"Vulnerabilities confirmed gone from all affected software on a machine. Each vulnerability counts once per machine. Normally, two complete collections must show it missing while the machine is still actively reporting. The fix is dated to the first time it was missing, not the later confirmation. Other vulnerabilities may still remain on the machine.",
 })[exposureLabel(label)]||"";}
 function cards(id,items,hint="Current filter context"){$(id).innerHTML=items.map(([value,label,itemHint])=>{const detail=itemHint??hint,help=metricHelp(label);return`<div class="metric"${help?` title="${esc(help)}"`:""}><span class="label${help?" metric-help":""}"${help?` tabindex="0" aria-label="${esc(`${exposureLabel(label)}. ${help}`)}"`:""}>${esc(exposureLabel(label))}</span><strong class="value">${typeof value==="number"?fmt(value):esc(value)}</strong>${detail?`<span class="hint">${esc(detail)}</span>`:""}</div>`;}).join("");}
 /** Header label for the dashboard. */
-function headerLabel(column){const labels={FixedCVEs:"CVEs fixed on this machine",FixedMachines:"Machines with this CVE fixed",CompletedWithinSLA:"Completed within SLA",CompletedLate:"Completed late",CompletedUnknownSLA:"Completed, unknown SLA",OverdueOutcomes:"Overdue machine/CVE outcomes",ExecutiveStatus:"Executive SLA status",OpenCVEs:"CVEs remaining",CVEsOpen:"Open CVEs",CVEsImproved:"CVEs improved",CVEsFullyResolved:"CVEs fully resolved",MachinesOpen:"Machines with open risk",MachinesImproved:"Machines improved",MachinesFullyResolved:"Machines fully resolved",RecommendationsOpen:"Open recommendations",SlaStatus:"SLA risk status",PendingEvidence:"Awaiting verification",OSPlatform:"OS Type",OSVersion:"OS Version",OSMetadataSource:"OS metadata source",OpenFindings:"Active exposure instances",PendingFindings:"Pending exposure instances",EvidenceRecommendations:"Related recommendations",DetectedMachines:"Machines with detections",DetectedCVEs:"Distinct active CVEs",PendingCVEs:"CVEs with pending evidence",EvidenceRows:"Evidence rows",WorkAction:"Working here?",RemediationStarted:"Defender remediation started",TrackingStatus:"Dashboard work status",TrackingUpdatedBy:"Updated by",TrackingUpdatedUtc:"Updated UTC",SeverityScore:"Defender severity score",FixedWithinSLA:"Remediation observed within SLA",FixedOutsideSLA:"Remediation observed outside SLA",PendingVerification:"Pending verification",OpenOutsideSLA:"Detected findings overdue",SLACompliance:"SLA compliance"};return labels[column]||column.replace(/([A-Z])/g," $1").trim().replace(/\bS L A\b/g,"SLA").replace(/\bC V E\b/g,"CVE").replace(/\bU T C\b/g,"UTC").replace(/\bI D\b/g,"ID");}
+function headerLabel(column){const labels={TotalObservedFixes:"Observed fixes (confirmed + pending)",TotalObservedMachineCveFixes:"Observed machine/CVE fixes (confirmed + pending)",FixesAwaitingConfirmation:"Fixes awaiting confirmation (included in open)",OpenSLAWithinRate:"Open within SLA %",OpenMachineCveWithinSLA:"Open within SLA %",OpenWithinSLA:"Open within deadline",UnknownOpenSLA:"Open, unknown deadline",SLACompliance:"Confirmed on-time %",MachineCveSLACompliance:"Confirmed machine/CVE on-time %",FixedCVEs:"CVEs confirmed fixed on this machine",FixedMachines:"Machines with this CVE confirmed fixed",CompletedWithinSLA:"Completed within SLA",CompletedLate:"Completed late",CompletedUnknownSLA:"Completed, unknown SLA",OverdueOutcomes:"Overdue machine/CVE outcomes",ExecutiveStatus:"Executive SLA status",OpenCVEs:"CVEs remaining",CVEsOpen:"Open CVEs",CVEsImproved:"CVEs improved",CVEsFullyResolved:"CVEs fully resolved",MachinesOpen:"Machines with open risk",MachinesImproved:"Machines improved",MachinesFullyResolved:"Machines fully resolved",RecommendationsOpen:"Open recommendations",SlaStatus:"SLA risk status",PendingEvidence:"Awaiting verification",OSPlatform:"OS Type",OSVersion:"OS Version",OSMetadataSource:"OS metadata source",OpenFindings:"Active exposure instances",PendingFindings:"Pending exposure instances",EvidenceRecommendations:"Related recommendations",DetectedMachines:"Machines with detections",DetectedCVEs:"Distinct active CVEs",PendingCVEs:"CVEs with pending evidence",EvidenceRows:"Evidence rows",WorkAction:"Working here?",RemediationStarted:"Defender remediation started",TrackingStatus:"Dashboard work status",TrackingUpdatedBy:"Updated by",TrackingUpdatedUtc:"Updated UTC",SeverityScore:"Defender severity score",FixedWithinSLA:"Remediation observed within SLA",FixedOutsideSLA:"Remediation observed outside SLA",PendingVerification:"Pending verification",OpenOutsideSLA:"Detected findings overdue"};return labels[column]||column.replace(/([A-Z])/g," $1").trim().replace(/\bS L A\b/g,"SLA").replace(/\bC V E\b/g,"CVE").replace(/\bU T C\b/g,"UTC").replace(/\bI D\b/g,"ID");}
 /** Render compact work status beneath a recommendation name. */
 function recommendationWorkStatus(row){if(!state.recommendationTrackingEnabled||!Object.hasOwn(row,"TrackingStatus"))return"";const status=row.TrackingStatus||"Untracked",details=[row.TrackingUpdatedBy&&row.TrackingUpdatedBy!=="—"?row.TrackingUpdatedBy:"",row.TrackingUpdatedUtc&&row.TrackingUpdatedUtc!=="—"?row.TrackingUpdatedUtc:""].filter(Boolean).join(" · ");return`<span class="recommendation-work-status"><span class="tracking-status ${esc(status)}">${esc(recommendationTrackingLabel(status))}</span>${details?`<small>${esc(details)}</small>`:""}</span>`;}
 /** Table for the dashboard. */
@@ -1022,7 +1057,8 @@ function dashboardPhasePlanMarkup(progress,expanded=false){
 function showDashboardVisualProgress(title,message,phase,progress=null){
   const expanded=$("loadingNotice").querySelector("[data-index-plan]")?.open;
   const phasesExpanded=$("loadingNotice").querySelector("[data-phase-plan]")?.open;
-  $("loadingNotice").innerHTML=`<span class="loading-spinner" aria-hidden="true"></span><div class="loading-notice-content"><strong>${esc(title)}</strong>${message?`<span>${esc(message)}</span>`:""}${dashboardPhasePlanMarkup(progress,phasesExpanded)}<div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="${esc(phase)}"><span class="report-progress-indicator"></span></div><div class="report-progress-meta"><span id="reportProgressPhase">${esc(phase)}</span><span id="reportProgressElapsed" aria-live="off"></span></div>${dashboardIndexPlanMarkup(progress,expanded)}</div>`;
+  const detailsExpanded=$("loadingNotice").querySelector("[data-progress-details]")?.open;
+  $("loadingNotice").innerHTML=`<div class="loading-notice-content"><strong>${esc(title)}</strong><div class="report-progress-meta"><span id="reportProgressPhase">${esc(phase)}</span><span id="reportProgressElapsed" aria-live="off"></span></div><div class="report-progress-track" role="progressbar" aria-label="Report request in progress" aria-valuetext="${esc(phase)}"><span class="report-progress-indicator"></span></div><details class="scope-progress-details" data-progress-details${detailsExpanded?" open":""}><summary>Preparation details</summary>${message?`<span>${esc(message)}</span>`:""}${dashboardPhasePlanMarkup(progress,phasesExpanded)}${dashboardIndexPlanMarkup(progress,expanded)}</details></div>`;
   updateDashboardProgressElapsed();
 }
 
@@ -1106,20 +1142,30 @@ function dashboardStatus(message="",expired=false,retryable=true,informational=f
   $("retryDashboardQuery").hidden=!message||expired||!retryable;
 }
 
+function updateScopeLoading(view,busy){
+  dashboardQuery[view==="detail"?"detail":"main"].busy=busy;
+  const pending=Boolean(dashboardQuery.main.busy||dashboardQuery.detail.busy)&&!dashboardQuery.expired;
+  $("scopeBusyIndicator").hidden=!pending;
+  $("scopeProgress").setAttribute("aria-busy",String(pending));
+  $("scopeProgress").classList.toggle("is-loading",pending);
+}
+
 function dashboardBusy(view,busy){
+  const wasBusy=dashboardQuery.main.busy||dashboardQuery.detail.busy;
+  updateScopeLoading(view,busy);
   const root=$(view==="detail"?"pivotPanel":view);
   root?.setAttribute("aria-busy",String(busy));
-  root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.executive-sla-meter-wrap,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid,.server-pagination,.server-record").forEach(node=>node.classList.toggle("query-pending",busy));
-  if(view!=="detail"){
-    $("loadingNotice").hidden=!busy;
-    if(busy)startDashboardVisualProgress();
-    else hideDashboardLoadingNotice();
-  }
+  root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.executive-sla-meter-wrap,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid,.server-pagination,.server-record,.sla-dashboard-visuals").forEach(node=>node.classList.toggle("query-pending",busy));
+  if(busy){
+    if(view!=="detail")$("filterCount").textContent="Loading matching scope…";
+    $("loadingNotice").hidden=false;
+    if(!wasBusy||view!=="detail")startDashboardVisualProgress();
+  }else if(!dashboardQuery.main.busy&&!dashboardQuery.detail.busy)hideDashboardLoadingNotice();
 }
 
 function clearDashboardResults(view){
   const root=$(view);
-  root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid").forEach(node=>node.innerHTML="");
+  root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid,.sla-dashboard-visuals").forEach(node=>node.innerHTML="");
   root?.querySelectorAll(".server-pagination").forEach(node=>node.remove());
   if(view==="executiveSnapshot")$("executiveSlaMeterValue").style.width="0%";
   if(view==="overview")$("findingsPageStatus").textContent="Loading matching records…";
@@ -1135,6 +1181,9 @@ function expireDashboardSnapshot(){
   dashboardBusy(state.activeView,true);
   if(state.selectedEntity)dashboardBusy("detail",true);
   hideDashboardLoadingNotice();
+  updateScopeLoading(state.activeView,false);
+  updateScopeLoading("detail",false);
+  $("filterCount").textContent="New snapshot available — reload";
   dashboardStatus("New snapshot available. Reload to continue; results from different snapshots have not been combined.",true);
 }
 
@@ -1154,7 +1203,7 @@ async function dashboardResponse(response,isCurrent=()=>true){
 
 function dashboardPreparationText(status){
   const progress=status.progress||{},stage=String(progress.failure?.stage||progress.stage||"waiting-for-data");
-  const views={executive:"Summary",overview:"Vulnerabilities",recommendations:"Recommendations",priority:"Prioritize",workstations:"Endpoint assets",sla:"Remediate",trend:"Trends",executiveSnapshot:"Executive snapshot",detail:"Selected item",help:"Help"};
+  const views={executive:"Summary",overview:"Vulnerabilities",recommendations:"Recommendations",priority:"Prioritize",workstations:"Endpoint assets",sla:"Remediate",slaDashboard:"SLA",trend:"Trends",executiveSnapshot:"Executive snapshot",detail:"Selected item",help:"Help"};
   const phases={tracking:"recommendation workflow state",header:"activity and filter metadata","scope-counts":"finding counts","recommendation-matching":"recommendation matching","recommendation-impact":"recommendation impact totals","recommendation-ranking":"recommendation ranking","recommendation-details":"recommendation evidence","summary":"summary metrics and run comparison",sla:"SLA metrics","shared-clocks":"finding lifecycle dates (first seen, fixed, reopened and SLA due)","period-summaries":"current and previous reporting periods","daily-clocks":"daily finding and remediation trend","weekly-remediation":"weekly remediation totals","workload-and-charts":"workload breakdown and executive charts",report:"report calculations","detail-workloads":"affected workloads","detail-cves":"related CVEs","detail-recommendations":"related recommendations","detail-evidence":"finding evidence page"};
   let action=stage;
   if(stage.startsWith("load-rows:"))action=`Rebuilding ${stage.split(":")[1]} index`;
@@ -1188,6 +1237,7 @@ function dashboardPreparationText(status){
   else if(stage.startsWith("view:"))action=`Preparing ${views[stage.split(":")[1]]||stage.split(":")[1]} view`;
   else if(stage==="querying-index")action="Querying data indexes";
   else if(stage==="waiting-for-query-worker")action="Waiting for an available query worker";
+  if(stage==="query:slaDashboard:calendar-sla")action="Preparing SLA: calendar-period summaries";
   const stats=[];
   const phasePlan=progress.phasePlan;
   if(Array.isArray(phasePlan?.steps)&&Number.isInteger(phasePlan.currentStep)&&phasePlan.currentStep>0&&phasePlan.currentStep<=phasePlan.steps.length)stats.push(`Step ${phasePlan.currentStep} of ${phasePlan.steps.length}`);
@@ -1290,6 +1340,8 @@ async function startSnapshotDashboard(){
   }catch(error){
     if(sequence!==channel.sequence||error.name==="AbortError")return;
     hideDashboardLoadingNotice();
+    updateScopeLoading(state.activeView,false);
+    $("filterCount").textContent="Snapshot unavailable";
     $("freshnessText").textContent="Snapshot unavailable";
     dashboardStatus(error.message||"Dashboard snapshot could not be loaded.");
   }
@@ -1324,8 +1376,9 @@ function render(){
   renderScope([],[]);
   document.querySelectorAll(".latest-run-changes-toggle").forEach(input=>input.checked=state.latestRunChangesOnly);
   dashboardStatus();
-  if(searchChanged)dashboardQuery.searchTimer=setTimeout(()=>{void queryDashboardView();},250);
-  else void queryDashboardView();
+  const refresh=()=>{void queryDashboardView();if(state.selectedEntity)void queryDashboardView("detail");};
+  if(searchChanged)dashboardQuery.searchTimer=setTimeout(refresh,250);
+  else refresh();
 }
 
 function dashboardQueryAbort(){
@@ -1399,12 +1452,16 @@ async function queryDashboardView(view=state.activeView,tableId=null,page=0){
     dashboardStatus(notices.join(" · "),false,false);
   }catch(error){
     if(sequence!==channel.sequence||error.name==="AbortError"||dashboardQuery.expired)return;
+    updateScopeLoading(view,false);
     const message=error.message||"Dashboard query failed. Retry to load this scope.";
     if(detail){
       dashboardBusy(view,false);
       if(!tableId)$("pivotTitle").textContent="Unable to load selected item";
       $("pivotSummary").textContent=`${message} Close this panel and select the item again to retry.`;
-    }else hideDashboardLoadingNotice();
+    }else{
+      $("filterCount").textContent="Scope unavailable — retry";
+      if(!dashboardQuery.detail.busy)hideDashboardLoadingNotice();
+    }
     dashboardStatus(message);
   }
 }
@@ -1485,19 +1542,21 @@ function renderDashboardChart(id,chart){
       <article class="panel severity-summary" data-severity-entity="${key}">
         <div class="panel-title"><h3>${title} by severity</h3></div>
         <div class="severity-total-grid">${(chart.rows||[]).filter(row=>row.label!=="Unknown"||Number(row[key])>0).map(row=>`
-          <div class="severity-total severity-${esc(String(row.label).toLowerCase())}">
+          <button type="button" class="severity-total severity-${esc(String(row.label).toLowerCase())}" data-vulnerability-severity="${esc(row.label)}" aria-label="View ${esc(row.label)} vulnerabilities">
             <span>${esc(row.label)}</span><strong>${fmt(row[key])}</strong>
-          </div>`).join("")}</div>
+          </button>`).join("")}</div>
       </article>`).join("");
+    bindSeverityVulnerabilityLinks(id);
     return;
   }
   if(chart.kind==="sla-status"){
     if(chart.available===false){$(id).innerHTML='<p class="coverage-note">SLA status is unavailable before retained observations.</p>';return;}
-    const columns=[["openWithin","Open within deadline"],["openOverdue","Open overdue"],["completedWithin","Completed on time"],["completedLate","Completed late"],["unknownDeadline","Unknown deadline"]];
+    const columns=[["openWithin","Open within deadline"],["openOverdue","Open overdue"],["completedWithin","Completed on time"],["completedLate","Completed late"],["unknownDeadline","Unknown deadline"],["awaitingConfirmation","Awaiting confirmation (included in open)"]];
     $(id).innerHTML=`<div class="table-wrap"><table class="sla-status-table"><caption>Machine/CVE SLA outcomes by severity</caption>
-      <thead><tr><th scope="col">Severity</th>${columns.map(([,label])=>`<th scope="col">${esc(label)}</th>`).join("")}</tr></thead>
-      <tbody>${(chart.rows||[]).map(row=>`<tr><th scope="row">${esc(row.label)}</th>${columns.map(([key])=>`<td>${fmt(row[key])}</td>`).join("")}</tr>`).join("")}</tbody>
+      <thead><tr><th scope="col">Severity / policy target</th>${columns.map(([,label])=>`<th scope="col">${esc(label)}</th>`).join("")}<th scope="col">Open within SLA %</th><th scope="col">Confirmed on-time %</th></tr></thead>
+      <tbody>${(chart.rows||[]).map(row=>`<tr><th scope="row"><button type="button" class="cve-link" data-vulnerability-severity="${esc(row.label)}">${esc(row.label)}</button><small class="sla-policy-target">${esc(slaPolicyTarget(row.label))}</small></th>${columns.map(([key])=>`<td>${fmt(row[key])}</td>`).join("")}<td>${slaRate(row.openWithin,Number(row.openWithin)+Number(row.openOverdue))}</td><td>${slaRate(row.completedWithin,Number(row.completedWithin)+Number(row.completedLate))}</td></tr>`).join("")}</tbody>
       </table></div>`;
+    bindSeverityVulnerabilityLinks(id);
     return;
   }
   if(chart.kind==="sla-completion"){
@@ -1506,13 +1565,14 @@ function renderDashboardChart(id,chart){
       const assessable=assessed>0&&row.within!=null&&row.late!=null&&Number.isFinite(within)&&Number.isFinite(late);
       const outcome=assessable?`${within.toFixed(1)}% on time · ${fmt(row.completedWithin)} / ${fmt(assessed)} assessed completions`:"Waiting for data — confirmed completions with known deadlines are required";
       return`<div class="sla-completion-row">
-        <strong>${esc(row.label)}</strong><span>${esc(outcome)}</span>
+        <button type="button" class="cve-link" data-vulnerability-severity="${esc(row.label)}">${esc(row.label)}</button><span>${esc(outcome)}</span>
         <div class="sla-completion-track" role="img" aria-label="${esc(`${row.label}: ${outcome}`)}">
           ${assessable?`<i class="sla-completion-within" style="width:${Math.max(0,Math.min(100,within))}%"></i><i class="sla-completion-late" style="width:${Math.max(0,Math.min(100,late))}%"></i>`:""}
         </div>
         <small>${fmt(row.completedWithin)} on time · ${fmt(row.completedLate)} late · ${fmt(row.completedUnknown)} completed with unknown deadlines (excluded) · ${fmt(row.awaitingConfirmation)} fixes observed, awaiting confirmation (excluded)</small>
       </div>`;
     }).join("");
+    bindSeverityVulnerabilityLinks(id);
     return;
   }
   if(chart.kind==="meter"){
@@ -1561,7 +1621,135 @@ function bindDashboardCardActions(id,items){
   });
 }
 
+function slaRate(within,total){
+  return Number.isFinite(Number(within))&&Number.isFinite(total)&&total>0
+    ?`${(100*Number(within)/total).toFixed(1)}%`:"Waiting for data";
+}
+
+function slaPolicyTarget(severity){
+  const policies=(state.slaPolicy?.policies||[]).filter(policy=>policy.severity===severity);
+  return policies.length?policies.map(policy=>`${policy.knownExploitRequired?"Known exploit":"Standard"}: ${fmt(policy.slaDays)} days`).join(" · "):"Waiting for policy data";
+}
+
+function bindSeverityVulnerabilityLinks(id){
+  $(id).querySelectorAll("[data-vulnerability-severity]").forEach(button=>button.addEventListener("click",()=>openSeverityVulnerabilities(button.dataset.vulnerabilitySeverity)));
+}
+
+function openSeverityVulnerabilities(severity){
+  if(state.activeView==="executiveSnapshot"){
+    state.subscription=state.executiveSnapshotSubscription;
+    state.team=state.executiveSnapshotOwner;
+    $("subscriptionFilter").value=state.subscription;
+    $("teamFilter").value=state.team;
+  }
+  state.severity=severity;
+  $("severityFilter").value=severity;
+  findingsList.mode="cves";
+  findingsList.page=0;
+  clearSelectedWorkItem();
+  activateView("overview");
+}
+
+function slaDashboardPercent(value){
+  return typeof value==="number"&&Number.isFinite(value)?`${value.toFixed(1)}%`:"Waiting for data";
+}
+
+function slaCompletionAssessment(percent,confirmed){
+  if(!confirmed)return "No confirmed fixes to assess";
+  if(typeof percent!=="number"||!Number.isFinite(percent))return "No known completion deadlines to assess";
+  return `${slaDashboardPercent(percent)} of assessed confirmed fixes were on time`;
+}
+
+function slaDashboardStack(values,labels,classes,label){
+  const total=values.reduce((sum,value)=>sum+value,0);
+  return `<div class="sla-severity-track" role="img" aria-label="${esc(`${label}: ${labels.map((name,index)=>`${fmt(values[index])} ${name}`).join(", ")}`)}">
+    ${total?values.map((value,index)=>value?`<i class="${classes[index]}" style="width:${100*value/total}%"></i>`:"").join(""):""}
+  </div><div class="sla-chart-legend">${labels.map((name,index)=>`<span><i class="${classes[index]}"></i>${fmt(values[index])} ${esc(name)}</span>`).join("")}</div>`;
+}
+
+function slaCalendarComparison(title,current,previous){
+  const range=period=>`${period.start} - ${period.end}`;
+  const metric=(key,label,completions=false)=>{
+    const known=period=>period.coverage==="complete";
+    const change=known(current)&&known(previous)?current[key]-previous[key]:null;
+    return `<section class="sla-calendar-metric"><h4>${esc(label)}</h4>
+      ${[previous,current].map(period=>`<div class="sla-calendar-row" data-coverage="${esc(period.coverage)}">
+        <div><span>${esc(period.label)}</span><small>${esc(range(period))}</small><strong>${known(period)?`${fmt(period[key])} ${completions?"confirmed fixes":"unresolved"}`:"Waiting for data"}</strong></div>
+        ${known(period)?completions?`<p>${fmt(period.completedWithin)} on time · ${fmt(period.completedLate)} late · ${fmt(period.completedUnknown)} deadline unknown</p><p>${esc(slaCompletionAssessment(period.completionPercent,period.confirmedFixes))}</p>`:
+          slaDashboardStack([period.openWithin,period.openOverdue,period.unknownOpen],["not yet due","overdue","deadline unknown"],["sla-status-within","sla-status-overdue","sla-status-unknown"],`${period.label} unresolved outcomes`):
+          '<small class="sla-history-gap">Full-period history is unavailable.</small>'}
+      </div>`).join("")}
+      <p class="sla-period-change">${change==null?"Change: Waiting for data":`Change: ${change>0?"+":""}${fmt(change)} ${completions?"confirmed fixes":"unresolved outcomes"}`}</p>
+    </section>`;
+  };
+  return `<article class="panel sla-calendar-panel"><div class="panel-title"><h3>${esc(title)}</h3><span>Completed calendar periods · UTC</span></div>
+    ${metric("totalOpen","Unresolved backlog at period end")}
+    ${metric("confirmedFixes","Confirmed fixes during period",true)}
+  </article>`;
+}
+
+function renderSlaDashboard(report){
+  if(!report?.periods||report.periods.length!==5)throw new Error("The SLA dashboard response is incomplete. Retry after the Web App update is complete.");
+  const [current,week,previousWeek,month,previousMonth]=report.periods;
+  const currentRange=`${current.start} - ${current.end} UTC`,history=report.history;
+  $("slaDashboardContext").textContent=`Snapshot: ${formatUtc(report.asOfUtc)}. One CVE on one machine is one SLA outcome; software-version duplicates do not multiply counts.`;
+  const target=Number(state.slaPolicy?.complianceTargetPercent);
+  $("slaDashboardVisuals").innerHTML=`
+    <div class="sla-hero-grid">
+      <article class="panel sla-hero-card">
+        <div><h3>Open remediation backlog</h3><p>Current snapshot</p><strong class="sla-hero-count">${fmt(current.totalOpen)} unresolved</strong>
+          ${slaDashboardStack([current.openWithin,current.openOverdue,current.unknownOpen],["not yet due","overdue","deadline unknown"],["sla-status-within","sla-status-overdue","sla-status-unknown"],"Open remediation backlog")}
+          <p>Not yet due does not mean remediated. Pending fixes stay in open risk.</p></div>
+      </article>
+      <article class="panel sla-hero-card completed">
+        <div><h3>Confirmed remediation</h3><p>Month to date · ${esc(currentRange)}</p><strong class="sla-hero-count">${fmt(current.confirmedFixes)} confirmed fixes this month</strong>
+          <p>${fmt(current.completedWithin)} on time · ${fmt(current.completedLate)} late · ${fmt(current.completedUnknown)} deadline unknown</p>
+          <p>${esc(slaCompletionAssessment(current.completionPercent,current.confirmedFixes))}.</p>
+          <p>Unconfirmed fixes are not completed outcomes. Unknown deadlines are excluded from the on-time assessment.</p>
+          ${target>0&&target<=100?`<p>Configured completion target: ${esc(slaDashboardPercent(target))}.</p>`:""}</div>
+      </article>
+    </div>
+    <div class="sla-headline-grid">
+      ${[[current.totalOpen,"Open machine/CVE outcomes","Includes pending fixes and unknown deadlines"],
+         [current.openOverdue,"Open outcomes overdue","The recorded policy deadline has passed"],
+         [current.observedFixes,"Fixes observed this month","Confirmed plus awaiting confirmation"],
+         [current.awaitingConfirmation,"Awaiting confirmation this month","A subset of open risk, not an extra total"]].map(([value,label,help])=>`<article><strong>${fmt(value)}</strong><span>${label}</span><small>${help}</small></article>`).join("")}
+    </div>
+    <article class="panel sla-severity-panel"><div class="panel-title"><h3>Remediation backlog by severity</h3><span>Unresolved work and confirmed fixes are separate</span></div>
+      <div class="sla-severity-visuals">${current.severity.map(row=>`<section class="sla-severity-card severity-${esc(row.label.toLowerCase())}">
+        <div class="sla-severity-heading"><button type="button" class="cve-link" data-vulnerability-severity="${esc(row.label)}">${esc(row.label)}</button><strong>${fmt(row.openWithin+row.openOverdue+row.unknownOpen)} unresolved</strong></div>
+        <small>${esc(slaPolicyTarget(row.label))}</small>
+        ${slaDashboardStack([row.openWithin,row.openOverdue,row.unknownOpen],["not yet due","overdue","deadline unknown"],["sla-status-within","sla-status-overdue","sla-status-unknown"],`${row.label} unresolved outcomes`)}
+        <p>${fmt(row.assessed+row.completedUnknown)} confirmed fixes this month · ${fmt(row.completedWithin)} on time · ${fmt(row.assessed-row.completedWithin)} late · ${fmt(row.completedUnknown)} deadline unknown</p>
+        <p>${esc(slaCompletionAssessment(row.within,row.assessed+row.completedUnknown))}.</p>
+        <small>${fmt(row.awaitingConfirmation)} fixes observed this month awaiting confirmation; included in open risk.</small>
+      </section>`).join("")}</div>
+    </article>
+    <div class="sla-calendar-grid">
+      ${slaCalendarComparison("Week over week",week,previousWeek)}
+      ${slaCalendarComparison("Month over month",month,previousMonth)}
+    </div>
+    <aside class="sla-coverage-note">
+      <strong>History coverage</strong>
+      <p>${history?.startUtc?`Retained history begins ${esc(formatUtc(history.startUtc))}; ${fmt(history.snapshots)} recorded snapshots.`:"Retained run-history coverage is unavailable."}
+        ${current.coverage==="complete"?"The month-to-date period is covered.":"Month-to-date completion counts cover retained observations only, not a complete month."}
+        Calendar comparisons require coverage from the beginning of each full period; otherwise they show Waiting for data, not zero.</p>
+      <p>Weeks run Monday through Sunday in UTC. Months run from the first through the last day. The current partial week and month are not used in calendar comparisons. Earlier status is reconstructed from retained lifecycle timestamps.</p>
+      ${report.coverageGap?"<p>Some evidence has no machine or CVE identifier and cannot receive a machine/CVE SLA outcome.</p>":""}
+    </aside>
+    <details class="sla-dashboard-definitions"><summary>SLA policy and percentage definitions</summary>
+      <div class="sla-policy-chips">${["Critical","High","Medium","Low"].map(severity=>`<span><b>${severity}</b>${esc(slaPolicyTarget(severity))}</span>`).join("")}</div>
+      <p>The open remediation backlog includes all unresolved machine/CVE outcomes: not yet due, overdue, and deadline unknown. Not yet due describes the remaining remediation window, not a successful fix. Pending fixes remain unresolved until confirmed.</p>
+      <p>Confirmed on-time = confirmed on-time completions / (on-time + late completions). Unknown deadlines are excluded, never counted as success. No confirmed fixes shows No confirmed fixes to assess; confirmed fixes without known deadlines show No known completion deadlines to assess. Calendar changes are counts, not percentage points.</p>
+      <p>The SLA clock starts at the collector's first observation on the machine, not CVE publication or a task due date. Each machine/CVE uses its earliest applicable recorded deadline. Completion on or before that deadline is on time. Existing deadlines do not restart when policy changes.</p>
+      <p>A first qualified absence is an observed fix; a consecutive qualified collection confirms it. Confirmation is dated to the first qualified absence. Returned detections revoke unconfirmed fixes. Offline or stale devices do not qualify.</p>
+      <p>The shared workspace filters apply. As with other SLA summaries, exposure-state, activity-window, and changed-since-last-run toggles do not hide unresolved risk from the SLA assessment.</p>
+    </details>`;
+  bindSeverityVulnerabilityLinks("slaDashboardVisuals");
+}
+
 function renderDashboardResponse(payload,view,tableId){
+  if(view==="slaDashboard")renderSlaDashboard(payload.metadata?.slaDashboard);
   ensureManagementReport(view);
   renderManagementSla(view,payload.metadata?.management?.sla);
   if(view==="trend")$("lifecycleOsBreakdown").hidden=state.reportingBreakdown==="All";
@@ -1579,7 +1767,10 @@ function renderDashboardResponse(payload,view,tableId){
     }
     const scope=payload.scope||{};
     const management=payload.metadata?.management?.periods?.[0];
-    $("filterCount").textContent=management
+    const slaCurrent=payload.metadata?.slaDashboard?.periods?.[0];
+    $("filterCount").textContent=slaCurrent
+      ?`${fmt(slaCurrent.totalOpen)} open machine/CVE outcomes · ${fmt(slaCurrent.openOverdue)} overdue · ${fmt(slaCurrent.unknownOpen)} unknown deadlines`
+      :management
       ?`${fmt(management.machines.Open)} machines with open risk · ${fmt(management.cves.Open)} unique open CVEs · ${fmt(management.recommendations.Open)} open recommendations`
       :`${fmt(scope.detectedCves)} detected CVEs · ${fmt(scope.pendingCves)} CVEs awaiting verification · ${fmt(scope.recommendations)} recommendations`;
     // Scope text/chips use only the serialized filters, not the unloaded findings.
@@ -1611,10 +1802,15 @@ function ensureManagementReport(view){
   const prefix=view+"Management";
   const slaSnapshot=`
     <article class="panel management-sla-snapshot" aria-label="Quick SLA status by severity">
-      <div class="panel-title"><h3>Current SLA status by severity</h3><span>Counts, not completion percentages</span></div>
+      <div class="panel-title"><h3>Current SLA status by severity</h3><span>Open-risk and confirmed-completion rates are separate</span></div>
       <div id="${prefix}SlaSnapshot"></div>
+      <p id="${prefix}PolicyRules" class="coverage-note"></p>
       <p class="coverage-note">One CVE on one machine is one SLA outcome; software/version duplicates do not multiply counts.
         Open status is assessed at the pinned snapshot; completions are in the stated reporting period.
+        Open within SLA % = open outcomes within deadline / (open within deadline + overdue).
+        Awaiting-confirmation fixes stay in those open totals; their count is a subset, not an extra total.
+        Confirmed on-time % = confirmed on-time completions / (on-time + late completions).
+        Unknown deadlines are excluded from both rates, never counted as success. No assessable outcomes means Waiting for data.
         Pending verification remains open. Unknown deadline includes open and completed outcomes without a conclusive deadline assessment.
         Known overdue or late outcomes take precedence over missing evidence. Detailed SLA analysis is available in Executive Snapshot and Reporting.</p>
     </article>`;
@@ -1624,7 +1820,9 @@ function ensureManagementReport(view){
       <p id="${prefix}Context" class="coverage-note"></p>
       <div id="${prefix}Cards" class="metric-grid"></div>
       <div id="${prefix}FixActivity" class="metric-grid"></div>
-      <p class="coverage-note">Day-over-day fixes appear at the first qualified absence as <strong>Fix observed — awaiting confirmation</strong>.
+      <p class="coverage-note"><strong>Total observed fixes = confirmed fixes + fixes awaiting confirmation.</strong>
+        This progress total is not an additional count to add to its two parts, and is not the number of fully resolved machines or CVEs.
+        Day-over-day fixes appear at the first qualified absence as <strong>Fix observed — awaiting confirmation</strong>.
         Another consecutive qualified collection confirms the fix; a returned detection revokes it.
         Offline devices or disappearance of the entire device vulnerability feed do not qualify.
         Provisional fixes remain in open risk and are excluded from completed SLA outcomes.
@@ -1673,6 +1871,8 @@ function ensureManagementReport(view){
 
 function renderManagementSla(view,sla){
   const prefix=view+"Management",root=$(prefix+"SlaStatus");
+  const rules=$(prefix+"PolicyRules");
+  if(rules)rules.textContent=`${["Critical","High","Medium","Low"].map(severity=>`${severity} — ${slaPolicyTarget(severity)}`).join(" · ")}. The SLA clock starts at the collector's first observation on the machine, not the CVE publication date or a task due date. Open risk is within SLA through its recorded deadline; it is overdue after that deadline. Confirmed completion on or before the deadline is on time. Recorded deadlines take precedence; policy changes do not restart existing clocks.`;
   if(!root||!sla)return;
   const current=sla.periods?.[0];
   if(!current)return;
@@ -1682,7 +1882,12 @@ function renderManagementSla(view,sla){
     ?"Waiting for data — confirmed completions with known deadlines are required"
     :`${Number(current.CompliancePercent).toFixed(1)}% on-time rate among assessed machine/CVE completions`;
   const counts=outcomes?`${fmt(outcomes.WithinSLA)} / ${fmt(assessed)} assessed completions were on time · ${fmt(outcomes.LateSLA)} late · ${fmt(outcomes.UnknownSLA)} completed with unknown deadlines (excluded) · ${fmt(outcomes.AwaitingConfirmation)} fixes observed, awaiting confirmation (excluded).`:"Completed-outcome counts unavailable for this response.";
-  root.innerHTML=`<strong>${esc(compliance)}</strong>
+  const openWithin=(current.severity||[]).reduce((sum,row)=>sum+Number(row.openWithin||0),0);
+  const openOverdue=(current.severity||[]).reduce((sum,row)=>sum+Number(row.openOverdue||0),0);
+  const openUnknown=(current.severity||[]).reduce((sum,row)=>sum+Number(row.unknownOpen||0),0);
+  root.innerHTML=`<strong>Open outcomes within SLA: ${slaRate(openWithin,openWithin+openOverdue)}</strong>
+    <span>${fmt(openWithin)} within deadline · ${fmt(openOverdue)} overdue · ${fmt(openUnknown)} open with unknown deadlines (excluded). Pending fixes remain in open risk.</span>
+    <strong>${esc(compliance)}</strong>
     <span>${esc(counts)}</span>
     <span>This is not overall remediation progress. Open-risk machine and CVE totals above are excluded from this completion percentage.</span>
     <span>Confirmation requires consecutive qualified collections while the device is active and fresh.

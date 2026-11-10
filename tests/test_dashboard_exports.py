@@ -572,7 +572,7 @@ def test_dashboard_has_independent_exportable_executive_snapshot():
     assert "strong.High" in stylesheet
     assert "strong.Medium" in stylesheet
     assert "strong.Low" in stylesheet
-    assert 'order: ["executive", "recommendations", "overview", "workstations", "sla", "trend", "executiveSnapshot", "help"]' in configuration
+    assert 'order: ["executive", "recommendations", "overview", "workstations", "slaDashboard", "sla", "trend", "executiveSnapshot", "help"]' in configuration
     assert "body.executive-snapshot-print .story:not(#executiveSnapshot)" in stylesheet
     assert "@media print" in stylesheet
 
@@ -949,7 +949,7 @@ def test_dashboard_connects_executive_workload_sla_and_recommendation_impact():
     assert "RECOMMENDATION INVENTORY" not in html
     assert "<h2>Recommendations</h2>" in html
     assert 'selectEntity("recommendation",id,true)' in javascript
-    assert 'order: ["executive", "recommendations", "overview", "workstations", "sla", "trend", "executiveSnapshot", "help"]' in configuration
+    assert 'order: ["executive", "recommendations", "overview", "workstations", "slaDashboard", "sla", "trend", "executiveSnapshot", "help"]' in configuration
 
 
 def test_dashboard_executive_summary_uses_readable_visual_hierarchy():

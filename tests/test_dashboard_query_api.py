@@ -114,6 +114,16 @@ def app(monkeypatch, tmp_path):
     application.state.dashboard_snapshots.close()
 
 
+def test_dedicated_sla_view_is_accepted_by_the_query_api(app):
+    snapshot = select_snapshot(app)
+    status, _, body = request(app, "/api/dashboard/query", method="POST", payload={
+        "snapshotId": snapshot["snapshotId"], "view": "slaDashboard",
+    })
+    assert status == 200
+    assert json.loads(body)["snapshotId"] == snapshot["snapshotId"]
+    assert Engine.calls[-1]["view"] == "slaDashboard"
+
+
 def test_cached_results_bypass_occupied_workers(app, monkeypatch):
     release = Event()
     jobs = app.state.dashboard_query_jobs

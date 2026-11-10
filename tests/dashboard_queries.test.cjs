@@ -30,7 +30,12 @@ function fixture({snapshotStatus=200, notices=[], now=null, preparation=null, tr
       dispatch(event,value){for(const handler of this.listeners[event]||[])handler({target:{value,checked:value},preventDefault(){},stopPropagation(){}});},
       setAttribute(key,value){this[key]=value;},removeAttribute(key){delete this[key];},
       querySelectorAll(selector){
-        if(selector.includes("table,"))return nodes.filter(item=>item.id.endsWith("Table")||item.id.endsWith("Cards"));
+        if(selector==="[data-vulnerability-severity]"||selector==="[data-remove-filter]"){
+          const attribute=selector.slice(1,-1),key=attribute.slice(5).replace(/-([a-z])/g,(_,letter)=>letter.toUpperCase());
+          this.filterButtons=[...this.innerHTML.matchAll(new RegExp(`${attribute}="([^"]+)"`,"g"))].map(([,value])=>{const button=node();button.dataset[key]=value;return button;});
+          return this.filterButtons;
+        }
+        if(selector.includes("table,"))return nodes.filter(item=>item.id.endsWith("Table")||item.id.endsWith("Cards")||item.id==="slaDashboardVisuals");
         if(selector==="tbody tr"){
           this.tableRows=[...this.innerHTML.matchAll(/<tr data-index="(\d+)"/g)].map(([,index])=>{const row=node();row.rowIndex=Number(index);return row;});
           return this.tableRows;
@@ -60,7 +65,7 @@ function fixture({snapshotStatus=200, notices=[], now=null, preparation=null, tr
     return value;
   }
   for(const [,id] of html.matchAll(/\bid="([^"]+)"/g))node(id);
-  const views = ["executive","overview","workstations","recommendations","sla","trend","executiveSnapshot","help"];
+  const views = ["executive","overview","workstations","recommendations","slaDashboard","sla","trend","executiveSnapshot","help"];
   const navigation = views.map(view=>{const button=node();button.dataset.view=view;button.textContent=view;if(view==="executive")button.classList.add("active");return button;});
   const pageButtons = ["first","previous","next","last"].map(action=>{const button=node();button.dataset.findingsPage=action;return button;});
   const activityButtons = attribute => [...html.matchAll(/<button [^>]+>/g)].map(([tag])=>{
@@ -201,7 +206,8 @@ test("startup polls index preparation without rendering partial findings",async(
   assert.equal(app.query().length,0);
   assert.match(app.elements.get("loadingNotice").innerHTML,/Rebuilding findings index/);
   assert.match(app.elements.get("loadingNotice").innerHTML,/204,000 \/ 1,837,575 rows/);
-  assert.match(app.elements.get("loadingNotice").innerHTML,/<strong>Preparing dashboard data indexes<\/strong><span>May follow a server restart, first load, or new snapshot\.<\/span>/);
+  assert.match(app.elements.get("loadingNotice").innerHTML,/<strong>Preparing dashboard data indexes<\/strong>/);
+  assert.match(app.elements.get("loadingNotice").innerHTML,/<span>May follow a server restart, first load, or new snapshot\.<\/span>/);
   assert.doesNotMatch(app.elements.get("loadingNotice").innerHTML,/Complete results will appear|Partial findings are not shown|Completion percentage|remaining time are not reported/);
   app.setSnapshotReady();
   app.flushTimers();await tick();
@@ -461,6 +467,66 @@ test("changing report views resets visual progress without retaining a cancelled
   assert.equal(app.run("dashboardVisualProgress.timer"),null);
 });
 
+test("scope ring stays active after the yellow overlay closes until the result arrives",async()=>{
+  const app=fixture();await tick();
+  const indicator=app.elements.get("scopeBusyIndicator"),scope=app.elements.get("scopeProgress");
+  assert.equal(indicator.hidden,false);
+  assert.equal(scope["aria-busy"],"true");
+  assert.equal(scope.classList.contains("is-loading"),true);
+  assert.match(app.elements.get("filterCount").textContent,/Loading matching scope/);
+  app.run("hideDashboardLoadingNotice()");
+  assert.equal(app.elements.get("loadingNotice").hidden,true);
+  assert.equal(indicator.hidden,false);
+  app.query()[0].resolve(app.payload());await tick();
+  assert.equal(indicator.hidden,true);
+  assert.equal(scope["aria-busy"],"false");
+  assert.equal(scope.classList.contains("is-loading"),false);
+  const heading=html.slice(html.indexOf('id="scopeProgress"'),html.indexOf('class="quick-filters"'));
+  assert.match(heading,/id="loadingNotice"/);
+  assert.match(heading,/id="scopeBusyIndicator"/);
+});
+
+test("the scope ring waits for both the main view and the selected item",async()=>{
+  const app=fixture();await tick();
+  app.run('pivotToMachine({DeviceId:"machine-x"})');await tick();
+  const detail=app.query().at(-1);
+  app.query()[0].resolve(app.payload());await tick();
+  assert.equal(app.elements.get("scopeBusyIndicator").hidden,false);
+  assert.equal(app.elements.get("loadingNotice").hidden,false);
+  detail.resolve(app.payload({detail:{record:{DeviceId:"machine-x"}}}));await tick();
+  assert.equal(app.elements.get("scopeBusyIndicator").hidden,true);
+  assert.equal(app.elements.get("loadingNotice").hidden,true);
+});
+
+test("closing a loading item cancels its query and stops the scope ring",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('pivotToMachine({DeviceId:"machine-x"})');await tick();
+  const detail=app.query().at(-1);
+  assert.equal(app.elements.get("scopeBusyIndicator").hidden,false);
+  app.elements.get("clearPivot").click();await tick();
+  assert.equal(detail.options.signal.aborted,true);
+  assert.equal(app.elements.get("scopeBusyIndicator").hidden,true);
+  assert.equal(app.elements.get("loadingNotice").hidden,true);
+});
+
+test("failed scope requests stop the animation but keep stale results hidden and errors visible",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve({detail:"Scope preparation failed"},500);await tick();
+  assert.equal(app.elements.get("scopeBusyIndicator").hidden,true);
+  assert.equal(app.elements.get("loadingNotice").hidden,true);
+  assert.equal(app.elements.get("executive")["aria-busy"],"true");
+  assert.equal(app.elements.get("dashboardQueryStatus").hidden,false);
+  assert.match(app.elements.get("dashboardQueryMessage").textContent,/Scope preparation failed/);
+});
+
+test("snapshot startup failures do not leave a processing animation running",async()=>{
+  const app=fixture({snapshotStatus:500});await tick();
+  assert.equal(app.elements.get("scopeBusyIndicator").hidden,true);
+  assert.equal(app.elements.get("scopeProgress")["aria-busy"],"false");
+  assert.equal(app.elements.get("dashboardQueryStatus").hidden,false);
+});
+
 test("shared activity tiles put full-width labels before their counts",()=>{
   const tiles=[...html.matchAll(/<button\b[^>]*data-(?:new|fixed)-view=[^>]*>(.*?)<\/button>/g)];
   assert.equal(tiles.length,8);
@@ -504,6 +570,18 @@ test("summary decision tiles put titles above million-record values",async()=>{
   const app=fixture();await tick();
   app.run('renderDecisionMetrics("executiveWorkload",[{value:1836170,label:"Detected findings",detail:"Current detections",target:"overview"}])');
   assert.match(app.elements.get("executiveWorkload").innerHTML,/<span class="metric-help">Active exposure instances<\/span><strong>1,836,170<\/strong>/);
+});
+
+test("recommendation activity explains that one finding on one machine is enough to count progress",()=>{
+  const tile=html.match(/<button\b[^>]*aria-describedby="fixedRecommendationHelp"[^>]*>(.*?)<\/button>/)?.[1];
+  assert.ok(tile);
+  assert.match(tile,/<span>recommendations with observed progress<\/span>/);
+  assert.match(tile,/recommendation counts once when at least one linked finding stopped appearing/);
+  assert.match(tile,/one vulnerability in one software version on one machine/);
+  assert.match(tile,/one finding disappearing on one machine is enough/);
+  assert.match(tile,/awaiting confirmation/);
+  assert.match(tile,/same vulnerability may remain in other software on that machine or on other machines/);
+  assert.match(tile,/does not mean the recommendation is finished/);
 });
 
 test("finding count help explains instances, CVEs, fixes and filtered snapshot scope",async()=>{
@@ -1057,7 +1135,10 @@ test("Summary contains machine and CVE severity totals plus only a compact SLA s
   const status=app.elements.get("executiveManagementSlaSnapshot").innerHTML;
   for(const label of ["Open within deadline","Open overdue","Completed on time","Completed late","Unknown deadline"])assert.match(status,new RegExp(label));
   assert.match(status,/<td>10<\/td><td>2<\/td><td>3<\/td><td>1<\/td><td>4<\/td>/);
-  assert.ok(!status.includes("%"));
+  assert.match(status,/Open within SLA %/);
+  assert.match(status,/Confirmed on-time %/);
+  assert.match(status,/83.3%/);
+  assert.match(status,/75.0%/);
   assert.ok(!app.query()[0].payload.filters.includeFindingEvidence);
 });
 
@@ -1070,6 +1151,80 @@ test("Executive Snapshot retains detailed completion analysis and period compari
   assert.match(graph,/1 \/ 2 assessed completions/);
   assert.match(graph,/Waiting for data/);
   assert.match(graph,/1 completed with unknown deadlines \(excluded\)/);
+});
+
+test("SLA displays show open-risk and confirmed rates, policy parameters, and pending subsets",async()=>{
+  const app=fixture();await tick();
+  app.run(`state.slaPolicy={policies:[{severity:"Critical",slaDays:2},{severity:"Critical",slaDays:4,knownExploitRequired:true},{severity:"High",slaDays:7}]};
+    ensureManagementReport("executiveSnapshot");
+    renderManagementSla("executiveSnapshot",{periods:[{CompliancePercent:75,outcomes:{WithinSLA:3,LateSLA:1,AwaitingConfirmation:2,UnknownSLA:1},severity:[{openWithin:3,openOverdue:2,unknownOpen:1}]}]});
+    renderDashboardChart("executiveSnapshotManagementSlaSnapshot",{kind:"sla-status",rows:[{label:"Critical",openWithin:3,openOverdue:2,completedWithin:3,completedLate:1,awaitingConfirmation:2,unknownDeadline:2}]});`);
+  const status=app.elements.get("executiveSnapshotManagementSlaStatus").innerHTML;
+  assert.match(status,/Open outcomes within SLA: 60.0%/);
+  assert.match(status,/75.0% on-time rate/);
+  const table=app.elements.get("executiveSnapshotManagementSlaSnapshot").innerHTML;
+  assert.match(table,/Standard: 2 days/);
+  assert.match(table,/Known exploit: 4 days/);
+  assert.match(table,/Awaiting confirmation \(included in open\)/);
+  assert.match(table,/60.0%/);
+  assert.match(table,/75.0%/);
+  assert.match(app.elements.get("executiveSnapshotManagementPolicyRules").textContent,/first observation on the machine/);
+  assert.match(app.elements.get("executiveSnapshotManagementPolicyRules").textContent,/on or before the deadline/);
+  assert.equal(app.run('slaRate(0,0)'),"Waiting for data");
+  assert.equal(app.run('slaPolicyTarget("Unknown")'),"Waiting for policy data");
+});
+
+test("Reporting severity links open distinct vulnerabilities and preserve workspace filters",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('activateView("trend");state.osType="Linux";state.search="openssl";state.subscription="sub-a";state.team="Ops";ensureManagementReport("trend");renderDashboardChart("trendManagementSeverity",{kind:"entity-severity",rows:[{label:"Critical",machines:1,cves:2}]});');
+  app.elements.get("trendManagementSeverity").filterButtons[0].click();await tick();
+  app.flushTimers();await tick();
+  const request=app.query().at(-1).payload;
+  assert.equal(request.view,"overview");
+  assert.equal(request.mode,"cves");
+  assert.equal(request.filters.severity,"Critical");
+  assert.equal(request.filters.osType,"Linux");
+  assert.equal(request.filters.search,"openssl");
+  assert.equal(request.filters.subscription,"sub-a");
+  assert.equal(request.filters.team,"Ops");
+});
+
+test("Executive severity links carry the report subscription and owner to vulnerabilities",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('activateView("executiveSnapshot");state.executiveSnapshotSubscription="report-sub";state.executiveSnapshotOwner="Report team";openSeverityVulnerabilities("High");');
+  const request=app.query().at(-1).payload;
+  assert.equal(request.filters.subscription,"report-sub");
+  assert.equal(request.filters.team,"Report team");
+  assert.equal(request.filters.severity,"High");
+});
+
+test("persistent quick filters and removable chips refresh the selected item without closing it",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  const quick=html.slice(html.indexOf('class="quick-filters"'),html.indexOf('id="activeFilterChips"'));
+  assert.match(quick,/id="searchFilter"/);
+  assert.match(quick,/id="severityFilter"/);
+  assert.equal((html.match(/id="severityFilter"/g)||[]).length,1);
+  assert.equal((html.match(/id="searchFilter"/g)||[]).length,1);
+  app.run('state.selectedEntity={type:"machine",id:"machine-x"};state.pivotSourceLabel="executiveSnapshot";state.osType="Linux";');
+  app.elements.get("severityFilter").dispatch("change","Critical");await tick();
+  assert.equal(app.run("state.selectedEntity.id"),"machine-x");
+  assert.equal(app.query().at(-1).payload.view,"detail");
+  assert.equal(app.query().at(-1).payload.filters.severity,"Critical");
+  assert.equal(app.query().at(-1).payload.filters.managementSourceView,"executiveSnapshot");
+  assert.match(app.elements.get("activeFilterChips").innerHTML,/Remove Severity filter: Critical/);
+  const chip=app.elements.get("activeFilterChips").filterButtons.find(button=>button.dataset.removeFilter==="Severity");
+  chip.click();await tick();
+  assert.equal(app.run("state.severity"),"All");
+  assert.equal(app.run("state.osType"),"Linux");
+  assert.equal(app.run("state.selectedEntity.id"),"machine-x");
+  assert.equal(app.elements.get("severityFilter").value,"All");
+  app.run('removeWorkspaceFilter("Type");removeWorkspaceFilter("Domains");');
+  assert.equal(app.run("state.recommendationTypes.size"),2);
+  assert.equal(app.run("state.domains.size"),5);
+  assert.doesNotMatch(app.elements.get("activeFilterChips").innerHTML,/data-remove-filter="(?:Type|Domains)"/);
 });
 
 test("SLA no-outcome states remain ungraded and coverage gaps stay explicit without colors",async()=>{
@@ -1310,4 +1465,153 @@ test("a snapshot conflict during preparation stops polling and retains the expli
   assert.match(app.elements.get("dashboardQueryMessage").textContent,/New snapshot available/);
   app.flushTimers();await tick();
   assert.equal(app.query().length,2);
+});
+
+function slaDashboardReport(){
+  const period=(label,start,end)=>({
+    label,start,end,coverage:"complete",severity:[],
+    openWithin:1,openOverdue:1,unknownOpen:1,totalOpen:3,openWithinPercent:50,
+    completedWithin:0,completedLate:0,completedUnknown:0,completionPercent:null,
+    confirmedFixes:0,awaitingConfirmation:1,observedFixes:1,
+  });
+  const periods=[
+    period("Month to date","2026-10-01","2026-10-24"),
+    period("Last completed week","2026-10-12","2026-10-18"),
+    period("Previous completed week","2026-10-05","2026-10-11"),
+    period("Last completed month","2026-09-01","2026-09-30"),
+    period("Previous completed month","2026-08-01","2026-08-31"),
+  ];
+  periods[0].severity=[{label:"Critical",openWithin:1,openOverdue:1,unknownOpen:1,within:null,completedWithin:0,completedUnknown:0,assessed:0,awaitingConfirmation:1}];
+  return {asOfUtc:"2026-10-24T12:00:00Z",history:{startUtc:"2026-08-01T00:00:00Z",snapshots:85},periods,coverageGap:false};
+}
+
+test("dedicated graphical SLA navigation leaves the Remediate work lists separate",async()=>{
+  const app=fixture();await tick();
+  app.run('state.slaPolicy={policies:[{severity:"Critical",knownExploitRequired:false,slaDays:2},{severity:"Critical",knownExploitRequired:true,slaDays:4}]}');
+  app.run('activateView("slaDashboard")');await tick();
+  assert.equal(app.query().at(-1).payload.view,"slaDashboard");
+  app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();
+  const markup=app.elements.get("slaDashboardVisuals").innerHTML;
+  assert.match(markup,/Open remediation backlog/);
+  assert.match(markup,/3 unresolved/);
+  assert.match(markup,/1 not yet due/);
+  assert.match(markup,/1 overdue/);
+  assert.match(markup,/1 deadline unknown/);
+  assert.match(markup,/0 confirmed fixes this month/);
+  assert.match(markup,/No confirmed fixes to assess/);
+  assert.doesNotMatch(markup,/50\.0%|sla-rate-ring|NaN|undefined/);
+  assert.match(markup,/Awaiting confirmation this month/);
+  assert.match(markup,/Pending fixes stay in open risk/);
+  assert.match(markup,/Standard: 2 days · Known exploit: 4 days/);
+  assert.doesNotMatch(markup,/<table/);
+  assert.match(app.elements.get("filterCount").textContent,/3 open machine\/CVE outcomes/);
+  const critical=app.elements.get("slaDashboardVisuals").filterButtons[0];
+  critical.click();await tick();
+  assert.equal(app.query().at(-1).payload.view,"overview");
+  assert.equal(app.query().at(-1).payload.filters.severity,"Critical");
+  app.run('activateView("sla")');await tick();
+  assert.equal(app.query().at(-1).payload.view,"sla");
+});
+
+test("SLA calendar graphics compare backlog and confirmed-fix counts in completed periods",async()=>{
+  const app=fixture();await tick();
+  const report=slaDashboardReport();
+  report.periods[1].totalOpen=13;
+  report.periods[1].openWithin=11;
+  report.periods[3].confirmedFixes=3;
+  report.periods[3].completedWithin=3;
+  report.periods[3].completionPercent=100;
+  report.periods[4].confirmedFixes=6;
+  report.periods[4].completedWithin=6;
+  report.periods[4].completionPercent=100;
+  app.context.slaReport=report;
+  app.run("renderSlaDashboard(slaReport)");
+  const markup=app.elements.get("slaDashboardVisuals").innerHTML;
+  assert.match(markup,/Week over week/);
+  assert.match(markup,/Month over month/);
+  assert.match(markup,/2026-10-12 - 2026-10-18/);
+  assert.match(markup,/2026-09-01 - 2026-09-30/);
+  assert.match(markup,/Change: \+10 unresolved outcomes/);
+  assert.match(markup,/Change: -3 confirmed fixes/);
+  assert.match(markup,/100\.0% of assessed confirmed fixes were on time/);
+  assert.doesNotMatch(markup,/sla-rate-ring|NaN|undefined/);
+  assert.match(markup,/Monday through Sunday in UTC/);
+});
+
+test("partial SLA history withholds rates and changes instead of fabricating success",async()=>{
+  const app=fixture();await tick();
+  const report=slaDashboardReport();
+  report.periods[0].coverage="partial";
+  report.periods[2].coverage="partial";
+  report.periods[2].openWithinPercent=99;
+  report.periods[3].coverage="unavailable";
+  app.context.slaReport=report;
+  app.run("renderSlaDashboard(slaReport)");
+  const markup=app.elements.get("slaDashboardVisuals").innerHTML;
+  assert.match(markup,/Full-period history is unavailable/);
+  assert.match(markup,/Change: Waiting for data/);
+  assert.match(markup,/Month-to-date completion counts cover retained observations only/);
+  assert.doesNotMatch(markup,/99\.0%|Change: -49/);
+});
+
+test("zero SLA rates remain zero and absent assessments remain unavailable",async()=>{
+  const app=fixture();await tick();
+  const report=slaDashboardReport();
+  report.periods[0].openWithinPercent=0;
+  report.periods[0].openWithin=0;
+  report.periods[0].openOverdue=2;
+  report.periods[0].completionPercent=0;
+  report.periods[0].completedLate=1;
+  report.periods[0].confirmedFixes=1;
+  app.context.slaReport=report;
+  app.run("renderSlaDashboard(slaReport)");
+  const markup=app.elements.get("slaDashboardVisuals").innerHTML;
+  assert.match(markup,/0\.0% of assessed confirmed fixes were on time/);
+  assert.match(markup,/2 overdue/);
+  assert.doesNotMatch(markup,/sla-rate-ring/);
+  assert.doesNotMatch(markup,/100\.0%/);
+  assert.equal(app.run("slaDashboardPercent(null)"),"Waiting for data");
+});
+
+test("all unresolved work not yet due never looks like completed remediation",async()=>{
+  const app=fixture();await tick();
+  const report=slaDashboardReport();
+  for(const period of report.periods){
+    Object.assign(period,{openWithin:12,openOverdue:0,unknownOpen:0,totalOpen:12,openWithinPercent:100,awaitingConfirmation:0,observedFixes:0});
+  }
+  Object.assign(report.periods[0].severity[0],{openWithin:12,openOverdue:0,unknownOpen:0,awaitingConfirmation:0});
+  app.context.slaReport=report;
+  app.run("renderSlaDashboard(slaReport)");
+  const markup=app.elements.get("slaDashboardVisuals").innerHTML;
+  assert.match(markup,/12 unresolved/);
+  assert.match(markup,/12 not yet due/);
+  assert.match(markup,/0 confirmed fixes this month/);
+  assert.match(markup,/Not yet due does not mean remediated/);
+  assert.match(markup,/No confirmed fixes to assess/);
+  assert.doesNotMatch(markup,/sla-rate-ring|NaN|undefined/);
+  assert.doesNotMatch(markup.replace(/<[^>]*>/g,""),/100(?:\.0)?%/);
+});
+
+test("confirmed fixes with unknown deadlines are counted but not assessed as on time",async()=>{
+  const app=fixture();await tick();
+  const report=slaDashboardReport();
+  Object.assign(report.periods[0],{confirmedFixes:2,completedUnknown:2,observedFixes:3});
+  Object.assign(report.periods[0].severity[0],{completedUnknown:2});
+  app.context.slaReport=report;
+  app.run("renderSlaDashboard(slaReport)");
+  const markup=app.elements.get("slaDashboardVisuals").innerHTML;
+  assert.match(markup,/2 confirmed fixes this month/);
+  assert.match(markup,/2 deadline unknown/);
+  assert.match(markup,/No known completion deadlines to assess/);
+  assert.doesNotMatch(markup,/100(?:\.0)?%|NaN|undefined/);
+});
+
+test("missing SLA response data surfaces a retryable error and clears stale visuals",async()=>{
+  const app=fixture();await tick();
+  app.elements.get("slaDashboardVisuals").innerHTML="Old SLA summary";
+  app.run('activateView("slaDashboard")');await tick();
+  app.query().at(-1).resolve(app.payload());await tick();
+  assert.match(app.elements.get("dashboardQueryMessage").textContent,/SLA dashboard response is incomplete/);
+  assert.equal(app.elements.get("slaDashboardVisuals").innerHTML,"");
+  assert.equal(app.elements.get("retryDashboardQuery").hidden,false);
 });

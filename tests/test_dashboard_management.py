@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from test_dashboard_queries import datasets, engine, finding, historical_os_data
+from test_dashboard_queries import SNAPSHOT, datasets, engine, finding, historical_os_data
 from vulnerability_view import dashboard_management
 from vulnerability_view.live_collector import reconcile_live_findings
 
@@ -32,6 +32,146 @@ def management_data():
 
 def request(view="executiveSnapshot", **filters):
     return {"view": view, "filters": {"managementReporting": True, **filters}}
+
+
+@pytest.mark.parametrize(("snapshot", "week", "month", "preceding_month"), [
+    ("2026-03-02T12:00:00Z", ("2026-02-23", "2026-03-01"), ("2026-02-01", "2026-02-28"), ("2026-01-01", "2026-01-31")),
+    ("2024-03-01T12:00:00Z", ("2024-02-19", "2024-02-25"), ("2024-02-01", "2024-02-29"), ("2024-01-01", "2024-01-31")),
+    ("2026-01-01T12:00:00Z", ("2025-12-22", "2025-12-28"), ("2025-12-01", "2025-12-31"), ("2025-11-01", "2025-11-30")),
+])
+def test_sla_dashboard_compares_completed_calendar_periods(snapshot, week, month, preceding_month):
+    periods = dashboard_management.sla_calendar_periods(datetime.fromisoformat(snapshot).timestamp())
+    assert (periods[1]["start"], periods[1]["end"]) == week
+    assert (periods[3]["start"], periods[3]["end"]) == month
+    assert (periods[4]["start"], periods[4]["end"]) == preceding_month
+
+
+def test_dedicated_sla_dashboard_counts_pairs_and_keeps_confirmed_rates_separate(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, CveId="CVE-PENDING", FindingStatus="PendingConfirmation",
+                EffectiveRemediationUtc="2026-10-24T11:00:00Z"),
+        finding(1, CveId="CVE-OVERDUE", SlaDueUtc="2026-10-23T00:00:00Z"),
+        finding(2, CveId="CVE-UNKNOWN", SlaDueUtc=None),
+        finding(3, CveId="CVE-FIXED", FindingStatus="Fixed", FixedUtc="2026-10-24T11:00:00Z"),
+    ] * 20
+    data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
+                            "FindingHistoryStartUtc": "2026-08-01T00:00:00Z"}]
+    result = engine(tmp_path, data).query(request("slaDashboard"))
+    report = result["metadata"]["slaDashboard"]
+    current = report["periods"][0]
+    assert current["openWithin"] == current["openOverdue"] == current["unknownOpen"] == 1
+    assert current["openWithinPercent"] == 50
+    assert current["completedWithin"] == current["awaitingConfirmation"] == 1
+    assert current["completionPercent"] == 100
+    assert current["observedFixes"] == 2
+    assert len(report["periods"]) == 5
+    assert all(row["coverage"] == "complete" for row in report["periods"])
+    assert not result["tables"]
+    assert "management" not in result["metadata"]
+    assert not engine(tmp_path, data).is_interactive(request("slaDashboard"))
+
+
+def test_sla_calendar_history_gaps_are_not_zero_or_success(tmp_path):
+    data = datasets(0)
+    data["findings"] = [finding(0)]
+    data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
+                            "FindingHistoryStartUtc": "2026-10-23T00:00:00Z"}]
+    report = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]
+    assert report["periods"][0]["coverage"] == "partial"
+    assert report["periods"][0]["completionPercent"] is None
+    for period in report["periods"][1:]:
+        assert period["coverage"] == "unavailable"
+        assert period["openWithinPercent"] is None
+        assert period["completionPercent"] is None
+        assert period["openWithin"] is None
+    filtered = engine(tmp_path, data).query(request("slaDashboard", severity="Low"))
+    assert filtered["metadata"]["slaDashboard"]["periods"][0]["openWithinPercent"] is None
+
+
+def test_sla_dashboard_calendar_outcomes_use_their_own_period_and_deadline(tmp_path):
+    data = datasets(0)
+    fixed = [
+        ("2026-08-15T12:00:00Z", "2026-08-15T12:00:00Z"),
+        ("2026-09-11T12:00:00Z", "2026-09-10T12:00:00Z"),
+        ("2026-10-07T12:00:00Z", "2026-10-07T12:00:00Z"),
+        ("2026-10-14T12:00:00Z", "2026-10-13T12:00:00Z"),
+    ]
+    data["findings"] = [
+        finding(index, FindingStatus="Fixed", FixedUtc=completed, SlaDueUtc=due,
+                FirstObservedUtc="2026-07-01T00:00:00Z", FirstSeenUtc="2026-07-01T00:00:00Z")
+        for index, (completed, due) in enumerate(fixed)
+    ] * 3
+    data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
+                            "FindingHistoryStartUtc": "2026-07-01T00:00:00Z"}]
+    periods = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]["periods"]
+    assert periods[0]["completionPercent"] == 50
+    assert [period["completionPercent"] for period in periods[1:]] == [0, 100, 0, 100]
+    assert all(period["confirmedFixes"] == 1 for period in periods[1:])
+    assert periods[2]["completedWithin"] == 1
+
+
+def test_sla_dashboard_partial_calendar_period_is_withheld(tmp_path):
+    data = datasets(0)
+    data["findings"] = [finding(0)]
+    data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
+                            "FindingHistoryStartUtc": "2026-10-08T00:00:00Z"}]
+    periods = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]["periods"]
+    assert periods[1]["coverage"] == "complete"
+    assert periods[2]["coverage"] == "partial"
+    assert periods[2]["completionPercent"] is None
+    assert periods[2]["openWithin"] is None
+    assert periods[2]["severity"] == []
+
+
+def test_sla_dashboard_unknown_only_and_no_history_never_claim_compliance(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, SlaDueUtc=None),
+        finding(1, SlaDueUtc=None, FindingStatus="PendingConfirmation",
+                EffectiveRemediationUtc="2026-10-24T11:00:00Z"),
+    ]
+    report = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]
+    current = report["periods"][0]
+    assert current["coverage"] == "unavailable"
+    assert current["unknownOpen"] == 2
+    assert current["openWithinPercent"] is current["completionPercent"] is None
+    assert current["confirmedFixes"] == 0
+    assert current["awaitingConfirmation"] == current["observedFixes"] == 1
+    assert all(period["completionPercent"] is None for period in report["periods"][1:])
+
+
+@pytest.mark.parametrize("view", ["executive", "executiveSnapshot", "trend", "overview"])
+def test_observed_progress_totals_include_pending_without_claiming_completed_sla(tmp_path, view):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="one", CveId="CVE-PENDING", FindingStatus="PendingConfirmation",
+                EffectiveRemediationUtc="2026-10-24T11:00:00Z"),
+        finding(1, DeviceId="one", CveId="CVE-FIXED", FindingStatus="Fixed",
+                FixedUtc="2026-10-24T11:00:00Z"),
+        finding(2, DeviceId="one", CveId="CVE-OVERDUE", SlaDueUtc="2026-10-23T00:00:00Z"),
+        finding(3, DeviceId="one", CveId="CVE-UNKNOWN", SlaDueUtc=None),
+    ] * 10
+    result = engine(tmp_path, data).query(request(view))
+    prefix = view + "Management"
+    assert result["cards"][prefix + "FixActivity"] == [
+        [2, "Total observed machine/CVE fixes"],
+        [1, "Machine/CVE fixes observed — awaiting confirmation"],
+        [1, "Confirmed machine/CVE fixes"],
+    ]
+    row = result["tables"][prefix + "MachineTable"]["items"][0]
+    assert row["TotalObservedFixes"] == 2
+    assert row["FixedCVEs"] == row["FixesAwaitingConfirmation"] == 1
+    assert row["OpenWithinSLA"] == row["OverdueOutcomes"] == row["UnknownOpenSLA"] == 1
+    assert row["OpenSLAWithinRate"] == "50.0%"
+    assert row["SLACompliance"] == "100.0%"
+    comparison = result["tables"][prefix + "ComparisonTable"]["items"][0]
+    assert comparison["TotalObservedMachineCveFixes"] == 2
+    assert comparison["OpenMachineCveWithinSLA"] == "50%"
+    assert result["metadata"]["management"]["sla"]["periods"][0]["outcomes"]["Remaining"] == 3
+    exported = list(engine(tmp_path, data).iter_export({**request(view), "table": prefix + "MachineTable"}))
+    assert exported[0]["TotalObservedFixes"] == 2
+    assert exported[0]["OpenSLAWithinRate"] == "50.0%"
 
 
 @pytest.mark.parametrize("view", ["executive", "overview", "executiveSnapshot", "trend", "sla"])
@@ -439,6 +579,7 @@ def test_observed_fixes_are_visible_before_confirmation_without_completed_sla(tm
     severity = next(row for row in sla["severity"] if row["label"] == "High")
     assert severity["awaitingConfirmation"] == 1 and severity["assessed"] == 0
     assert result["cards"][prefix + "FixActivity"] == [
+        [1, "Total observed machine/CVE fixes"],
         [1, "Machine/CVE fixes observed — awaiting confirmation"],
         [0, "Confirmed machine/CVE fixes"],
     ]
@@ -570,6 +711,31 @@ def test_machine_cve_sla_unknown_deadlines_do_not_become_success(tmp_path):
     assert row["SLACompliance"] == "Waiting for data"
 
 
+@pytest.mark.parametrize(("due", "status", "rate"), [
+    ("2026-10-25T00:00:00Z", "Within deadline", "100.0%"),
+    ("2026-10-24T12:00:00Z", "Within deadline", "100.0%"),
+    ("2026-10-23T00:00:00Z", "Overdue", "0.0%"),
+    (None, "Unknown SLA", "Waiting for data"),
+])
+def test_pending_fix_has_real_open_deadline_status_until_confirmed(tmp_path, due, status, rate):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, FindingStatus="PendingConfirmation", EffectiveRemediationUtc="2026-10-24T11:00:00Z",
+                SlaDueUtc=due),
+    ]
+    e = engine(tmp_path, data)
+    result = e.query(request())
+    row = result["tables"]["executiveSnapshotManagementMachineTable"]["items"][0]
+    assert row["OpenSLAWithinRate"] == rate
+    detail = e.query({**request("detail"), "selection": {"type": "machine", "id": "device-0"}})
+    pair = detail["tables"]["pivotSlaCveTable"]["items"][0]
+    assert pair["ProgressStatus"] == "Fix observed — awaiting confirmation"
+    assert pair["SlaStatus"] == status
+    cards = dict((label, value) for value, label in detail["cards"]["pivotCards"])
+    assert cards["Total observed machine/CVE fixes"] == 1
+    assert cards["Machine/CVE SLA compliance"] == "Waiting for data"
+
+
 def test_machine_cve_sla_machine_detail_and_csv_include_fixed_and_remaining(tmp_path):
     e = engine(tmp_path, machine_sla_data())
     payload = {**request("detail"), "selection": {"type": "machine", "id": "machine-x"}}
@@ -605,6 +771,9 @@ def test_machine_cve_sla_known_completion_and_missing_identifiers_remain_explici
     sla = result["metadata"]["management"]["sla"]
     assert sla["coverageGap"]
     assert result["metadata"]["management"]["periods"][0]["machines"]["UnknownSla"] == 1
+    row = result["tables"]["executiveSnapshotManagementMachineTable"]["items"][0]
+    assert row["OpenWithinSLA"] == 0
+    assert row["OpenSLAWithinRate"] == "Waiting for data"
 
 
 def test_machine_cve_sla_detail_uses_executive_custom_period_and_resolution_scope(tmp_path):
