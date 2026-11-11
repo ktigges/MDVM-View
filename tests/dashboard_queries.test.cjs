@@ -632,6 +632,20 @@ test("missing CVE metadata shows unavailable details and unknown scores without 
   assert.match(app.elements.get("findingsTable").innerHTML,/Unknown/);
 });
 
+test("primary navigation clears selected work items and closes detail panels before requesting the next view",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('state.selectedRecommendationId="rec-a";state.detailRecommendationIds=["rec-a"];state.selectedEntity={type:"machine",id:"machine-a"};state.selectedCveDialogId="CVE-2026-1234";state.pivotSourceLabel="Selected machine";document.body.classList.add("pivot-detail-open");$("pivotPanel").hidden=false;$("machineHistoryControls").hidden=false;activateView("workstations")');
+  for(const key of ["selectedRecommendationId","selectedCveDialogId","pivotSourceLabel"])assert.equal(app.run(`state.${key}`),"");
+  assert.equal(app.run("state.detailRecommendationIds.length"),0);
+  assert.equal(app.run("state.selectedEntity"),null);
+  assert.equal(app.run('document.body.classList.contains("pivot-detail-open")'),false);
+  assert.equal(app.elements.get("pivotPanel").hidden,true);
+  assert.equal(app.elements.get("machineHistoryControls").hidden,true);
+  assert.equal(app.query().at(-1).payload.view,"workstations");
+  assert.equal(app.query().at(-1).payload.selection,undefined);
+});
+
 test("navigation lazily requests just the selected view and ignores aborted stale responses",async()=>{
   const app=fixture();await tick();
   const first=app.query()[0];
@@ -1688,7 +1702,7 @@ test("confirmed fixes with unknown deadlines are counted but not assessed as on 
   assert.match(markup,/2 CVEs fully cleared this month/);
   assert.match(markup,/2 deadline unknown/);
   assert.match(markup,/No known completion deadlines to assess/);
-  assert.doesNotMatch(markup,/100(?:\.0)?%|NaN|undefined/);
+  assert.doesNotMatch(markup.replace(/<[^>]*>/g,""),/100(?:\.0)?%|NaN|undefined/);
 });
 
 test("SLA screen rejects old pair-count reports and never renders pair totals",async()=>{
@@ -1710,4 +1724,115 @@ test("missing SLA response data surfaces a retryable error and clears stale visu
   assert.match(app.elements.get("dashboardQueryMessage").textContent,/SLA dashboard response is incomplete/);
   assert.equal(app.elements.get("slaDashboardVisuals").innerHTML,"");
   assert.equal(app.elements.get("retryDashboardQuery").hidden,false);
+});
+
+test("leadership donuts keep remaining exposure separate from confirmed clearance and use explicit counts",async()=>{
+  const app=fixture();await tick();
+  const report=slaDashboardReport();
+  Object.assign(report.periods[0].cves,{completedWithin:2,completedLate:1,completedUnknown:1,confirmedFixes:4,completionPercent:200/3});
+  Object.assign(report.periods[0].machines,{openWithin:7,openOverdue:2,unknownOpen:1,totalOpen:10});
+  app.context.slaReport=report;
+  app.run("renderSlaDashboard(slaReport)");
+  const markup=app.elements.get("slaDashboardVisuals").innerHTML;
+  assert.equal((markup.match(/class="sla-summary-donut"/g)||[]).length,4);
+  assert.match(markup,/CVEs remaining: 1 Not yet due, 1 Overdue, 1 Deadline unknown/);
+  assert.match(markup,/Machines remaining: 7 Not yet due, 2 Overdue, 1 Deadline unknown/);
+  assert.match(markup,/CVEs fully cleared: 2 Cleared on time, 1 Cleared late, 1 Clearance deadline unknown/);
+  assert.match(markup,/66\.7% of assessed fully cleared CVEs were on time/);
+  assert.match(markup,/No confirmed full clearances in this period/);
+  assert.match(markup,/--sla-ring:#dce4e9/);
+  assert.match(markup,/Month to date: 2026-10-01 - 2026-10-24 UTC/);
+  assert.match(markup,/Backlog and period clearances are different measures/);
+});
+
+test("management summaries use the same leadership charts and colored confirmed-remediation categories",async()=>{
+  const app=fixture();await tick();
+  const report=slaDashboardReport();
+  app.context.sla={entityPeriods:[report.periods[0]],periods:[{Period:"Latest 30 days"}]};
+  app.run('ensureManagementReport("sla");renderManagementSla("sla",sla)');
+  assert.match(app.elements.get("slaManagementLeadershipSnapshot").innerHTML,/SLA at a glance/);
+  assert.match(app.elements.get("slaManagementLeadershipSnapshot").innerHTML,/Latest 30 days/);
+  const markup=app.elements.get("slaManagementSlaStatus").innerHTML;
+  for(const category of ["cleared","late","pending","improved","unknown"])assert.match(markup,new RegExp(`class="sla-outcome-${category}"`));
+  assert.match(markup,/No fully cleared CVEs to assess/);
+});
+
+test("severity drill-down filters reset on leaving the pivot while manual workspace filters survive",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('state.osType="Linux";state.team="Ops";activateView("slaDashboard");openSeverityVulnerabilities("Critical")');
+  assert.equal(app.query().at(-1).payload.filters.severity,"Critical");
+  app.query().at(-1).resolve(app.payload());await tick();
+  app.run('activateView("slaDashboard")');
+  const filters=app.run("dashboardRequest().filters");
+  assert.equal(filters.severity,"All");
+  assert.equal(filters.osType,"Linux");
+  assert.equal(filters.team,"Ops");
+  assert.equal(app.elements.get("severityFilter").value,"All");
+  assert.equal(filters.pivotFilterRestore,undefined);
+  assert.equal(filters.pivotFilters,undefined);
+  assert.equal(filters.machineHistory,undefined);
+  assert.equal(filters.machineHistoryPeriod,undefined);
+});
+
+test("repeated pivots restore the original subscription, owner and severity without reviving cleared filters",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('state.severity="Medium";state.subscription="original-sub";state.team="Original";activateView("executiveSnapshot");state.executiveSnapshotSubscription="report-sub";state.executiveSnapshotOwner="Report owner";openSeverityVulnerabilities("High");openSeverityVulnerabilities("Critical");activateView("workstations")');
+  assert.equal(app.run("state.severity"),"Medium");
+  assert.equal(app.run("state.subscription"),"original-sub");
+  assert.equal(app.run("state.team"),"Original");
+  app.run('openSeverityVulnerabilities("Critical");resetFilters();activateView("slaDashboard")');
+  assert.equal(app.run("state.severity"),"All");
+  assert.equal(app.run("state.subscription"),"All");
+});
+
+test("activity pivots restore exposure and activity filters when navigating to another screen",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.selectors["[data-fixed-view]"].find(button=>button.dataset.findingsMode==="cves").click();
+  assert.equal(app.run("state.remediationPeriodFilter"),true);
+  assert.equal(app.elements.get("exposureStatusFilter").value,"All");
+  app.run('activateView("workstations")');
+  assert.equal(app.run("state.remediationPeriodFilter"),false);
+  assert.equal(app.run("state.exposureStatus"),"DetectedAndPending");
+  app.selectors["[data-new-view]"].find(button=>button.dataset.findingsMode==="cves").click();
+  assert.equal(app.run("state.newPeriodFilter"),true);
+  app.run('activateView("executive")');
+  assert.equal(app.run("state.newPeriodFilter"),false);
+  assert.equal(app.elements.get("applyNewPeriodFilter").checked,false);
+});
+
+test("machine history loads on demand with independent dated filters and an exportable history table",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('pivotToMachine({DeviceId:"machine-x"})');
+  const detail={type:"machine",id:"machine-x",record:{DeviceId:"machine-x",DeviceName:"Machine X"}};
+  assert.equal(app.query().at(-1).payload.filters.machineHistoryPeriod,undefined);
+  app.query().at(-1).resolve(app.payload({detail}));await tick();
+  assert.equal(app.elements.get("machineHistoryControls").hidden,false);
+  assert.equal(app.elements.get("machineHistoryStart").value,"2026-09-25");
+  assert.equal(app.elements.get("machineHistoryEnd").value,"2026-10-24");
+  app.elements.get("machineHistoryPeriod").value="custom";
+  app.elements.get("machineHistoryPeriod").dispatch("change","custom");
+  app.elements.get("machineHistoryStart").value="2026-10-05";
+  app.elements.get("machineHistoryEnd").value="2026-10-20";
+  app.elements.get("applyMachineHistory").click();
+  const request=app.query().at(-1).payload;
+  assert.equal(request.selection.id,"machine-x");
+  assert.equal(request.filters.machineHistoryPeriod,"custom");
+  assert.equal(request.filters.machineHistoryStart,"2026-10-05");
+  assert.equal(request.filters.machineHistoryEnd,"2026-10-20");
+  app.query().at(-1).resolve(app.payload({
+    detail,metadata:{machineHistory:{start:"2026-10-05",end:"2026-10-20",coverage:"lifecycle-only"}},
+    tables:{pivotMachineHistoryTable:{columns:["CveId","Change","ChangeTimeUtc"],items:[{CveId:"CVE-X",Change:"Confirmed fixed",ChangeTimeUtc:"2026-10-12T00:00:00Z"}],total:1,offset:0,limit:100,action:"cve"}},
+  }));await tick();
+  assert.match(app.elements.get("machineHistoryContext").textContent,/2026-10-05 through 2026-10-20 UTC/);
+  assert.match(app.elements.get("machineHistoryContext").textContent,/only transitions supported by retained lifecycle timestamps/);
+  assert.match(app.elements.get("pivotMachineHistoryTable").innerHTML,/Confirmed fixed/);
+  assert.equal(app.run('dashboardRequest("detail","pivotMachineHistoryTable").filters.machineHistoryStart'),"2026-10-05");
+  app.elements.get("clearPivot").click();
+  assert.equal(app.elements.get("machineHistoryControls").hidden,true);
+  app.run('pivotToMachine({DeviceId:"another-machine"})');
+  assert.equal(app.query().at(-1).payload.filters.machineHistoryPeriod,undefined);
 });

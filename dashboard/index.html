@@ -177,6 +177,17 @@
         <span id="pivotActionStatus" class="action-status" role="status"></span>
       </div>
       <div id="pivotCards" class="metric-grid compact"></div>
+      <section id="machineHistoryControls" class="machine-history-controls" hidden aria-labelledby="machineHistoryTitle">
+        <h3 id="machineHistoryTitle">Machine vulnerability history <button type="button" class="metric-help-button" data-help-key="Machine vulnerability history" aria-label="Explain machine vulnerability history" aria-haspopup="dialog">?</button></h3>
+        <div class="machine-history-filters">
+          <label>History period<select id="machineHistoryPeriod"><option value="7days">Latest 7 days</option><option value="30days" selected>Latest 30 days</option><option value="90days">Latest 90 days</option><option value="custom">Custom dates</option></select></label>
+          <label>From (UTC)<input id="machineHistoryStart" type="date"></label>
+          <label>Through (UTC)<input id="machineHistoryEnd" type="date"></label>
+          <button id="applyMachineHistory" type="button">Load CVE history</button>
+        </div>
+        <p id="machineHistoryContext" class="coverage-note">Load dated CVE additions, confirmed clearance, and reopened exposure for this machine. History is prepared only when requested.</p>
+        <div id="machineHistoryCards" class="metric-grid compact"></div>
+      </section>
       <div class="table-wrap"><table id="pivotTable"></table></div>
       <div id="pivotDetails" class="pivot-details"></div>
     </section>

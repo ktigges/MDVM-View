@@ -836,6 +836,152 @@ def test_machine_cve_sla_machine_detail_and_csv_include_fixed_and_remaining(tmp_
     assert len(exported) == 3 and all("SoftwareVersion" not in row for row in exported)
 
 
+def machine_history_request(**filters):
+    return {
+        **request("detail", machineHistoryPeriod="30days", **filters),
+        "selection": {"type": "machine", "id": "machine-history"},
+    }
+
+
+def history_finding(index, **values):
+    return finding(
+        index, DeviceId="machine-history", FindingKey=f"history-{index}",
+        FirstObservedUtc="2026-10-01T00:00:00Z", FirstSeenUtc="2026-10-01T00:00:00Z",
+        SlaDueUtc="2026-10-15T00:00:00Z", **values,
+    )
+
+
+def test_machine_history_waits_for_all_software_and_excludes_pending_fixes(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        history_finding(0, CveId="CVE-A", FindingStatus="Fixed", FixedUtc="2026-10-10T00:00:00Z"),
+        history_finding(1, CveId="CVE-A", FindingStatus="Fixed", FixedUtc="2026-10-12T00:00:00Z"),
+        history_finding(2, CveId="CVE-B", FindingStatus="PendingConfirmation",
+                        EffectiveRemediationUtc="2026-10-12T00:00:00Z"),
+        history_finding(3, CveId="CVE-C", FindingStatus="PendingVerification"),
+    ]
+    result = engine(tmp_path, data).query(machine_history_request(exposureStatus="ConfirmedFixed"))
+    rows = result["tables"]["pivotMachineHistoryTable"]["items"]
+    assert len(rows) == 4
+    fixes = [row for row in rows if row["Change"] == "Confirmed fixed"]
+    assert [(row["CveId"], row["ChangeTimeUtc"], row["SlaStatus"]) for row in fixes] == [
+        ("CVE-A", "2026-10-12T00:00:00Z", "Fixed within SLA"),
+    ]
+    assert dict((label, value) for value, label in result["cards"]["machineHistoryCards"]) == {
+        "Distinct CVEs added": 3, "Distinct CVEs confirmed fixed": 1, "Distinct CVEs reopened": 0,
+    }
+    assert result["metadata"]["machineHistory"]["coverage"] == "lifecycle-only"
+
+
+def test_machine_history_reconstructs_multiple_clearance_cycles_and_custom_period(tmp_path):
+    data = datasets(0)
+    data["findings"] = [history_finding(
+        0, CveId="CVE-A", FindingStatus="Fixed", FixedUtc="2026-10-22T00:00:00Z",
+        ReopenedUtc="2026-10-15T00:00:00Z",
+    )]
+    data["finding-events"] = [
+        {"FindingKey": "history-0", "DeviceId": "machine-history", "CveId": "CVE-A",
+         "DataOrigin": "Live", "EventType": change, "EffectiveTimeUtc": time,
+         "EventTimeUtc": time, "SnapshotTimeUtc": time}
+        for change, time in (
+            ("New", "2026-10-01T00:00:00Z"), ("Fixed", "2026-10-07T00:00:00Z"),
+            ("Reopened", "2026-10-15T00:00:00Z"), ("Fixed", "2026-10-22T00:00:00Z"),
+        )
+    ]
+    e = engine(tmp_path, data)
+    result = e.query(machine_history_request())
+    rows = result["tables"]["pivotMachineHistoryTable"]["items"]
+    assert [row["Change"] for row in rows] == ["Confirmed fixed", "Reopened", "Confirmed fixed", "Added"]
+    assert rows[0]["SlaStatus"] == "Fixed late"
+    assert rows[2]["SlaStatus"] == "Fixed within SLA"
+    custom = {**machine_history_request(), "filters": {
+        **machine_history_request()["filters"], "machineHistoryPeriod": "custom",
+        "machineHistoryStart": "2026-10-05", "machineHistoryEnd": "2026-10-20",
+    }}
+    filtered = e.query(custom)
+    assert [row["Change"] for row in filtered["tables"]["pivotMachineHistoryTable"]["items"]] == [
+        "Reopened", "Confirmed fixed",
+    ]
+    assert filtered["metadata"]["machineHistory"]["coverage"] == "events-and-lifecycle"
+    assert len(list(e.iter_export({**custom, "table": "pivotMachineHistoryTable"}))) == 2
+
+
+def test_machine_history_does_not_count_software_replacement_as_cve_clearance(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        history_finding(0, CveId="CVE-A", FindingStatus="Fixed", FixedUtc="2026-10-10T00:00:00Z"),
+        {**history_finding(1, CveId="CVE-A"), "FirstObservedUtc": "2026-10-10T00:00:00Z"},
+        {**history_finding(2, CveId="CVE-OTHER"), "DeviceId": "other-machine"},
+    ]
+    rows = engine(tmp_path, data).query(machine_history_request())["tables"]["pivotMachineHistoryTable"]["items"]
+    assert [(row["CveId"], row["Change"]) for row in rows] == [("CVE-A", "Added")]
+
+
+@pytest.mark.parametrize("status", ["Open", "PendingConfirmation", "PendingVerification", "StaleDevice", "Unknown", "OutOfScope"])
+def test_machine_history_partial_software_clearance_never_becomes_a_cve_fix(tmp_path, status):
+    data = datasets(0)
+    data["findings"] = [
+        history_finding(0, CveId="CVE-A", FindingStatus="Fixed", FixedUtc="2026-10-10T00:00:00Z"),
+        history_finding(1, CveId="CVE-A", FindingStatus=status),
+    ]
+    data["finding-events"] = [{
+        "FindingKey": "history-0", "DeviceId": "machine-history", "CveId": "CVE-A",
+        "EventType": "Fixed", "EffectiveTimeUtc": "2026-10-10T00:00:00Z",
+        "SnapshotTimeUtc": "2026-10-11T00:00:00Z",
+    }]
+    rows = engine(tmp_path, data).query(machine_history_request())["tables"]["pivotMachineHistoryTable"]["items"]
+    assert [(row["CveId"], row["Change"]) for row in rows] == [("CVE-A", "Added")]
+
+
+def test_machine_history_missing_deadlines_are_unknown_and_missing_observations_do_not_prove_clearance(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        {**history_finding(0, CveId="CVE-A", FindingStatus="Fixed", FixedUtc="2026-10-10T00:00:00Z"), "SlaDueUtc": None},
+        history_finding(1, CveId="CVE-B", FindingStatus="Fixed", FixedUtc="2026-10-10T00:00:00Z"),
+        {**history_finding(2, CveId="CVE-B"), "FirstObservedUtc": None, "FirstSeenUtc": None},
+    ]
+    rows = engine(tmp_path, data).query(machine_history_request())["tables"]["pivotMachineHistoryTable"]["items"]
+    fixes = [row for row in rows if row["Change"] == "Confirmed fixed"]
+    assert len(fixes) == 1
+    assert fixes[0]["CveId"] == "CVE-A" and fixes[0]["SlaStatus"] == "Unknown SLA"
+
+
+def test_machine_history_is_optional_paginated_and_exports_all_matching_changes(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        history_finding(index, CveId=f"CVE-{index:04}", FindingStatus="Fixed", FixedUtc="2026-10-10T00:00:00Z")
+        for index in range(120)
+    ]
+    e = engine(tmp_path, data)
+    plain = {**request("detail"), "selection": {"type": "machine", "id": "machine-history"}}
+    assert "pivotMachineHistoryTable" not in e.query(plain)["tables"]
+    payload = machine_history_request()
+    assert not e.is_interactive({
+        **payload, "selection": {"type": "machine", "id": "rule:group"},
+    })
+    result = e.query({**payload, "table": "pivotMachineHistoryTable", "page": 1})
+    table = result["tables"]["pivotMachineHistoryTable"]
+    assert table["total"] == 240 and table["offset"] == 100
+    assert len(table["items"]) == 100
+    exported = list(e.iter_export({**payload, "table": "pivotMachineHistoryTable"}))
+    assert len(exported) == 240
+    assert all(row["DeviceId"] == "machine-history" and "FindingKey" not in row for row in exported)
+
+
+@pytest.mark.parametrize("filters", [
+    {"machineHistoryPeriod": "unsupported"},
+    {"machineHistoryPeriod": "custom", "machineHistoryStart": "2026-10-25", "machineHistoryEnd": "2026-10-30"},
+    {"machineHistoryPeriod": "custom"},
+])
+def test_machine_history_rejects_invalid_periods(tmp_path, filters):
+    data = datasets(0)
+    data["findings"] = [history_finding(0)]
+    payload = machine_history_request()
+    payload["filters"].update(filters)
+    with pytest.raises(ValueError):
+        engine(tmp_path, data).query(payload)
+
+
 def test_machine_cve_sla_cache_restore_and_empty_assessment(tmp_path):
     e = engine(tmp_path, machine_sla_data())
     expected = e.query(request())

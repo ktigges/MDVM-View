@@ -388,11 +388,13 @@ def test_dashboard_uses_top_filters_and_responsive_workspace_navigation():
 
 def test_primary_navigation_clears_selected_work_item_between_views():
     javascript = Path("dashboard/app.js").read_text()
-    activate_view = javascript.split("function activateView(view){", 1)[1].split("\n}", 1)[0]
+    match = re.search(r"function activateView\([^)]*\)\{(.*?)\n\}", javascript, re.DOTALL)
+    assert match is not None, "Primary navigation handler is missing"
+    activate_view = match.group(1)
 
     assert "const viewChanged=state.activeView!==view;" in activate_view
-    assert "if(viewChanged)clearSelectedWorkItem();" in activate_view
-    assert activate_view.index("if(viewChanged)clearSelectedWorkItem();") < activate_view.index("state.activeView=view;render();")
+    assert "if(viewChanged||pivotFilters){" in activate_view
+    assert activate_view.index("clearSelectedWorkItem();") < activate_view.index("state.activeView=view;render();")
 
 
 def test_reporting_exposes_customer_workflow_help():
