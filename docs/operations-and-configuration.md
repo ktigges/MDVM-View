@@ -26,6 +26,39 @@ consecutive qualified collections confirm it. Confirmed clearance is dated to
 the first qualified absence, not the later confirmation collection, and does
 not establish an exact patch-installation time.
 
+## Compliance percentage snapshots
+
+SLA and Executive Snapshot also show **week to date** (Monday onward),
+**month to date**, **rolling 90 days** (90 inclusive calendar dates), and
+**year to date** (January 1 onward). Dates are UTC, anchored to the pinned
+data snapshot rather than the browser clock. Each period shows separate
+distinct-CVE and distinct-machine assessments:
+
+- **Unresolved within SLA %** = not-yet-due unresolved entities / unresolved
+  entities with known deadlines at the period end. This is a point-in-time
+  backlog assessment, not an average over the period or completed remediation.
+- **Confirmed on-time clearance %** = entities fully cleared on time during
+  the period / entities fully cleared during that period with known deadlines.
+  Pending confirmation remains unresolved and is never a successful clearance.
+
+Each percentage includes its numerator, denominator, and excluded
+unknown-deadline count. A missing deadline cannot establish compliance. An empty
+denominator shows **Waiting for data**, not 0% or 100%. A genuine zero numerator
+with a positive denominator shows 0.0%.
+
+Use **Custom compliance period** to add a fifth snapshot, with inclusive start
+and end dates. Dates must be ordered and cannot extend past the pinned snapshot;
+the last date is capped at that snapshot's time. These dates are shared between
+the two screens but do not change the existing Executive Snapshot report/export
+timeframe or calendar comparisons. Existing subscription, owner, severity, and
+other evidence-scope filters still apply.
+
+Entire-period retained history is required for these percentage snapshots.
+Insufficient coverage is labeled explicitly and percentages/counts are
+unavailable, not zero. Older coverage cannot be manufactured by changing dates
+or rerunning a collection. These summaries reuse retained evidence and existing
+SLA calculations; they do not change collection schemas or stored history.
+
 ## Collection status
 
 ```bash

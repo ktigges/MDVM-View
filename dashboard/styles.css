@@ -478,6 +478,23 @@ body.pivot-detail-open .pivot-panel.fullscreen-mode{top:calc(var(--workspace-con
 .metric-glossary{display:grid;gap:12px}.metric-glossary dt{font-weight:750;color:#17384f}.metric-glossary dd{margin:4px 0 0;line-height:1.6}
 @media print{.metric-help-button,.metric-help-dialog{display:none}}
 .sla-leadership-snapshot{display:grid;gap:14px}
+.sla-compliance{margin:18px 0 24px}
+.sla-compliance>p{font-size:13px;line-height:1.6;color:var(--muted)}
+.sla-compliance-controls{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:14px 0}
+.sla-compliance-controls>span{align-self:center;font-weight:650}
+.sla-compliance-controls label{display:grid;gap:4px;font-size:12px}
+.sla-compliance-controls input,.sla-compliance-controls button{min-height:36px}
+.sla-compliance-snapshots{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px}
+.sla-compliance-period{min-width:0;padding:18px;border-top:4px solid #176f86}
+.sla-compliance-period h3{margin:0 0 6px;color:#17384f}
+.sla-compliance-period>.coverage-note{font-size:12px}
+.sla-compliance-entity{padding-top:12px;border-top:1px solid #d5dfe6;margin-top:12px}
+.sla-compliance-entity h4{margin:0 0 10px;color:#294c60}
+.sla-compliance-rate{display:grid;gap:4px;margin:12px 0}
+.sla-compliance-rate>span{font-size:12px;font-weight:650}
+.sla-compliance-rate>strong{font-size:27px;font-variant-numeric:tabular-nums;color:#17384f;overflow-wrap:anywhere}
+.sla-compliance-rate small,.sla-compliance-entity>p,.sla-compliance-history{font-size:11px;line-height:1.5;color:var(--muted)}
+@media print{.sla-compliance-controls,.sla-compliance>[role="status"]{display:none}.sla-compliance-snapshots{grid-template-columns:repeat(2,minmax(0,1fr))}.sla-compliance-period{break-inside:avoid}}
 .severity-snapshot-count{display:grid;gap:4px}
 .severity-snapshot-count>span{font-size:12px;color:var(--muted)}
 .severity-summary>.coverage-note{padding:0 16px 16px;margin:0}

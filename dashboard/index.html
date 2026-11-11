@@ -209,6 +209,19 @@
           <button id="exportExecutiveSnapshotCsv" type="button">Export detail CSV</button>
         </div>
       </div>
+      <section class="sla-compliance" aria-labelledby="executiveSnapshotComplianceTitle">
+        <h2 id="executiveSnapshotComplianceTitle">Compliance percentage snapshots</h2>
+        <p>Unresolved within SLA is not-yet-due / known-deadline unresolved exposure at period end, not a period average. Confirmed on-time clearance is on-time / known-deadline full clearances during the period. UTC dates use the pinned snapshot, not today's clock. CVEs and machines are assessed separately; unknown deadlines are excluded.</p>
+        <div class="sla-compliance-controls">
+          <span>Custom compliance period</span>
+          <label>Start<input id="executiveSnapshotComplianceStart" type="date"></label>
+          <label>End<input id="executiveSnapshotComplianceEnd" type="date"></label>
+          <button id="executiveSnapshotComplianceApply" type="button">Apply custom dates</button>
+          <button id="executiveSnapshotComplianceClear" type="button">Clear custom dates</button>
+        </div>
+        <p id="executiveSnapshotComplianceMessage" class="coverage-note" role="status"></p>
+        <div id="executiveSnapshotComplianceCards" class="sla-compliance-snapshots"></div>
+      </section>
       <div id="executiveSnapshotManagement"></div>
 
       <footer class="executive-report-footer"><span id="executiveSnapshotGenerated"></span><span>Source: Microsoft Defender observations retained by Vulnerability View</span></footer>
@@ -261,6 +274,19 @@
     <section id="slaDashboard" class="story">
       <div class="section-heading"><div><span>REMEDIATION AND DEADLINES</span><h2>SLA remediation status <button type="button" class="metric-help-button" data-help-key="Current SLA status" aria-label="Explain SLA remediation status" aria-haspopup="dialog">?</button></h2></div><p>Distinct CVEs and affected machines, counted separately by severity and completed calendar period. Not yet due does not mean remediated.</p></div>
       <p id="slaDashboardContext" class="coverage-note"></p>
+      <section class="sla-compliance" aria-labelledby="slaDashboardComplianceTitle">
+        <h2 id="slaDashboardComplianceTitle">Compliance percentage snapshots</h2>
+        <p>Unresolved within SLA is not-yet-due / known-deadline unresolved exposure at period end, not a period average. Confirmed on-time clearance is on-time / known-deadline full clearances during the period. UTC dates use the pinned snapshot, not today's clock. CVEs and machines are assessed separately; unknown deadlines are excluded.</p>
+        <div class="sla-compliance-controls">
+          <span>Custom compliance period</span>
+          <label>Start<input id="slaDashboardComplianceStart" type="date"></label>
+          <label>End<input id="slaDashboardComplianceEnd" type="date"></label>
+          <button id="slaDashboardComplianceApply" type="button">Apply custom dates</button>
+          <button id="slaDashboardComplianceClear" type="button">Clear custom dates</button>
+        </div>
+        <p id="slaDashboardComplianceMessage" class="coverage-note" role="status"></p>
+        <div id="slaDashboardComplianceCards" class="sla-compliance-snapshots"></div>
+      </section>
       <div id="slaDashboardVisuals" class="sla-dashboard-visuals"></div>
     </section>
 

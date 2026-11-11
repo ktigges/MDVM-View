@@ -20,6 +20,7 @@ const FINDINGS_PAGE_SIZE=100;
 const findingsList={mode:"cves",page:0,scopeKey:""};
 let pivotFilterRestore=null;
 state.machineHistory={enabled:false,period:"30days",start:"",end:""};
+state.slaCompliance={start:"",end:""};
 /** Find a dashboard element by ID. */
 const $=id=>document.getElementById(id);
 /** Interpret supported boolean representations. */
@@ -192,6 +193,10 @@ function initialize(){
   $("executiveSnapshotOwner").addEventListener("change",event=>{state.executiveSnapshotOwner=event.target.value;renderExecutiveSnapshot();});
   $("executiveSnapshotUnit").addEventListener("change",event=>{state.executiveSnapshotUnit=event.target.value;renderExecutiveSnapshot();});
   $("applyExecutiveSnapshot").addEventListener("click",()=>{state.executiveSnapshotStart=$("executiveSnapshotStart").value;state.executiveSnapshotEnd=$("executiveSnapshotEnd").value;renderExecutiveSnapshot();});
+  for(const view of ["slaDashboard","executiveSnapshot"]){
+    $(`${view}ComplianceApply`).addEventListener("click",()=>applyCompliancePeriod(view));
+    $(`${view}ComplianceClear`).addEventListener("click",()=>applyCompliancePeriod(view,true));
+  }
   $("printExecutiveSnapshot").addEventListener("click",printExecutiveSnapshot);
   $("exportExecutiveSnapshotCsv").addEventListener("click",exportExecutiveSnapshotCsv);
   $("reportingEntity").addEventListener("change",event=>{state.reportingEntity=event.target.value;renderLifecycleReporting();});
@@ -601,6 +606,10 @@ function dashboardFilters(){
 
 function dashboardRequest(view=state.activeView,tableId=null,page=0){
   const request={snapshotId:dashboardQuery.snapshot?.snapshotId,view,filters:dashboardFilters(),mode:"cves",page,limit:FINDINGS_PAGE_SIZE};
+  if(["slaDashboard","executiveSnapshot"].includes(view)&&state.slaCompliance.start&&state.slaCompliance.end){
+    request.filters.slaComplianceStart=state.slaCompliance.start;
+    request.filters.slaComplianceEnd=state.slaCompliance.end;
+  }
   request.filters.managementReporting=true;
   request.filters.includeFindingEvidence=false;
   if(tableId?.includes("Management"))request.limit=10;
@@ -645,7 +654,7 @@ function dashboardBusy(view,busy){
   updateScopeLoading(view,busy);
   const root=$(view==="detail"?"pivotPanel":view);
   root?.setAttribute("aria-busy",String(busy));
-  root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.executive-sla-meter-wrap,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid,.server-pagination,.server-record,.sla-dashboard-visuals,.sla-leadership-snapshot").forEach(node=>node.classList.toggle("query-pending",busy));
+  root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.executive-sla-meter-wrap,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid,.server-pagination,.server-record,.sla-dashboard-visuals,.sla-leadership-snapshot,.sla-compliance-snapshots").forEach(node=>node.classList.toggle("query-pending",busy));
   if(busy){
     if(view!=="detail")$("filterCount").textContent="Loading matching scope…";
     $("loadingNotice").hidden=false;
@@ -655,7 +664,7 @@ function dashboardBusy(view,busy){
 
 function clearDashboardResults(view){
   const root=$(view);
-  root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid,.sla-dashboard-visuals,.sla-leadership-snapshot").forEach(node=>node.innerHTML="");
+  root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid,.sla-dashboard-visuals,.sla-leadership-snapshot,.sla-compliance-snapshots").forEach(node=>node.innerHTML="");
   root?.querySelectorAll(".server-pagination").forEach(node=>node.remove());
   if(view==="overview")$("findingsPageStatus").textContent="Loading matching records…";
 }
@@ -816,7 +825,7 @@ async function startSnapshotDashboard(){
     $("freshnessLocalText").textContent=`UTC: ${formatUtc(snapshot.snapshotTimeUtc)}`;
     const date=String(snapshot.snapshotTimeUtc||"").slice(0,10);
     if(date){
-      for(const [id,days] of [["statisticsStartDate",6],["statisticsEndDate",0],["executiveSnapshotStart",29],["executiveSnapshotEnd",0]]){
+      for(const [id,days] of [["statisticsStartDate",6],["statisticsEndDate",0],["executiveSnapshotStart",29],["executiveSnapshotEnd",0],["slaDashboardComplianceStart",89],["slaDashboardComplianceEnd",0],["executiveSnapshotComplianceStart",89],["executiveSnapshotComplianceEnd",0]]){
         if(!$(id).value)$(id).value=shiftUtcDate(date,-days);
         $(id).max=date;
       }
@@ -1078,6 +1087,56 @@ function slaDashboardPercent(value){
   return typeof value==="number"&&Number.isFinite(value)?`${value.toFixed(1)}%`:"Waiting for data";
 }
 
+function applyCompliancePeriod(view,clear=false){
+  const start=clear?"":$(`${view}ComplianceStart`).value,end=clear?"":$(`${view}ComplianceEnd`).value;
+  const snapshotDate=String(dashboardQuery.snapshot?.snapshotTimeUtc||"").slice(0,10);
+  const validDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(`${value}T00:00:00Z`))&&new Date(`${value}T00:00:00Z`).toISOString().slice(0,10)===value;
+  if(!clear&&(!validDate(start)||!validDate(end)||start>end||!snapshotDate||end>snapshotDate)){
+    $(`${view}ComplianceMessage`).textContent="Choose valid start and end dates, ordered and no later than the pinned snapshot.";
+    return;
+  }
+  state.slaCompliance={start,end};
+  for(const target of ["slaDashboard","executiveSnapshot"]){
+    $(`${target}ComplianceStart`).value=start;
+    $(`${target}ComplianceEnd`).value=end;
+    $(`${target}ComplianceMessage`).textContent="";
+  }
+  render();
+}
+
+function renderComplianceSnapshots(view,periods){
+  const root=$(`${view}ComplianceCards`);
+  if(!Array.isArray(periods)||!periods.length){
+    root.innerHTML='<p class="coverage-note">Compliance percentages are unavailable. Refresh after the updated snapshot reports are ready.</p>';
+    return;
+  }
+  const count=value=>typeof value==="number"&&Number.isFinite(value)&&value>=0;
+  root.innerHTML=periods.map(period=>{
+    const available=period.coverage==="complete";
+    return `<article class="panel sla-compliance-period">
+      <h3>${esc(period.label)}</h3><p class="coverage-note">${esc(period.start)} to ${esc(period.end)} UTC</p>
+      ${available?"":'<p class="sla-compliance-history">Insufficient retained history for this entire period. Percentages are unavailable, not zero.</p>'}
+      ${[["cves","Distinct CVEs"],["machines","Distinct machines"]].map(([key,title])=>{
+        const values=period[key]||{};
+        const rate=(label,help,percent,numerator,other,unknown,kind)=>{
+          const known=available&&count(values[numerator])&&count(values[other]);
+          const denominator=known?values[numerator]+values[other]:null;
+          return `<div class="sla-compliance-rate">
+            <span>${metricLabel(label,help)}</span><strong>${slaDashboardPercent(known&&denominator>0?values[percent]:null)}</strong>
+            <small>${known?`${fmt(values[numerator])} / ${fmt(denominator)} known-deadline ${kind}${denominator?"":"; none to assess"}`:"Numerator / denominator unavailable"}</small>
+            <small>${available&&count(values[unknown])?`${fmt(values[unknown])} deadline unknown (excluded)`:"Unknown-deadline count unavailable"}</small>
+          </div>`;
+        };
+        return `<section class="sla-compliance-entity"><h4>${title}</h4>
+          ${rate("Unresolved within SLA %","Open within SLA %","openWithinPercent","openWithin","openOverdue","unknownOpen","unresolved")}
+          ${rate("Confirmed on-time clearance %","Confirmed on-time %","completionPercent","completedWithin","completedLate","completedUnknown","full clearances")}
+          <p>${available&&count(values.awaitingConfirmation)?`${fmt(values.awaitingConfirmation)} awaiting confirmation; still unresolved, not a clearance.`:"Awaiting-confirmation count unavailable."}</p>
+        </section>`;
+      }).join("")}
+    </article>`;
+  }).join("");
+}
+
 function slaCompletionAssessment(percent,confirmed,unit){
   if(!confirmed)return `No fully cleared ${unit} to assess`;
   if(typeof percent!=="number"||!Number.isFinite(percent))return "No known completion deadlines to assess";
@@ -1229,6 +1288,9 @@ function renderSlaDashboard(report){
 
 function renderDashboardResponse(payload,view,tableId){
   if(view==="slaDashboard")renderSlaDashboard(payload.metadata?.slaDashboard);
+  if(["slaDashboard","executiveSnapshot"].includes(view)){
+    renderComplianceSnapshots(view,view==="slaDashboard"?payload.metadata?.slaDashboard?.compliancePeriods:payload.metadata?.management?.sla?.compliancePeriods);
+  }
   ensureManagementReport(view);
   renderManagementSla(view,payload.metadata?.management?.sla);
   if(view==="trend")$("lifecycleOsBreakdown").hidden=state.reportingBreakdown==="All";

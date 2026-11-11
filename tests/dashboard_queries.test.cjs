@@ -1634,6 +1634,94 @@ function slaDashboardReport(){
   return {unit:"distinct-entities",asOfUtc:"2026-10-24T12:00:00Z",history:{startUtc:"2026-08-01T00:00:00Z",snapshots:85},periods,coverageGap:false};
 }
 
+function compliancePeriods(){
+  const current=slaDashboardReport().periods[0];
+  return ["Week to date","Month to date","Rolling 90 days","Year to date","Custom dates"].map(label=>({
+    ...current,label,
+    cves:{...current.cves,openWithin:3,openOverdue:1,openWithinPercent:75,completedWithin:2,completedLate:1,completedUnknown:2,completionPercent:200/3},
+    machines:{...current.machines,openWithin:1,openOverdue:1,openWithinPercent:50,completedWithin:1,completedLate:1,completionPercent:50},
+  }));
+}
+
+for(const view of ["slaDashboard","executiveSnapshot"]){
+  test(`${view} shows all compliance periods, both percentages and distinct denominators`,async()=>{
+    const app=fixture();await tick();
+    app.run(`activateView("${view}")`);await tick();
+    const report={...slaDashboardReport(),compliancePeriods:compliancePeriods()};
+    const metadata=view==="slaDashboard"?{slaDashboard:report}:{management:{sla:{entityPeriods:report.periods,compliancePeriods:report.compliancePeriods}}};
+    app.query().at(-1).resolve(app.payload({metadata}));await tick();
+    const markup=app.elements.get(`${view}ComplianceCards`).innerHTML;
+    for(const period of report.compliancePeriods)assert.ok(markup.includes(`<h3>${period.label}</h3>`));
+    assert.match(markup,/Distinct CVEs/);
+    assert.match(markup,/Distinct machines/);
+    assert.match(markup,/Unresolved within SLA %/);
+    assert.match(markup,/Confirmed on-time clearance %/);
+    assert.match(markup,/75\.0%/);
+    assert.match(markup,/66\.7%/);
+    assert.match(markup,/50\.0%/);
+    assert.match(markup,/3 \/ 4 known-deadline unresolved/);
+    assert.match(markup,/2 \/ 3 known-deadline full clearances/);
+    assert.match(markup,/1 \/ 2 known-deadline unresolved/);
+    assert.match(markup,/2 deadline unknown \(excluded\)/);
+    assert.match(markup,/1 awaiting confirmation; still unresolved, not a clearance/);
+    assert.doesNotMatch(markup,/NaN|undefined/);
+  });
+
+  test(`${view} custom compliance dates are validated, cached and isolated from other reporting ranges`,async()=>{
+    const app=fixture();await tick();
+    app.run(`activateView("${view}")`);await tick();
+    app.query().at(-1).resolve(app.payload());await tick();
+    assert.equal(app.elements.get(`${view}ComplianceEnd`).max,"2026-10-24");
+    const before=app.query().length;
+    app.elements.get(`${view}ComplianceStart`).value="2026-10-25";
+    app.elements.get(`${view}ComplianceEnd`).value="2026-10-24";
+    app.elements.get(`${view}ComplianceApply`).click();await tick();
+    assert.equal(app.query().length,before);
+    assert.match(app.elements.get(`${view}ComplianceMessage`).textContent,/Choose valid/);
+    app.elements.get(`${view}ComplianceStart`).value="2026-10-01";
+    app.elements.get(`${view}ComplianceEnd`).value="2026-10-25";
+    app.elements.get(`${view}ComplianceApply`).click();await tick();
+    assert.equal(app.query().length,before);
+    app.elements.get(`${view}ComplianceEnd`).value="2026-10-24";
+    app.elements.get(`${view}ComplianceApply`).click();await tick();
+    const selected=app.query().at(-1).payload;
+    assert.equal(selected.filters.slaComplianceStart,"2026-10-01");
+    assert.equal(selected.filters.slaComplianceEnd,"2026-10-24");
+    assert.equal(selected.filters.executiveSnapshotPeriod,"30days");
+    assert.equal(selected.filters.statisticsPeriod,"week");
+    assert.equal(app.elements.get(`${view}ComplianceMessage`).textContent,"");
+    const key=app.run(`dashboardResponseKey(dashboardRequest("${view}"))`);
+    app.run('state.slaCompliance.end="2026-10-23"');
+    assert.notEqual(app.run(`dashboardResponseKey(dashboardRequest("${view}"))`),key);
+    assert.equal(app.run('"slaComplianceStart" in dashboardRequest("overview").filters'),false);
+    app.run('state.slaCompliance.end="2026-10-24"');
+    app.query().at(-1).resolve(app.payload());await tick();
+    app.elements.get(`${view}ComplianceClear`).click();await tick();
+    assert.equal(app.run(`"slaComplianceStart" in dashboardRequest("${view}").filters`),false);
+    assert.equal(app.run('state.slaCompliance.start'),"");
+    assert.equal(app.elements.get(`${view}ComplianceStart`).value,"");
+  });
+}
+
+test("compliance percentages distinguish real zero, empty denominator and insufficient history",async()=>{
+  const app=fixture();await tick();
+  const periods=compliancePeriods();
+  periods[0].cves={...periods[0].cves,openWithin:0,openOverdue:2,openWithinPercent:0};
+  periods[0].machines={...periods[0].machines,completedWithin:0,completedLate:0,completionPercent:null};
+  periods[1].coverage="partial";
+  app.context.periods=periods;
+  app.run('renderComplianceSnapshots("slaDashboard",periods)');
+  const markup=app.elements.get("slaDashboardComplianceCards").innerHTML;
+  assert.match(markup,/>0\.0%</);
+  assert.match(markup,/0 \/ 2 known-deadline unresolved/);
+  assert.match(markup,/0 \/ 0 known-deadline full clearances; none to assess/);
+  assert.match(markup,/Waiting for data/);
+  const partial=markup.split("<h3>Month to date</h3>")[1].split("<h3>Rolling 90 days</h3>")[0];
+  assert.match(partial,/Insufficient retained history/);
+  assert.doesNotMatch(partial,/\d+\.\d%|0 \/ 0|NaN|undefined/);
+  assert.match(html,/not a period average/);
+});
+
 test("dedicated graphical SLA navigation leaves the Remediate work lists separate",async()=>{
   const app=fixture();await tick();
   app.run('state.slaPolicy={policies:[{severity:"Critical",knownExploitRequired:false,slaDays:2},{severity:"Critical",knownExploitRequired:true,slaDays:4}]}');

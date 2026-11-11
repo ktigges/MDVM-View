@@ -34,6 +34,187 @@ def request(view="executiveSnapshot", **filters):
     return {"view": view, "filters": {"managementReporting": True, **filters}}
 
 
+@pytest.mark.parametrize(("snapshot", "starts"), [
+    ("2026-10-24T12:00:00Z", ["2026-10-19", "2026-10-01", "2026-07-27", "2026-01-01"]),
+    ("2026-01-01T00:00:00Z", ["2025-12-29", "2026-01-01", "2025-10-04", "2026-01-01"]),
+    ("2024-03-04T12:00:00Z", ["2024-03-04", "2024-03-01", "2023-12-06", "2024-01-01"]),
+])
+def test_compliance_periods_are_inclusive_utc_and_snapshot_anchored(snapshot, starts):
+    timestamp = datetime.fromisoformat(snapshot).timestamp()
+    periods = dashboard_management.sla_compliance_periods(timestamp)
+    assert [period["label"] for period in periods] == [
+        "Week to date", "Month to date", "Rolling 90 days", "Year to date",
+    ]
+    assert [period["start"] for period in periods] == starts
+    assert all(period["end"] == snapshot[:10] for period in periods)
+    assert dashboard_management.period_bounds(periods[0], timestamp)[1] == timestamp
+
+
+@pytest.mark.parametrize(("start", "end"), [
+    ("2026-10-01", None), (None, "2026-10-24"), ("bad", "2026-10-24"),
+    ("2026-02-29", "2026-10-24"), ("20261001", "2026-10-24"),
+    ("2026-10-24", "2026-10-23"), ("2026-10-01", "2026-10-25"),
+    (0, 0), (False, None), (["2026-10-01"], "2026-10-24"),
+])
+def test_compliance_periods_reject_invalid_custom_dates(start, end):
+    with pytest.raises(ValueError, match="[Cc]ustom compliance dates"):
+        dashboard_management.sla_compliance_periods(datetime.fromisoformat(SNAPSHOT).timestamp(), start, end)
+
+
+def compliance_data():
+    data = datasets(0)
+    data["run-history"] = [{
+        "DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
+        "FindingHistoryStartUtc": "2026-01-01T00:00:00Z",
+    }]
+    rows = [
+        finding(0, DeviceId="one", CveId="shared"),
+        finding(1, DeviceId="two", CveId="shared", SlaDueUtc="2026-10-23T00:00:00Z"),
+        finding(2, DeviceId="two", CveId="extra"),
+        finding(3, DeviceId="one", CveId="third"),
+        finding(4, DeviceId="one", CveId="pending", FindingStatus="PendingConfirmation",
+                EffectiveRemediationUtc="2026-10-22T12:00:00Z"),
+        finding(5, DeviceId="unknown", CveId="unknown", SlaDueUtc=None),
+        finding(6, DeviceId="cleared", CveId="fixed-one", FindingStatus="Fixed",
+                FixedUtc="2026-10-22T12:00:00Z"),
+        finding(7, DeviceId="cleared", CveId="fixed-two", FindingStatus="Fixed",
+                FixedUtc="2026-10-22T12:00:00Z"),
+        finding(8, DeviceId="late", CveId="fixed-late", FindingStatus="Fixed",
+                FixedUtc="2026-10-22T12:00:00Z", SlaDueUtc="2026-10-21T00:00:00Z"),
+        finding(9, DeviceId="unknown-clearance", CveId="fixed-unknown", FindingStatus="Fixed",
+                FixedUtc="2026-10-22T12:00:00Z", SlaDueUtc=None),
+    ]
+    data["findings"] = [
+        dict(row, FindingKey=f"{index}-{copy}", FirstSeenUtc="2026-01-01T00:00:00Z",
+             FirstObservedUtc="2026-01-01T00:00:00Z")
+        for index, row in enumerate(rows) for copy in range(4)
+    ]
+    return data
+
+
+def compliance_reports(result, view):
+    metadata = result["metadata"]
+    return metadata["slaDashboard"]["compliancePeriods"] if view == "slaDashboard" else metadata["management"]["sla"]["compliancePeriods"]
+
+
+@pytest.mark.parametrize("view", ["slaDashboard", "executiveSnapshot"])
+def test_compliance_reports_distinct_denominators_unknowns_and_pending(tmp_path, view):
+    e = engine(tmp_path, compliance_data())
+    payload = request(view, slaComplianceStart="2026-10-19", slaComplianceEnd="2026-10-24")
+    result = e.query(payload)
+    reports = compliance_reports(result, view)
+    assert len(reports) == 5
+    for period in reports:
+        assert period["coverage"] == "complete"
+        cves, machines = period["cves"], period["machines"]
+        assert (cves["openWithin"], cves["openOverdue"], cves["unknownOpen"]) == (3, 1, 1)
+        assert (machines["openWithin"], machines["openOverdue"], machines["unknownOpen"]) == (1, 1, 1)
+        assert cves["openWithinPercent"] == 75
+        assert machines["openWithinPercent"] == 50
+        assert (cves["completedWithin"], cves["completedLate"], cves["completedUnknown"]) == (2, 1, 1)
+        assert (machines["completedWithin"], machines["completedLate"], machines["completedUnknown"]) == (1, 1, 1)
+        assert cves["completionPercent"] == pytest.approx(200 / 3)
+        assert machines["completionPercent"] == 50
+        assert cves["awaitingConfirmation"] == machines["awaitingConfirmation"] == 1
+    if view == "slaDashboard":
+        assert len(result["metadata"]["slaDashboard"]["periods"]) == 5
+    else:
+        assert len(result["metadata"]["management"]["periods"]) == 2
+        assert len(result["metadata"]["management"]["sla"]["periods"]) == 2
+        assert len(result["metadata"]["management"]["sla"]["entityPeriods"]) == 2
+    assert compliance_reports(e.query(payload), view) == reports
+    assert compliance_reports(engine(tmp_path, compliance_data()).query(payload), view) == reports
+
+
+@pytest.mark.parametrize("view", ["slaDashboard", "executiveSnapshot"])
+def test_custom_compliance_uses_period_end_without_changing_other_reports(tmp_path, view):
+    e = engine(tmp_path, compliance_data())
+    baseline = e.query(request(view))
+    result = e.query(request(view, slaComplianceStart="2026-10-01", slaComplianceEnd="2026-10-21"))
+    reports = compliance_reports(result, view)
+    assert reports[:4] == compliance_reports(baseline, view)
+    custom = reports[-1]
+    assert custom["label"] == "Custom dates"
+    assert custom["cves"]["completionPercent"] is None
+    assert custom["cves"]["confirmedFixes"] == 0
+    assert (custom["cves"]["openWithin"], custom["cves"]["openOverdue"]) == (6, 1)
+    assert custom["cves"]["openWithinPercent"] == pytest.approx(600 / 7)
+    if view == "slaDashboard":
+        assert result["metadata"]["slaDashboard"]["periods"] == baseline["metadata"]["slaDashboard"]["periods"]
+    else:
+        assert result["metadata"]["management"]["periods"] == baseline["metadata"]["management"]["periods"]
+        assert result["tables"] == baseline["tables"]
+    assert compliance_reports(e.query(request(view)), view) == compliance_reports(baseline, view)
+
+
+@pytest.mark.parametrize("view", ["slaDashboard", "executiveSnapshot"])
+def test_compliance_clearance_rates_use_each_period_not_all_time(tmp_path, view):
+    data = compliance_data()
+    data["findings"] = [
+        finding(index, DeviceId=f"fixed-{index}", FindingStatus="Fixed", FixedUtc=fixed,
+                SlaDueUtc=due, FirstSeenUtc="2026-01-01T00:00:00Z", FirstObservedUtc="2026-01-01T00:00:00Z")
+        for index, (fixed, due) in enumerate([
+            ("2026-10-22T12:00:00Z", "2026-10-23T00:00:00Z"),
+            ("2026-10-05T12:00:00Z", "2026-10-04T00:00:00Z"),
+            ("2026-08-01T12:00:00Z", "2026-08-02T00:00:00Z"),
+            ("2026-02-01T12:00:00Z", "2026-01-31T00:00:00Z"),
+        ])
+    ]
+    reports = compliance_reports(engine(tmp_path, data).query(request(view)), view)
+    for entity in ("cves", "machines"):
+        assert [period[entity]["completionPercent"] for period in reports] == pytest.approx([100, 50, 200 / 3, 50])
+        assert all(period[entity]["openWithinPercent"] is None for period in reports)
+
+
+@pytest.mark.parametrize("view", ["slaDashboard", "executiveSnapshot"])
+@pytest.mark.parametrize("history_start", [None, "2026-10-23T00:00:00Z"])
+def test_compliance_insufficient_history_is_unknown_not_zero_or_success(tmp_path, view, history_start):
+    data = compliance_data()
+    data["run-history"] = [] if history_start is None else [{
+        "DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT, "FindingHistoryStartUtc": history_start,
+    }]
+    reports = compliance_reports(engine(tmp_path, data).query(request(view)), view)
+    for period in reports:
+        assert period["coverage"] == ("unavailable" if history_start is None else "partial")
+        for entity in ("cves", "machines"):
+            assert period[entity]["openWithinPercent"] is None
+            assert period[entity]["completionPercent"] is None
+            assert period[entity]["openWithin"] is None
+
+
+@pytest.mark.parametrize("view", ["slaDashboard", "executiveSnapshot"])
+def test_compliance_obeys_screen_scope_and_excludes_other_subscriptions(tmp_path, view):
+    data = compliance_data()
+    data["findings"].append(finding(100, SubscriptionId="other", OwnerTeam="Other"))
+    data["findings"].append(finding(101, Severity="Low"))
+    filters = {"executiveSnapshotSubscription": "subscription-1", "executiveSnapshotOwner": "Operations"} if view == "executiveSnapshot" else {"subscription": "subscription-1", "team": "Operations"}
+    reports = compliance_reports(engine(tmp_path, data).query(request(view, severity="High", **filters)), view)
+    assert reports[0]["cves"]["totalOpen"] == 5
+    assert reports[0]["machines"]["totalOpen"] == 3
+
+
+@pytest.mark.parametrize("view", ["slaDashboard", "executiveSnapshot"])
+def test_compliance_empty_denominators_are_not_success(tmp_path, view):
+    data = compliance_data()
+    data["findings"] = []
+    reports = compliance_reports(engine(tmp_path, data).query(request(view)), view)
+    for period in reports:
+        assert period["coverage"] == "complete"
+        for entity in ("cves", "machines"):
+            assert period[entity]["openWithinPercent"] is None
+            assert period[entity]["completionPercent"] is None
+            assert period[entity]["openWithin"] == period[entity]["completedWithin"] == 0
+
+
+@pytest.mark.parametrize("view", ["slaDashboard", "executiveSnapshot"])
+@pytest.mark.parametrize("end", [None, "2026-10-25"])
+def test_compliance_query_surfaces_invalid_custom_ranges(tmp_path, view, end):
+    with pytest.raises(ValueError, match="[Cc]ustom compliance dates"):
+        engine(tmp_path, compliance_data()).query(request(
+            view, slaComplianceStart="2026-10-01", slaComplianceEnd=end,
+        ))
+
+
 @pytest.mark.parametrize(("snapshot", "week", "month", "preceding_month"), [
     ("2026-03-02T12:00:00Z", ("2026-02-23", "2026-03-01"), ("2026-02-01", "2026-02-28"), ("2026-01-01", "2026-01-31")),
     ("2024-03-01T12:00:00Z", ("2024-02-19", "2024-02-25"), ("2024-02-01", "2024-02-29"), ("2024-01-01", "2024-01-31")),
