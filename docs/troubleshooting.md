@@ -63,6 +63,21 @@ source control, and restoring old edits can cause modify/delete conflicts.
 Retain the stash and review any intentional provider-lock changes separately.
 Pulling source does not deploy infrastructure or modify retained Azure history.
 
+### Web App code deployment says a Terraform output is unavailable
+
+Older code-only deployment tools required local Terraform outputs even when the
+Web App was already deployed. This can fail on another workstation or with
+missing/stale local state. The error's suggestion to deploy an infrastructure
+stage is not an appropriate recovery for an existing app.
+
+Pull the corrected release and rerun deployment menu option 4. Web App deploy,
+verify, and startup-log checks now read the target names from the existing
+`infra/terraform/main.tfvars.json` and validate the Azure CLI tenant/subscription.
+Verification discovers the deployed hostname and Entra client ID from Azure.
+Keep the customer's environment values and Terraform state intact; do not copy
+the maintainer's settings or run Terraform apply to repair code deployment.
+This fix does not recover Terraform state for later infrastructure management.
+
 ## 3. Defender and Microsoft Graph authentication
 
 ### Run comparisons and source tenant provenance

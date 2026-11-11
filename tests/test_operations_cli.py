@@ -362,9 +362,42 @@ def test_console_warns_about_a_stale_active_run_without_claiming_success(capsys)
     assert "publication is not complete" in output
 
 
-def test_webapp_startup_logs_use_configured_target_and_bounded_commands(monkeypatch, capsys):
-    outputs = {"resource_group_name": "rg-test", "web_app_name": "app-test"}
-    monkeypatch.setattr(operations_cli, "_tf_output", outputs.__getitem__)
+@pytest.mark.parametrize("operation", ["deploy", "verify", "logs"])
+@pytest.mark.parametrize("field", ["tenant_id", "subscription_id", "resource_group_name", "web_app_name"])
+@pytest.mark.parametrize("value", [None, "", "   ", 42])
+def test_webapp_code_operations_require_configured_target_before_azure(monkeypatch, configured_webapp_target, operation, field, value):
+    configured_webapp_target[field] = value
+    monkeypatch.setattr(operations_cli, "_dashboard_source_version", lambda: "2026.11.11.1")
+    monkeypatch.setattr(operations_cli, "_azure_json", lambda *args: pytest.fail("Validate target values before Azure access"))
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: pytest.fail("Invalid configuration must not access Azure"))
+    with pytest.raises(RuntimeError, match=f"non-empty {field}"):
+        if operation == "deploy":
+            operations_cli.deploy_webapp()
+        elif operation == "verify":
+            operations_cli.verify("webapp")
+        else:
+            operations_cli.check_webapp_startup_logs()
+
+
+@pytest.mark.parametrize("operation", ["deploy", "verify", "logs"])
+@pytest.mark.parametrize("account", [
+    {"tenantId": "different", "id": "subscription"},
+    {"tenantId": "tenant", "id": "different"},
+])
+def test_webapp_code_operations_reject_wrong_azure_account(monkeypatch, configured_webapp_target, operation, account):
+    monkeypatch.setattr(operations_cli, "_dashboard_source_version", lambda: "2026.11.11.1")
+    monkeypatch.setattr(operations_cli, "_azure_json", lambda *args: account)
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: pytest.fail("Wrong account must not access Web App resources"))
+    with pytest.raises(RuntimeError, match="but Terraform is configured"):
+        if operation == "deploy":
+            operations_cli.deploy_webapp()
+        elif operation == "verify":
+            operations_cli.verify("webapp")
+        else:
+            operations_cli.check_webapp_startup_logs()
+
+
+def test_webapp_startup_logs_use_configured_target_and_bounded_commands(monkeypatch, capsys, configured_webapp_target):
     calls = []
 
     def fake_az(*arguments, **kwargs):
@@ -375,7 +408,8 @@ def test_webapp_startup_logs_use_configured_target_and_bounded_commands(monkeypa
     assert operations_cli.main(["check-webapp-startup-logs"]) == 0
     assert calls == [
         (("webapp", "log", "startup", "show", "--help"), {"capture": True, "check": False, "timeout": 30}),
-        (("webapp", "log", "startup", "show", "--resource-group", "rg-test", "--name", "app-test"), {"timeout": 120}),
+        (("webapp", "log", "startup", "show", "--subscription", "subscription",
+          "--resource-group", "rg-test", "--name", "app-test"), {"timeout": 120}),
     ]
     output = capsys.readouterr().out
     assert "app-test" in output
@@ -383,8 +417,7 @@ def test_webapp_startup_logs_use_configured_target_and_bounded_commands(monkeypa
     assert "unredacted" in output
 
 
-def test_webapp_startup_logs_explain_unsupported_cli(monkeypatch, capsys):
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: "test")
+def test_webapp_startup_logs_explain_unsupported_cli(monkeypatch, capsys, configured_webapp_target):
     calls = []
 
     def fake_az(*arguments, **kwargs):
@@ -403,8 +436,7 @@ def test_webapp_startup_logs_explain_unsupported_cli(monkeypatch, capsys):
     subprocess.CalledProcessError(1, ["az", "webapp", "log", "startup", "show"]),
     subprocess.TimeoutExpired(["az", "webapp", "log", "startup", "show"], 120),
 ])
-def test_webapp_startup_logs_surface_errors(monkeypatch, capsys, failure):
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: "test")
+def test_webapp_startup_logs_surface_errors(monkeypatch, capsys, failure, configured_webapp_target):
 
     def fake_az(*arguments, **kwargs):
         if "--help" in arguments:
@@ -2033,7 +2065,7 @@ def test_webapp_onedeploy_allows_empty_history_before_first_deployment(monkeypat
 
 
 @pytest.mark.parametrize("replacement_status", [None, 3, 4])
-def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, tmp_path: Path, replacement_status):
+def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, tmp_path: Path, replacement_status, configured_webapp_target):
     calls: list[tuple[object, ...]] = []
     stamped = []
     monkeypatch.delenv("DASHBOARD_VERSION", raising=False)
@@ -2058,13 +2090,7 @@ def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, 
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
-    monkeypatch.setattr(operations_cli, "_values", lambda: {"dashboard_version": "2026.10.09.3"})
     monkeypatch.setattr(operations_cli, "_dashboard_source_version", lambda: "2026.10.24.1")
-    monkeypatch.setattr(
-        operations_cli,
-        "_tf_output",
-        lambda name: {"resource_group_name": "rg-test", "web_app_name": "app-test"}[name],
-    )
     monkeypatch.setattr(operations_cli, "_zip_tree", lambda *args, **kwargs: None)
     monkeypatch.setattr(operations_cli, "_stamp_web_package", lambda package, version, revision: stamped.append(version))
     monkeypatch.setattr(operations_cli, "_az", fake_az)
@@ -2087,6 +2113,10 @@ def test_webapp_deployment_restarts_only_after_onedeploy_completes(monkeypatch, 
     assert stamped == ["2026.10.24.1"]
     assert any("DASHBOARD_VERSION=2026.10.24.1" in call for call in calls)
     assert any("WEBSITES_CONTAINER_START_TIME_LIMIT=1800" in call for call in calls)
+    assert all(
+        call[call.index("--subscription") + 1] == "subscription"
+        for call in calls if call[0] == "webapp"
+    )
     deploy_index = next(index for index, call in enumerate(calls) if call[:2] == ("webapp", "deploy"))
     settings_index = next(
         index for index, call in enumerate(calls)
@@ -2116,7 +2146,7 @@ def test_webapp_deployment_reports_onedeploy_failure(monkeypatch):
 
 
 @pytest.mark.parametrize("override,expected", [(None, "2026.10.24.1"), ("custom+release", "custom+release"), ("custom release", "custom-release")])
-def test_webapp_deployment_uses_source_without_editing_customer_configuration(monkeypatch, tmp_path: Path, override, expected):
+def test_webapp_deployment_uses_source_without_editing_customer_configuration(monkeypatch, tmp_path: Path, override, expected, configured_webapp_target):
     calls = []
     stamped = []
     config = tmp_path / "dashboard/config.js"
@@ -2124,19 +2154,22 @@ def test_webapp_deployment_uses_source_without_editing_customer_configuration(mo
     config.write_text('window.VULNERABILITY_VIEW_CONFIG = {version: "2026.10.24.1"};')
     customer_values = tmp_path / "infra/terraform/main.tfvars.json"
     customer_values.parent.mkdir(parents=True)
-    customer_values.write_text('{"dashboard_version":"2026.10.12.13","resource_group_name":"customer-rg"}')
+    customer_values.write_text(json.dumps({
+        **configured_webapp_target, "dashboard_version": "2026.10.12.13",
+        "resource_group_name": "customer-rg",
+    }))
     original = customer_values.read_bytes()
+    environment = tmp_path / ".env"
+    environment.write_text("CUSTOMER_SETTING=keep\n")
+    state = customer_values.with_name("terraform.tfstate")
+    state.write_text('{"resources":[],"serial":7}\n')
+    protected_files = {path: path.read_bytes() for path in (customer_values, environment, state)}
     if override is None:
         monkeypatch.delenv("DASHBOARD_VERSION", raising=False)
     else:
         monkeypatch.setenv("DASHBOARD_VERSION", override)
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
-    monkeypatch.setattr(operations_cli, "_values", lambda: pytest.fail("Code deployment must not use customer dashboard_version"))
-    monkeypatch.setattr(
-        operations_cli,
-        "_tf_output",
-        lambda name: {"resource_group_name": "rg-test", "web_app_name": "app-test"}[name],
-    )
+    monkeypatch.setattr(operations_cli, "_values", lambda: json.loads(customer_values.read_text()))
     monkeypatch.setattr(operations_cli, "_zip_tree", lambda *args, **kwargs: None)
     monkeypatch.setattr(operations_cli, "_stamp_web_package", lambda package, version, revision: stamped.append(version))
     monkeypatch.setattr(operations_cli, "_webapp_onedeploy_status", lambda *args: ({"deploymentId": "previous"}, ""))
@@ -2147,7 +2180,12 @@ def test_webapp_deployment_uses_source_without_editing_customer_configuration(mo
 
     assert stamped == [expected]
     assert any(f"DASHBOARD_VERSION={expected}" in call for call in calls)
+    assert all(
+        call[call.index("--resource-group") + 1] == "customer-rg"
+        for call in calls if call[0] == "webapp"
+    )
     assert customer_values.read_bytes() == original
+    assert all(path.read_bytes() == content for path, content in protected_files.items())
 
 
 @pytest.mark.parametrize("configuration", ["window.CONFIG = {};", 'window.CONFIG = {version: "not-a-release"};'])
@@ -2157,6 +2195,7 @@ def test_webapp_deployment_rejects_missing_or_invalid_source_version_before_azur
     config.write_text(configuration)
     monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
     monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: pytest.fail("Invalid source must not modify Azure"))
+    monkeypatch.setattr(operations_cli, "_values", lambda: pytest.fail("Validate source before reading customer configuration"))
     monkeypatch.setattr(operations_cli, "_tf_output", lambda *args: pytest.fail("Validate source before infrastructure lookups"))
     with pytest.raises(RuntimeError, match="dashboard.*version|Dashboard source version"):
         operations_cli.deploy_webapp()
@@ -2915,15 +2954,7 @@ def test_verify_function_still_requires_valid_storage_identity(monkeypatch, conf
         operations_cli.verify("function")
 
 
-def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatch, capsys):
-    outputs = {
-        "resource_group_name": "rg-test",
-        "web_app_name": "app-test",
-        "dashboard_url": "https://app-test.example/",
-        "dashboard_enterprise_application_name": "DVM Viewer",
-        "dashboard_entra_client_id": "client-id",
-        "dashboard_enterprise_application_object_id": "object-id",
-    }
+def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatch, capsys, configured_webapp_target):
     azure_calls = []
 
     class RedirectResponse:
@@ -2936,7 +2967,14 @@ def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatc
 
     def fake_az(*args, **kwargs):
         azure_calls.append((args, kwargs))
-        stdout = "2026.10.11.2\n" if args[:4] == ("webapp", "config", "appsettings", "list") else ""
+        if args[:4] == ("webapp", "config", "appsettings", "list"):
+            stdout = "2026.10.11.2\n"
+        elif args[:3] == ("webapp", "auth", "show"):
+            stdout = "client-id\n"
+        elif "--query" in args and args[args.index("--query") + 1] == "defaultHostName":
+            stdout = "app-test.example\n"
+        else:
+            stdout = ""
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
     get_calls = []
@@ -2945,7 +2983,6 @@ def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatc
         get_calls.append((args, kwargs))
         return RedirectResponse()
 
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: outputs[name])
     monkeypatch.setattr(
         operations_cli, "_validate_function_runtime_storage_auth",
         lambda *args: pytest.fail("Web App verification must not inspect the Function"),
@@ -2957,6 +2994,7 @@ def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatc
 
     assert all(kwargs["timeout"] == 60 for _, kwargs in azure_calls)
     assert all(args[0] != "functionapp" for args, _ in azure_calls)
+    assert all(args[args.index("--subscription") + 1] == "subscription" for args, _ in azure_calls)
     assert get_calls == [
         (("https://app-test.example/",), {"allow_redirects": False, "stream": True, "timeout": (10, 30)})
     ]
@@ -2964,17 +3002,11 @@ def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatc
     assert "Reading Web App deployment version" in output
     assert "Authentication gate check: HTTP 302" in output
     assert "Web App verification passed" in output
+    assert "Application (client) ID: client-id" in output
+    assert "Enterprise Application object ID: see" in output
 
 
-def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys):
-    outputs = {
-        "resource_group_name": "rg-test",
-        "web_app_name": "app-test",
-        "dashboard_url": "https://app-test.example/",
-        "dashboard_enterprise_application_name": "DVM Viewer",
-        "dashboard_entra_client_id": "client-id",
-        "dashboard_enterprise_application_object_id": "object-id",
-    }
+def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys, configured_webapp_target):
 
     class ChallengeResponse:
         status_code = 401
@@ -2984,7 +3016,6 @@ def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys):
         def close():
             return None
 
-    monkeypatch.setattr(operations_cli, "_tf_output", lambda name: outputs[name])
     monkeypatch.setattr(
         operations_cli, "_validate_function_runtime_storage_auth",
         lambda *args: pytest.fail("Web App verification must not inspect the Function"),
@@ -2992,7 +3023,9 @@ def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys):
     monkeypatch.setattr(
         operations_cli,
         "_az",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="2026.10.11.2\n"),
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args, 0, stdout="app-test.example\n" if "defaultHostName" in args else "client-id\n",
+        ),
     )
     monkeypatch.setattr(operations_cli.requests, "get", lambda *args, **kwargs: ChallengeResponse())
 
@@ -3001,6 +3034,37 @@ def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "Authentication gate check: HTTP 401 -> Bearer" in output
     assert "Web App verification passed" in output
+
+
+@pytest.mark.parametrize("missing", ["hostname", "client-id"])
+def test_verify_webapp_rejects_missing_live_configuration(monkeypatch, configured_webapp_target, missing):
+    def fake_az(*args, **kwargs):
+        if "defaultHostName" in args:
+            stdout = "" if missing == "hostname" else "app-test.example"
+        elif args[:3] == ("webapp", "auth", "show"):
+            stdout = "null"
+        else:
+            stdout = "2026.11.11.1"
+        return subprocess.CompletedProcess(args, 0, stdout=stdout)
+
+    monkeypatch.setattr(operations_cli, "_az", fake_az)
+    response = SimpleNamespace(status_code=302, headers={"location": "https://login.microsoftonline.com/test"}, close=lambda: None)
+    monkeypatch.setattr(operations_cli, "_get_webapp_response_with_retry", lambda url: response)
+    with pytest.raises(RuntimeError, match="hostname|application client ID"):
+        operations_cli.verify("webapp")
+
+
+def test_webapp_deployment_requires_existing_resource_id_before_upload(monkeypatch, tmp_path, configured_webapp_target):
+    calls = []
+    monkeypatch.setattr(operations_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(operations_cli, "_dashboard_source_version", lambda: "2026.11.11.1")
+    monkeypatch.setattr(operations_cli, "_zip_tree", lambda *args: None)
+    monkeypatch.setattr(operations_cli, "_stamp_web_package", lambda *args: None)
+    monkeypatch.setattr(operations_cli, "_az", lambda *args, **kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0, stdout=""))
+    with pytest.raises(RuntimeError, match="no deployment was submitted"):
+        operations_cli.deploy_webapp()
+    assert len(calls) == 1
+    assert calls[0][:2] == ("webapp", "show")
 
 
 def test_webapp_startup_retries_transient_response(monkeypatch, capsys):

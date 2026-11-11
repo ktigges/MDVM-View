@@ -251,7 +251,7 @@ Run commands from the repository root. The script expects:
 | `git` | Function commit metadata and fallback release version |
 | `.venv/` or `.venv-win/` | Project Python, status, and Defender preflight commands |
 | `terraform/main.tfvars.json` | Ignored environment names, IDs, settings, and Function version |
-| Terraform state | Existing-resource identity and outputs consumed by package operations |
+| Terraform state | Infrastructure management and Function package deployment outputs; not required for Web App code deploy/verify |
 
 The supplied configuration writes Terraform state locally to
 `infra/terraform/terraform.tfstate` on the deployment workstation. A shared
@@ -604,6 +604,15 @@ Customers can pull the release with `git pull --ff-only` and run deployment menu
 option 4 without editing local version fields or running the maintainer's version
 bump script. A stale `dashboard_version` in customer Terraform values does not
 block or relabel the code deployment; those customer settings are not rewritten.
+Web App code deployment, verification, and startup-log checks read the existing
+`tenant_id`, `subscription_id`, `resource_group_name`, and `web_app_name` from
+`infra/terraform/main.tfvars.json`. They validate the active Azure CLI account
+and explicitly target that subscription, without invoking Terraform or requiring
+local state. Missing state is not a reason to run an infrastructure apply.
+Verification reads the deployed hostname and Entra client ID from Azure. It
+prints portal directions for the Enterprise Application object ID rather than
+requiring Terraform outputs or additional Microsoft Graph directory permissions.
+These operations do not rewrite local environment settings, values, or state.
 
 Function and Web App package deployments are independent:
 
