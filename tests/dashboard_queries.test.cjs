@@ -568,18 +568,18 @@ test("activity tiles explain counts and partial fixes in plain language on hover
 test("entity tiles place distinct CVE labels above their values",async()=>{
   const app=fixture();await tick();
   app.run('cards("pivotCards",[[14009,"Distinct active CVEs"]])');
-  assert.match(app.elements.get("pivotCards").innerHTML,/>Distinct active CVEs<\/span><strong class="value">14,009<\/strong>/);
+  assert.match(app.elements.get("pivotCards").innerHTML,/>Distinct active CVEs <button[^>]+data-help-key="Distinct active CVEs"[^>]*>\?<\/button><\/span><strong class="value">14,009<\/strong>/);
 });
 
-test("recommendation activity explains that one finding on one machine is enough to count progress",()=>{
+test("recommendation activity distinguishes observed progress from confirmed clearance",()=>{
   const tile=html.match(/<button\b[^>]*aria-describedby="fixedRecommendationHelp"[^>]*>(.*?)<\/button>/)?.[1];
   assert.ok(tile);
   assert.match(tile,/<span>recommendations with observed progress<\/span>/);
-  assert.match(tile,/recommendation counts once when at least one linked finding stopped appearing/);
-  assert.match(tile,/one vulnerability in one software version on one machine/);
-  assert.match(tile,/one finding disappearing on one machine is enough/);
+  assert.match(tile,/recommendation counts once when at least one linked remediation observation/);
+  assert.match(tile,/not the same as confirmed Improved or Fully resolved/);
+  assert.match(tile,/Software and version records are supporting evidence, not additional vulnerabilities to count/);
   assert.match(tile,/awaiting confirmation/);
-  assert.match(tile,/same vulnerability may remain in other software on that machine or on other machines/);
+  assert.match(tile,/same CVE may remain on the machine or other machines/);
   assert.match(tile,/does not mean the recommendation is finished/);
 });
 
@@ -590,7 +590,7 @@ test("vulnerability count help explains distinct CVEs without offering instance 
   assert.match(help,/filtered snapshot/);
   app.run('cards("pivotCards",[[100,"Distinct active CVEs"]])');
   assert.match(app.elements.get("pivotCards").innerHTML,/title="[^"]*Each CVE is counted once/);
-  assert.match(app.elements.get("pivotCards").innerHTML,/tabindex="0" aria-label="[^"]*Each CVE is counted once/);
+  assert.match(app.elements.get("pivotCards").innerHTML,/<button[^>]+aria-label="Explain Distinct active CVEs" aria-haspopup="dialog"/);
   assert.match(html,/<select id="findingsMode" aria-describedby="findingInstancesHelp"/);
   assert.match(html,/<details class="finding-count-help"><summary>How vulnerabilities are counted<\/summary><p id="findingInstancesHelp">/);
   assert.match(html,/supporting evidence, not additional vulnerabilities/);
@@ -690,7 +690,8 @@ test("machine detail shows distinct active and pending CVEs without software-rec
   assert.ok(app.elements.get("pivotCards").innerHTML.includes("Distinct active CVEs"));
   const cards=app.elements.get("pivotCards").innerHTML;
   assert.doesNotMatch(cards,/exposure instances|finding instances|evidence rows/i);
-  assert.equal((cards.match(/ title="/g)||[]).length,3);
+  assert.equal((cards.match(/data-help-key=/g)||[]).length,3);
+  assert.equal((cards.match(/aria-haspopup="dialog"/g)||[]).length,3);
   assert.match(cards,/counts can overlap/);
   assert.match(cards,/grouping combines multiple instances/);
   const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
@@ -1000,6 +1001,110 @@ test("recommendation tracking remains enabled after grouped related rows and use
   assert.equal(app.query().at(-1).payload.view,"detail");
 });
 
+for(const closeControl of ["clearPivot","pivotBackdrop"]){
+  test(`saved work status refreshes the originating list when closing with ${closeControl}`,async()=>{
+    const app=fixture();await tick();
+    app.query()[0].resolve(app.payload());await tick();
+    app.run('state.recommendationTrackingEnabled=true;activateView("recommendations")');
+    const row={RecommendationId:"rec-1",RecommendationName:"Upgrade product",DataOrigin:"Live",TrackingStatus:"Untracked"};
+    const list=()=>app.payload({tables:{recommendationTable:{columns:["RecommendationName"],items:[row],total:1,offset:0,limit:100,action:"recommendation"}}});
+    app.query().at(-1).resolve(list());await tick();
+    app.run('pivotToRecommendation({RecommendationId:"rec-1",RecommendationName:"Upgrade product",DataOrigin:"Live"})');
+    const detail=()=>app.payload({detail:{type:"recommendation",id:"rec-1",record:row}});
+    app.query().at(-1).resolve(detail());await tick();
+    app.run('void updateRecommendationTracking("InProgress")');
+    app.requests.at(-1).resolve({});await tick();
+    app.requests.at(-1).resolve({items:[{recommendationId:"rec-1",effectiveStatus:"InProgress"}]});await tick();
+    assert.match(app.elements.get("recommendationTrackingStatus").textContent,/In progress/);
+    app.query().at(-1).resolve(detail());await tick();
+    const before=app.query().length;
+    app.elements.get(closeControl).dispatch("click");
+    assert.equal(app.query().length,before+1);
+    assert.equal(app.query().at(-1).payload.view,"recommendations");
+    row.TrackingStatus="InProgress";
+    app.query().at(-1).resolve(list());await tick();
+    assert.match(app.elements.get("recommendationTable").innerHTML,/In progress/);
+    assert.equal(app.elements.get("pivotPanel").hidden,true);
+  });
+}
+
+test("contextual help explains progress, SLA assessment and separate workflow status",async()=>{
+  const app=fixture();await tick();
+  for(const label of ["Still open","Improved","Fully resolved","Progress status","SLA risk status","Not yet due","Overdue","Deadline unknown","Cleared on time","Cleared late","Summary","Dashboard work status","In progress"]){
+    assert.ok(app.run(`metricHelp(${JSON.stringify(label)})`).length>50,label);
+  }
+  assert.match(app.run('metricHelp("Improved")'),/still unresolved/);
+  assert.match(app.run('metricHelp("Still open")'),/reporting period/);
+  assert.match(app.run('metricHelp("In progress")'),/does not.*(?:Defender|SLA)/);
+  assert.match(app.run('metricHelp("Confirmed on-time %")'),/known deadlines/);
+  app.run('openMetricHelp("Improved")');
+  assert.equal(app.elements.get("metricHelpDialog").open,true);
+  assert.equal(app.elements.get("metricHelpTitle").textContent,"Improved");
+  assert.match(app.elements.get("metricHelpText").textContent,/still unresolved/);
+  app.elements.get("closeMetricHelp").dispatch("click");
+  assert.equal(app.elements.get("metricHelpDialog").open,false);
+  assert.equal(app.run('explainedCell("PendingEvidence","No",{})'),"No");
+});
+
+test("saving an unchanged work status clears the saving message without reloading analytics",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('state.recommendationTrackingEnabled=true;pivotToRecommendation({RecommendationId:"rec-1",DataOrigin:"Live"})');
+  app.query().at(-1).resolve(app.payload({detail:{type:"recommendation",id:"rec-1",record:{RecommendationId:"rec-1",DataOrigin:"Live"}}}));await tick();
+  app.run('state.recommendationTracking.set("rec-1",{recommendationId:"rec-1",effectiveStatus:"InProgress"})');
+  const count=app.query().length,saving=app.run('updateRecommendationTracking("InProgress")');
+  app.requests.at(-1).resolve({});await tick();
+  app.requests.at(-1).resolve({items:[{recommendationId:"rec-1",effectiveStatus:"InProgress"}]});
+  assert.equal(await saving,true);
+  assert.match(app.elements.get("recommendationTrackingStatus").textContent,/In progress/);
+  assert.doesNotMatch(app.elements.get("recommendationTrackingStatus").textContent,/Saving/);
+  assert.equal(app.query().length,count);
+});
+
+test("help is available on status cells, SLA columns, cards and Summary without changing row actions",async()=>{
+  const app=fixture();await tick();
+  app.run(`cards("pivotCards",[[3,"Machines with open risk"],[2,"CVEs improved"],[1,"Recommendations fully resolved"]]);
+    table("recommendationTable",["ProgressStatus","SlaStatus"],[{ProgressStatus:"Improved",SlaStatus:"Overdue"}],()=>{window.rowOpened=true;});
+    ensureManagementReport("executive");
+    renderDashboardChart("executiveManagementSlaSnapshot",{kind:"entity-sla-status",rows:[]});`);
+  assert.equal((app.elements.get("pivotCards").innerHTML.match(/data-help-key=/g)||[]).length,3);
+  const markup=app.elements.get("recommendationTable").innerHTML;
+  for(const key of ["Progress Status","SLA risk status","Improved","Overdue"])assert.ok(markup.includes(`data-help-key="${key}"`),key);
+  assert.match(app.elements.get("executiveManagement").innerHTML,/data-help-key="Summary"/);
+  for(const label of ["Not yet due","Overdue","Deadline unknown","Fully cleared","Cleared on time","Cleared late"]){
+    assert.ok(app.elements.get("executiveManagementSlaSnapshot").innerHTML.includes(`data-help-key="${label}"`),label);
+  }
+  const row=app.elements.get("recommendationTable").tableRows[0],target={closest:()=>({dataset:{helpKey:"Improved"}})};
+  row.listeners.click[0]({target});
+  row.listeners.keydown[0]({target,key:"Enter",preventDefault(){}});
+  assert.equal(app.context.window.rowOpened,undefined);
+  row.click();
+  assert.equal(app.context.window.rowOpened,true);
+});
+
+for(const failRefresh of [false,true]){
+  test(`work status ${failRefresh?"refresh":"write"} failures remain explicit and retryable`,async()=>{
+    const app=fixture();await tick();
+    app.query()[0].resolve(app.payload());await tick();
+    app.run('state.recommendationTrackingEnabled=true;pivotToRecommendation({RecommendationId:"rec-1",DataOrigin:"Live"})');
+    app.query().at(-1).resolve(app.payload({detail:{type:"recommendation",id:"rec-1",record:{RecommendationId:"rec-1",DataOrigin:"Live"}}}));await tick();
+    const saving=app.run('updateRecommendationTracking("InProgress")');
+    app.requests.at(-1).resolve({},failRefresh?200:503);await tick();
+    if(failRefresh)app.requests.at(-1).resolve({},503);
+    assert.equal(await saving,false);
+    assert.match(app.elements.get("recommendationTrackingStatus").textContent,failRefresh?/was saved, but refreshing it failed/:/update failed/);
+    assert.equal(app.run('state.recommendationTracking.has("rec-1")'),false);
+    if(failRefresh){
+      app.elements.get("retryDashboardQuery").dispatch("click");
+      const read=app.requests.at(-1);
+      assert.equal(read.options.method,undefined);
+      assert.ok(read.url.startsWith("/api/recommendation-tracking?"));
+      read.resolve({items:[{recommendationId:"rec-1",effectiveStatus:"InProgress"}]});await tick();
+      assert.match(app.elements.get("recommendationTrackingStatus").textContent,/In progress/);
+    }
+  });
+}
+
 test("new filter scopes clear prior table contents even if a report response contains only a validation context",async()=>{
   const app=fixture();await tick();
   app.query()[0].resolve(app.payload());await tick();
@@ -1077,7 +1182,7 @@ test("recommendation rows show machines and CVEs without exposing supporting rec
   const markup=app.elements.get("recommendationTable").innerHTML;
   assert.match(markup,/Update software/);
   assert.match(markup,/Distinct active CVEs/);
-  assert.match(markup,/<td>500<\/td>/);
+  assert.match(markup,/<td(?: [^>]*)?>500<\/td>/);
   assert.ok(!markup.includes("1000000")&&!markup.includes("1,000,000"));
 });
 

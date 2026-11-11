@@ -467,3 +467,13 @@ body.pivot-detail-open .pivot-panel.fullscreen-mode{top:calc(var(--workspace-con
 @media(max-width:760px){.sla-calendar-grid,.sla-severity-visuals{grid-template-columns:1fr}.sla-headline-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:430px){.sla-hero-card{flex-direction:column;align-items:stretch;padding:16px}.sla-calendar-row>div:first-child{grid-template-columns:1fr}.sla-calendar-row strong{grid-column:1;grid-row:auto;text-align:left}.sla-headline-grid strong{font-size:26px}}
 @media print{.sla-hero-card,.sla-severity-card,.sla-calendar-metric{break-inside:avoid}.sla-dashboard-visuals{gap:12px}.sla-dashboard-definitions{display:none}}
+
+.metric-help-button{display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px;margin-left:4px;padding:1px 5px;border:1px solid #8da6b6;border-radius:50%;background:#eef5f8;color:#174e70;font:700 12px/1 system-ui;vertical-align:middle;cursor:help;letter-spacing:normal;text-transform:none}
+.metric-help-button:hover,.metric-help-button:focus-visible{border-color:#176f86;background:#dceef4;outline:2px solid #176f86;outline-offset:2px}
+.metric-help-dialog{width:min(600px,calc(100vw - 32px));max-height:calc(100vh - 48px);padding:24px;border:1px solid #8da6b6;border-radius:12px;color:#213f52;background:#fff;box-shadow:0 18px 60px rgba(9,34,51,.3)}
+.metric-help-dialog::backdrop{background:rgba(9,34,51,.5)}
+.metric-help-dialog h2{margin:8px 0 16px;font-size:23px}
+.metric-help-dialog #metricHelpText{margin:0 0 22px;line-height:1.75;font-size:15px;white-space:normal;overflow-wrap:anywhere}
+.metric-help-dialog #closeMetricHelp{padding:9px 14px;border:1px solid #8da6b6;border-radius:6px;background:#eef5f8;color:#174e70;font-weight:700}
+.metric-glossary{display:grid;gap:12px}.metric-glossary dt{font-weight:750;color:#17384f}.metric-glossary dd{margin:4px 0 0;line-height:1.6}
+@media print{.metric-help-button,.metric-help-dialog{display:none}}
