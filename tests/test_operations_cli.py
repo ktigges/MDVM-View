@@ -2969,7 +2969,7 @@ def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatc
         azure_calls.append((args, kwargs))
         if args[:4] == ("webapp", "config", "appsettings", "list"):
             stdout = "2026.10.11.2\n"
-        elif args[:3] == ("webapp", "auth", "show"):
+        elif args[0] == "rest":
             stdout = "client-id\n"
         elif "--query" in args and args[args.index("--query") + 1] == "defaultHostName":
             stdout = "app-test.example\n"
@@ -3004,6 +3004,28 @@ def test_verify_webapp_bounds_azure_calls_and_checks_browser_redirect(monkeypatc
     assert "Web App verification passed" in output
     assert "Application (client) ID: client-id" in output
     assert "Enterprise Application object ID: see" in output
+
+
+def test_webapp_access_reads_explicit_auth_settings_v2_without_modification(monkeypatch, capsys, configured_webapp_target):
+    calls = []
+
+    def fake_az(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, stdout="client-id\n")
+
+    monkeypatch.setattr(operations_cli, "_az", fake_az)
+
+    operations_cli._dashboard_access(configured_webapp_target)
+
+    assert calls == [((
+        "rest", "--method", "get",
+        "--url", "https://management.azure.com/subscriptions/subscription/resourceGroups/rg-test"
+        "/providers/Microsoft.Web/sites/app-test/config/authsettingsV2?api-version=2024-11-01",
+        "--subscription", "subscription",
+        "--query", "properties.identityProviders.azureActiveDirectory.registration.clientId",
+        "--output", "tsv",
+    ), {"capture": True, "timeout": 60})]
+    assert "Application (client) ID: client-id" in capsys.readouterr().out
 
 
 def test_verify_webapp_accepts_easy_auth_bearer_challenge(monkeypatch, capsys, configured_webapp_target):
@@ -3041,7 +3063,7 @@ def test_verify_webapp_rejects_missing_live_configuration(monkeypatch, configure
     def fake_az(*args, **kwargs):
         if "defaultHostName" in args:
             stdout = "" if missing == "hostname" else "app-test.example"
-        elif args[:3] == ("webapp", "auth", "show"):
+        elif args[0] == "rest":
             stdout = "null"
         else:
             stdout = "2026.11.11.1"

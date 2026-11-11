@@ -78,6 +78,25 @@ Keep the customer's environment values and Terraform state intact; do not copy
 the maintainer's settings or run Terraform apply to repair code deployment.
 This fix does not recover Terraform state for later infrastructure management.
 
+### Web App verification reports no client ID after an HTTP 401 Bearer challenge
+
+An unauthenticated `401` with a Bearer challenge is accepted by the verifier;
+it is not itself a deployment failure. An older verifier incorrectly queried
+a v2 field from the legacy `az webapp auth show` response, so a valid application
+could be reported as missing its Entra client ID. The corrected verifier reads
+the explicit Auth Settings V2 endpoint with a read-only request.
+
+After pulling the corrected release, activate the project environment and run
+only:
+
+```powershell
+python -m vulnerability_view.operations_cli verify webapp
+```
+
+Do not redeploy the package, apply Terraform, or edit authentication settings to
+repair that lookup error. The verifier still reports an actual Azure read
+failure or a missing client ID in the v2 response as an error.
+
 ## 3. Defender and Microsoft Graph authentication
 
 ### Run comparisons and source tenant provenance

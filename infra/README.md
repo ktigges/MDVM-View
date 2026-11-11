@@ -609,7 +609,9 @@ Web App code deployment, verification, and startup-log checks read the existing
 `infra/terraform/main.tfvars.json`. They validate the active Azure CLI account
 and explicitly target that subscription, without invoking Terraform or requiring
 local state. Missing state is not a reason to run an infrastructure apply.
-Verification reads the deployed hostname and Entra client ID from Azure. It
+Verification reads the deployed hostname and Entra client ID from Azure, using
+an explicit read-only Auth Settings V2 request rather than the legacy
+`az webapp auth show` response. It
 prints portal directions for the Enterprise Application object ID rather than
 requiring Terraform outputs or additional Microsoft Graph directory permissions.
 These operations do not rewrite local environment settings, values, or state.
