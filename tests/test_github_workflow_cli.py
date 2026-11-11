@@ -5,6 +5,25 @@ import pytest
 from vulnerability_view import github_workflow_cli
 
 
+@pytest.mark.parametrize("name", [
+    "infra/terraform/main.tfvars.example.json:sec.endpointdlp",
+    "infra/terraform/main.tfvars.json:sec.endpointdlp",
+    "infra/terraform/main.tfvars.json:Zone.Identifier",
+])
+def test_publish_ignores_windows_alternate_stream_metadata(monkeypatch, tmp_path, name):
+    (tmp_path / ".gitignore").write_text((github_workflow_cli.ROOT / ".gitignore").read_text())
+    monkeypatch.setattr(github_workflow_cli, "ROOT", tmp_path)
+    github_workflow_cli._git("init", "--quiet")
+
+    assert github_workflow_cli._output("check-ignore", "--no-index", "--", name) == name
+
+
+def test_tracked_paths_are_free_of_windows_invalid_stream_names():
+    paths = github_workflow_cli._output("ls-files", "-z").split("\0")
+
+    assert not [name for name in paths if ":" in name]
+
+
 def test_publish_staging_excludes_generated_test_workspace(monkeypatch, tmp_path):
     ignore_rules = (github_workflow_cli.ROOT / ".gitignore").read_text()
     (tmp_path / ".gitignore").write_text(ignore_rules)

@@ -36,6 +36,33 @@ Interpret the sources separately:
 | A subscription appears to have no vulnerabilities | Reset the dashboard filters, select the subscription, and confirm **Vulnerability** is selected. If **Hide non-reporting devices** is enabled, widen **Last reported within** or turn the switch off. The dashboard retains fixed findings even when Defender no longer presents them as current. |
 | Defender and the dashboard show different device totals | Confirm the dashboard snapshot time and the device `LastSeenUtc` values. The optional reporting-age filter is evaluated relative to the immutable dataset snapshot, not the current browser time. It hides presentation rows only and does not delete retained evidence. |
 
+### Windows customer pull fails with invalid paths or local changes
+
+Paths ending in `:sec.endpointdlp` are Windows alternate-stream metadata that
+can appear as ordinary filenames in a Linux checkout. They must not be tracked:
+Windows rejects them during checkout. The maintainer must publish the removal
+and promote that corrected commit to the customer's branch (normally `latest`).
+Do not disable Git's Windows path protections or retry the same broken release.
+
+If Git also reports local edits to the Terraform provider lock file or generated
+`src/vulnerability_view.egg-info/` files, preserve those tracked edits first.
+Once the corrected release is available, run from the customer repository:
+
+```powershell
+git status --short
+git stash push -m "Before Windows pull repair"
+git pull --ff-only
+git stash list
+```
+
+Check that the stash succeeds before pulling. A normal stash preserves tracked
+edits without removing ignored environment values, Terraform state, or local
+output. Do not use `git clean`, a hard reset, or delete local settings/state.
+Do not automatically pop the stash: generated package metadata was removed from
+source control, and restoring old edits can cause modify/delete conflicts.
+Retain the stash and review any intentional provider-lock changes separately.
+Pulling source does not deploy infrastructure or modify retained Azure history.
+
 ## 3. Defender and Microsoft Graph authentication
 
 ### Run comparisons and source tenant provenance

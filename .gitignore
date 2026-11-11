@@ -1,4 +1,4 @@
-# Last modified: 2026-11-10
+# Last modified: 2026-11-11
 # Purpose: Exclude generated, environment-specific, sensitive, and local operator files.
 
 .venv/
@@ -17,6 +17,9 @@ htmlcov/
 .azure/
 /terraform.exe
 .DS_Store
+# Windows alternate-data-stream metadata is not source content.
+*:sec.endpointdlp
+*:Zone.Identifier
 local.settings.json
 LOCAL-NOTES.txt
 build/
