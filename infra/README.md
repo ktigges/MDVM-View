@@ -61,6 +61,15 @@ replacement caches together. Browser revisits reuse bounded view results.
 with retained snapshot IDs, active query counts, and local cache sizes.
 Nothing in cache eviction deletes or rewrites retained Azure history.
 
+Persistent viewer cache restores stream compressed blobs directly into temporary
+SQLite files, without writing a local compressed copy. Compressed SHA-256 and
+size checks, expanded-size limits, and SQLite validation must all pass before
+atomic installation. Startup logs report compressed/expanded byte counts,
+`downloadSeconds` (initial request and chunk retrieval), and `decodeWriteSeconds`
+(remaining streaming work, including hashing, decompression, and disk writes).
+The separate `viewer-cache:validate-*` stage reports SQLite validation time.
+Cache formats, report readiness, and download concurrency are unchanged.
+
 For an existing App Service plan, SKU preflight preserves the explicitly
 configured `web_app_sku_name` instead of copying the deployed SKU back into
 `main.tfvars.json`. It still preserves the existing plan's region. If the

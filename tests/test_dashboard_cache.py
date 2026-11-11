@@ -1,14 +1,17 @@
 import gzip
 import hashlib
 import json
+import logging
 import os
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
+from vulnerability_view import dashboard_cache
 from vulnerability_view.dashboard_cache import CHUNK_BYTES, DashboardDerivedCache
 from vulnerability_view.storage_writer import DatasetIntegrityError
 from test_dashboard_queries import datasets, engine
@@ -120,7 +123,10 @@ def test_changed_policy_reuses_primary_without_reusing_wrong_aggregates(tmp_path
     assert not restored.read_model.path(changed).exists()
 
 
-@pytest.mark.parametrize("failure", ["hash", "expanded-size", "identity", "path", "counts"])
+@pytest.mark.parametrize("failure", [
+    "hash", "expanded-size", "expanded-overflow", "compressed-size", "compressed-overflow",
+    "identity", "path", "counts",
+])
 def test_invalid_cache_fails_without_replacing_primary(tmp_path, failure):
     service = Service()
     original = engine(tmp_path / "old", datasets(20))
@@ -132,6 +138,12 @@ def test_invalid_cache_fails_without_replacing_primary(tmp_path, failure):
         descriptor["sha256"] = "0" * 64
     elif failure == "expanded-size":
         descriptor["bytes"] += 1
+    elif failure == "expanded-overflow":
+        descriptor["bytes"] -= 1
+    elif failure == "compressed-size":
+        descriptor["compressedBytes"] += 1
+    elif failure == "compressed-overflow":
+        descriptor["compressedBytes"] -= 1
     elif failure == "identity":
         descriptor["prefix"] = "other"
     elif failure == "counts":
@@ -142,6 +154,176 @@ def test_invalid_cache_fails_without_replacing_primary(tmp_path, failure):
     restored = engine(tmp_path / "new", datasets(0))
     before = restored.path.read_bytes()
     with pytest.raises(DatasetIntegrityError):
+        cache(service).restore(restored, {})
+    assert restored.path.read_bytes() == before
+    assert not list(restored.root.glob("*.restoring"))
+    assert not list(restored.root.glob("*.cached.gz"))
+
+
+@pytest.mark.parametrize("chunk_bytes", [1, 137, 4 * CHUNK_BYTES])
+def test_restore_streams_exact_bytes_without_compressed_disk_copy(tmp_path, monkeypatch, caplog, chunk_bytes):
+    service = Service()
+    content = os.urandom(2 * CHUNK_BYTES + 257) if chunk_bytes > 1 else b"small stream" * 100
+    # Concatenated gzip members and padding are accepted by the existing cache format.
+    compressed = gzip.compress(content[:100]) + gzip.compress(content[100:]) + b"\0" * 20
+    prefix = "cache/primary"
+    item = {
+        "prefix": prefix, "blob": f"{prefix}/{'a' * 32}.sqlite3.gz",
+        "bytes": len(content), "compressedBytes": len(compressed),
+        "sha256": hashlib.sha256(compressed).hexdigest(),
+    }
+    service.blobs[prefix + "/complete.json"] = json.dumps(item).encode()
+    destination = tmp_path / "restored.sqlite3"
+    get_blob_client = service.get_blob_client
+    open_file = Path.open
+    observations = []
+
+    def checked_open(path, *args, **kwargs):
+        assert not path.name.endswith(".cached.gz")
+        return open_file(path, *args, **kwargs)
+
+    def checked_blob(name):
+        blob = get_blob_client(name)
+        if name == item["blob"]:
+            def chunks():
+                for offset in range(0, len(compressed), chunk_bytes):
+                    temporary = destination.with_suffix(".restoring")
+                    observations.append(temporary.exists() and temporary.stat().st_size > 0)
+                    assert not destination.exists()
+                    yield compressed[offset:offset + chunk_bytes]
+
+            def download_blob(**kwargs):
+                assert kwargs == {"max_concurrency": 1}
+                return SimpleNamespace(chunks=chunks)
+
+            blob.download_blob = download_blob
+        return blob
+
+    monkeypatch.setattr(Path, "open", checked_open)
+    monkeypatch.setattr(service, "get_blob_client", checked_blob)
+    reserved = []
+    validated = []
+
+    def validate(path, descriptor):
+        assert not destination.exists()
+        assert path.read_bytes() == content
+        assert descriptor == item
+        validated.append(path)
+
+    with caplog.at_level(logging.INFO, logger="vulnerability_view.dashboard_startup"):
+        assert cache(service)._restore_file(
+            service, prefix, destination, "primary", len(compressed) + len(content),
+            validate, reserved.append,
+        )
+    assert destination.read_bytes() == content
+    assert reserved == [len(content)]
+    assert validated == [destination.with_suffix(".restoring")]
+    assert not list(tmp_path.glob("*.restoring"))
+    assert f"compressedBytes={len(compressed)} expandedBytes={len(content)}" in caplog.text
+    assert "downloadSeconds=" in caplog.text
+    assert "decodeWriteSeconds=" in caplog.text
+    if chunk_bytes == 137:
+        assert any(observations)
+
+
+def test_restore_timings_separate_download_from_decode_and_write(tmp_path, monkeypatch, caplog):
+    service = Service()
+    content = b"restored content"
+    compressed = gzip.compress(content)
+    prefix = "cache/primary"
+    item = {
+        "prefix": prefix, "blob": f"{prefix}/{'a' * 32}.sqlite3.gz",
+        "bytes": len(content), "compressedBytes": len(compressed),
+        "sha256": hashlib.sha256(compressed).hexdigest(),
+    }
+    service.blobs[prefix + "/complete.json"] = json.dumps(item).encode()
+    get_blob_client = service.get_blob_client
+    open_file = Path.open
+    clock = [0.0]
+    monkeypatch.setattr(dashboard_cache, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    def timed_blob(name):
+        blob = get_blob_client(name)
+        if name == item["blob"]:
+            def chunks():
+                clock[0] += 3
+                yield compressed
+                clock[0] += 3
+
+            def download_blob(**kwargs):
+                clock[0] += 2
+                return SimpleNamespace(chunks=chunks)
+
+            blob.download_blob = download_blob
+        return blob
+
+    @contextmanager
+    def timed_output(path, *args, **kwargs):
+        with open_file(path, *args, **kwargs) as output:
+            def write(chunk):
+                assert len(chunk) <= CHUNK_BYTES
+                clock[0] += 5
+                return output.write(chunk)
+
+            yield SimpleNamespace(write=write)
+
+    def timed_open(path, *args, **kwargs):
+        if path.suffix == ".restoring":
+            return timed_output(path, *args, **kwargs)
+        return open_file(path, *args, **kwargs)
+
+    monkeypatch.setattr(service, "get_blob_client", timed_blob)
+    monkeypatch.setattr(Path, "open", timed_open)
+    destination = tmp_path / "restored.sqlite3"
+    with caplog.at_level(logging.INFO, logger="vulnerability_view.dashboard_startup"):
+        assert cache(service)._restore_file(
+            service, prefix, destination, "primary", 1024, lambda path, descriptor: None, None,
+        )
+    assert destination.read_bytes() == content
+    assert "downloadSeconds=8.000 decodeWriteSeconds=5.000" in caplog.text
+
+
+@pytest.mark.parametrize("failure", ["interrupted", "truncated", "gzip-crc", "sqlite"])
+def test_stream_failure_preserves_existing_index_and_cleans_temporary_files(tmp_path, monkeypatch, failure):
+    service = Service()
+    original = engine(tmp_path / "old", datasets(20))
+    original.read_model.prepare({})
+    cache(service).publish(original, {})
+    key = next(name for name in service.blobs if name.endswith("/primary/complete.json"))
+    item = json.loads(service.blobs[key])
+    compressed = service.blobs[item["blob"]]
+    if failure == "truncated":
+        compressed = compressed[:-5]
+    elif failure == "gzip-crc":
+        compressed = compressed[:-8] + bytes([compressed[-8] ^ 1]) + compressed[-7:]
+    elif failure == "sqlite":
+        compressed = gzip.compress(b"x" * item["bytes"])
+    if failure != "interrupted":
+        item["compressedBytes"] = len(compressed)
+        item["sha256"] = hashlib.sha256(compressed).hexdigest()
+        service.blobs[item["blob"]] = compressed
+        service.blobs[key] = json.dumps(item).encode()
+    else:
+        get_blob_client = service.get_blob_client
+
+        def interrupted_blob(name):
+            blob = get_blob_client(name)
+            if name == item["blob"]:
+                def chunks():
+                    yield compressed[:len(compressed) // 2]
+                    raise OSError("download interrupted")
+
+                blob.download_blob = lambda **kwargs: SimpleNamespace(chunks=chunks)
+            return blob
+
+        monkeypatch.setattr(service, "get_blob_client", interrupted_blob)
+    restored = engine(tmp_path / "new", datasets(0))
+    before = restored.path.read_bytes()
+    expected_error = {
+        "interrupted": OSError, "truncated": EOFError,
+        "gzip-crc": gzip.BadGzipFile, "sqlite": sqlite3.DatabaseError,
+    }[failure]
+    with pytest.raises(expected_error):
         cache(service).restore(restored, {})
     assert restored.path.read_bytes() == before
     assert not list(restored.root.glob("*.restoring"))

@@ -9,6 +9,23 @@ Commands below run from the repository root with the project environment
 activated. They use the signed-in Azure CLI identity for management operations;
 the hosted applications use their managed identities.
 
+## Severity snapshots and confirmed clearance
+
+SLA and Executive Snapshot show compact Critical, High, Medium, and Low
+unresolved-exposure cards above the SLA charts. Each card reports distinct CVEs
+and affected machines separately, using the existing scoped snapshot or
+period-end counts. Each entity is counted once at its highest unresolved
+severity. Unknown severity appears separately when unresolved counts are
+present. Missing counts show **Waiting for data**, not zero. Select a severity
+to open the corresponding vulnerability list with the existing scope filters.
+
+**Fully cleared** means clearance has already been confirmed and no unresolved
+exposure remains for that entity in the selected scope. A first qualified
+absence is **awaiting confirmation** and remains unresolved until the required
+consecutive qualified collections confirm it. Confirmed clearance is dated to
+the first qualified absence, not the later confirmation collection, and does
+not establish an exact patch-installation time.
+
 ## Collection status
 
 ```bash

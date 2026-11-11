@@ -478,6 +478,9 @@ body.pivot-detail-open .pivot-panel.fullscreen-mode{top:calc(var(--workspace-con
 .metric-glossary{display:grid;gap:12px}.metric-glossary dt{font-weight:750;color:#17384f}.metric-glossary dd{margin:4px 0 0;line-height:1.6}
 @media print{.metric-help-button,.metric-help-dialog{display:none}}
 .sla-leadership-snapshot{display:grid;gap:14px}
+.severity-snapshot-count{display:grid;gap:4px}
+.severity-snapshot-count>span{font-size:12px;color:var(--muted)}
+.severity-summary>.coverage-note{padding:0 16px 16px;margin:0}
 .sla-snapshot-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
 .sla-snapshot-card{min-width:0;padding:20px;border-top:4px solid #557e9d}
 .sla-snapshot-card.completed{border-top-color:#21835b}

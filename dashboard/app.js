@@ -1091,6 +1091,26 @@ function slaDashboardStack(values,labels,classes,label){
   </div><div class="sla-chart-legend">${labels.map((name,index)=>`<span><i class="${classes[index]}"></i>${fmt(values[index])} ${metricLabel(name)}</span>`).join("")}</div>`;
 }
 
+function unresolvedSeveritySnapshot(current){
+  const cves=current.cves.severity,machines=current.machines.severity;
+  const labels=["Critical","High","Medium","Low"];
+  if([cves,machines].some(rows=>rows?.some(row=>row.label==="Unknown"&&row.totalOpen>0)))labels.push("Unknown");
+  return `<section class="panel severity-summary" aria-label="Unresolved severity snapshot">
+    <div class="panel-title"><h3>Unresolved exposure by severity${metricHelpButton("Severity")}</h3><span>CVEs and affected machines counted separately</span></div>
+    <div class="severity-total-grid">${labels.map(label=>`
+      <button type="button" class="severity-total severity-${esc(label.toLowerCase())}" data-vulnerability-severity="${esc(label)}" aria-label="View ${esc(label)} vulnerabilities">
+        <span>${esc(label)}</span>
+        ${[[cves,"Distinct unresolved CVEs"],[machines,"Affected machines"]].map(([rows,title])=>{
+          const row=rows?.find(row=>row.label===label);
+          const value=row?row.totalOpen:label==="Unknown"&&Array.isArray(rows)?0:undefined;
+          return `<span class="severity-snapshot-count"><strong>${typeof value==="number"&&Number.isFinite(value)&&value>=0?fmt(value):"Waiting for data"}</strong><span>${title}</span></span>`;
+        }).join("")}
+      </button>`).join("")}</div>
+    <p class="coverage-note">Each CVE and machine counts once, at its highest unresolved severity in the selected scope and snapshot or period end.
+      Pending fixes remain unresolved. These are separate entity totals, not machine/CVE pairs or software records.</p>
+  </section>`;
+}
+
 function slaLeadershipSnapshot(current,periodLabel){
   const chart=(title,values,labels,colors,unit,completion=false)=>{
     if(values.some(value=>typeof value!=="number"||!Number.isFinite(value)||value<0))throw new Error("SLA summary chart counts are unavailable.");
@@ -1120,7 +1140,7 @@ function slaLeadershipSnapshot(current,periodLabel){
       const values=current[entity];
       return chart(`${unit==="CVEs"?"CVEs":"Machines"} fully cleared`,[values.completedWithin,values.completedLate,values.completedUnknown],["Cleared on time","Cleared late","Clearance deadline unknown"],["#21835b","#bb3e4c","#8694a0"],unit,true);
     }).join("")}</div>
-    <p class="coverage-note">Clearance charts use retained confirmed evidence only, not a count of patches installed. Unknown deadlines are excluded from the on-time percentage. Backlog and period clearances are different measures, not slices of one combined total.</p>
+    <p class="coverage-note">Clearance charts use retained confirmed evidence only, not a count of patches installed. Fully cleared means confirmation is complete; fixes awaiting confirmation are not fully cleared. Unknown deadlines are excluded from the on-time percentage. Backlog and period clearances are different measures, not slices of one combined total.</p>
   </section>`;
 }
 
@@ -1154,6 +1174,7 @@ function renderSlaDashboard(report){
   $("slaDashboardContext").textContent=`Snapshot: ${formatUtc(report.asOfUtc)}. CVEs and machines are counted separately, once each. Software products and versions are supporting evidence, not additional vulnerabilities.`;
   const target=Number(state.slaPolicy?.complianceTargetPercent);
   $("slaDashboardVisuals").innerHTML=`
+    ${unresolvedSeveritySnapshot(current)}
     ${slaLeadershipSnapshot(current,`${current.label}: ${currentRange}${current.coverage==="complete"?"":" (partial retained coverage)"}`)}
     <div class="sla-hero-grid">
       ${entities.map(([entity,unit,title])=>{const values=current[entity];return `<article class="panel sla-hero-card">
@@ -1323,7 +1344,10 @@ function renderManagementSla(view,sla){
   const rules=$(prefix+"PolicyRules");
   if(rules)rules.textContent=`${["Critical","High","Medium","Low"].map(severity=>`${severity} — ${slaPolicyTarget(severity)}`).join(" · ")}. The SLA clock starts at the collector's first observation on the machine, not the CVE publication date or a task due date. Open risk is within SLA through its recorded deadline; it is overdue after that deadline. Confirmed completion on or before the deadline is on time. Recorded deadlines take precedence; policy changes do not restart existing clocks.`;
   const snapshot=$(prefix+"LeadershipSnapshot");
-  if(snapshot&&sla?.entityPeriods?.[0])snapshot.innerHTML=slaLeadershipSnapshot(sla.entityPeriods[0],sla.periods?.[0]?.Period||"Selected reporting period");
+  if(snapshot&&sla?.entityPeriods?.[0]){
+    snapshot.innerHTML=(view==="executiveSnapshot"?unresolvedSeveritySnapshot(sla.entityPeriods[0]):"")+slaLeadershipSnapshot(sla.entityPeriods[0],sla.periods?.[0]?.Period||"Selected reporting period");
+    if(view==="executiveSnapshot")bindSeverityVulnerabilityLinks(prefix+"LeadershipSnapshot");
+  }
   if(!root||!sla)return;
   const current=sla.entityPeriods?.[0];
   if(!current){root.textContent="Entity-level SLA data is unavailable. Refresh after the Web App update is complete.";return;}

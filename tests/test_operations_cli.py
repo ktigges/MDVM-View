@@ -4,6 +4,7 @@ Purpose: Verify cross-platform operations parsing, versioning, packaging, and sa
 
 import json
 import subprocess
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -112,6 +113,7 @@ def test_console_watch_reports_progress_until_completion_without_querying_teleme
 @pytest.mark.parametrize("query_seconds,wait", [(6, 24), (36, 0)])
 def test_console_watch_logs_are_compact_run_scoped_and_refresh_on_cadence(monkeypatch, capsys, query_seconds, wait):
     run_id = "live-20261106T050835Z"
+    process_clock = time.monotonic
     states = iter(["Running", "Completed"])
     monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {
         "workflow": {"state": next(states), "progress": {
@@ -127,6 +129,7 @@ def test_console_watch_logs_are_compact_run_scoped_and_refresh_on_cadence(monkey
     queries = []
 
     def query(workspace, subscription, text, *, timespan):
+        assert time.monotonic is process_clock
         assert (workspace, subscription, timespan) == ("workspace", "subscription", "PT24H")
         assert 'AppRoleName =~ "func-test"' in text
         assert '_ResourceId =~ "/linked-insights"' in text
@@ -141,9 +144,10 @@ def test_console_watch_logs_are_compact_run_scoped_and_refresh_on_cadence(monkey
 
     monkeypatch.setattr(operations_cli, "_log_query", query)
     clock = iter([100, 100 + query_seconds, 100 + max(30, query_seconds)])
-    monkeypatch.setattr(operations_cli.time, "monotonic", lambda: next(clock))
     waits = []
-    monkeypatch.setattr(operations_cli.time, "sleep", waits.append)
+    monkeypatch.setattr(operations_cli, "time", SimpleNamespace(
+        monotonic=lambda: next(clock), sleep=waits.append,
+    ))
     assert operations_cli.main(["check-runs", "--watch", "--logs"]) == 0
     output = capsys.readouterr().out
     assert "rows=420,000" in output and "rows=430,000" in output

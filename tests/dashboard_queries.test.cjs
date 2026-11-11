@@ -1232,6 +1232,52 @@ test("Summary contains machine and CVE severity totals plus only a compact SLA s
   assert.ok(!app.query()[0].payload.filters.includeFindingEvidence);
 });
 
+for(const view of ["slaDashboard","executiveSnapshot"]){
+  test(`${view} shows separate CVE and machine severity snapshots and preserves drill-down scope`,async()=>{
+    const app=fixture();await tick();
+    app.query()[0].resolve(app.payload());await tick();
+    const report=slaDashboardReport(),period=report.periods[0],base=period.cves.severity[0];
+    period.cves.severity=["Critical","High","Medium","Low","Unknown"].map((label,index)=>({...base,label,totalOpen:[5,4,0,2,1][index]}));
+    period.machines.severity=["Critical","High","Medium","Low"].map((label,index)=>({...base,label,totalOpen:[3,2,1,0][index]}));
+    app.run(`state.osType="Linux";state.team="Ops";state.executiveSnapshotOwner="Ops";activateView("${view}")`);
+    const metadata=view==="slaDashboard"
+      ?{slaDashboard:report}
+      :{management:{sla:{entityPeriods:report.periods,periods:[{Period:"Selected period"}]}}};
+    app.query().at(-1).resolve(app.payload({metadata}));await tick();
+    const root=app.elements.get(view==="slaDashboard"?"slaDashboardVisuals":"executiveSnapshotManagementLeadershipSnapshot");
+    const markup=root.innerHTML;
+    assert.ok(markup.indexOf('aria-label="Unresolved severity snapshot"')<markup.indexOf('aria-label="Leadership SLA snapshot"'));
+    for(const [label,cves,machines] of [["Critical",5,3],["High",4,2],["Medium",0,1],["Low",2,0],["Unknown",1,0]]){
+      const card=markup.slice(markup.indexOf(`data-vulnerability-severity="${label}"`)).split("</button>")[0];
+      assert.match(card,new RegExp(`<strong>${cves}</strong><span>Distinct unresolved CVEs</span>`));
+      assert.match(card,new RegExp(`<strong>${machines}</strong><span>Affected machines</span>`));
+    }
+    assert.match(markup,/Fully cleared means confirmation is complete/);
+    root.filterButtons.find(button=>button.dataset.vulnerabilitySeverity==="Critical").click();await tick();
+    const query=app.query().at(-1).payload;
+    assert.equal(query.view,"overview");
+    assert.equal(query.mode,"cves");
+    assert.equal(query.filters.severity,"Critical");
+    assert.equal(query.filters.osType,"Linux");
+    assert.equal(query.filters.team,"Ops");
+  });
+}
+
+test("severity snapshots distinguish missing counts from zero and hide unused Unknown severity",async()=>{
+  const app=fixture();await tick();
+  const period=slaDashboardReport().periods[0];
+  period.cves.severity.push({...period.cves.severity[0],label:"High",totalOpen:0});
+  const markup=app.run(`unresolvedSeveritySnapshot(${JSON.stringify(period)})`);
+  assert.doesNotMatch(markup,/data-vulnerability-severity="Unknown"/);
+  const high=markup.slice(markup.indexOf('data-vulnerability-severity="High"')).split("</button>")[0];
+  assert.match(high,/<strong>0<\/strong><span>Distinct unresolved CVEs<\/span>/);
+  assert.match(high,/<strong>Waiting for data<\/strong><span>Affected machines<\/span>/);
+  for(const label of ["Medium","Low"]){
+    const card=markup.slice(markup.indexOf(`data-vulnerability-severity="${label}"`)).split("</button>")[0];
+    assert.equal((card.match(/Waiting for data/g)||[]).length,2);
+  }
+});
+
 test("Executive Snapshot retains detailed completion analysis and period comparisons",async()=>{
   const app=fixture();await tick();
   const period=slaDashboardReport().periods[0];
