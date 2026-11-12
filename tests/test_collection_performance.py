@@ -19,7 +19,7 @@ def test_verify_customer_scale_pages_with_bounded_batches(tmp_path):
     store.manifest["files"] = []
     remote = {}
     rows = 0
-    remaining = 2091597 - 188 * 2501
+    remaining = 3_000_000 - 188 * 2501
     per_machine, extra = divmod(remaining, 2063)
     for machine in range(2252):
         sizes = (
@@ -43,7 +43,7 @@ def test_verify_customer_scale_pages_with_bounded_batches(tmp_path):
                 "sizeBytes": len(compressed), "rowCount": size, "kind": "raw",
             })
             rows += size
-    assert rows == 2091597
+    assert rows == 3_000_000
     assert len(remote) == len(store.manifest["files"]) == 2440
     store.save_manifest()
     lock = threading.Lock()

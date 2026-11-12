@@ -82,19 +82,76 @@ can be selected explicitly:
 python -m pytest -q -m performance tests/test_bounded_processing.py
 ```
 
-Exercise full finalization with one million current findings and 3.3 million
-retained events (4.3 million events after adding the current findings):
+Exercise raw replay, normalization, and full finalization with **three million
+current findings** and 3.3 million retained events (6.3 million output events):
 
 ```bash
 PYTHONPATH=src python tests/benchmark_bounded_finalization.py \
-  --findings 1000000 --history-events 3300000 --budget 900 \
+  --findings 3000000 --history-events 3300000 --budget 1800 \
   --enforce-targets --root output/finalization-benchmark
 ```
 
-The benchmark checks completion within the processing budget and exact retained
-finding/event counts, and records stage times and peak RSS. Input generation is
-outside that budget. It uses synthetic local files only, not Azure or customer
-records; passing locally is not a customer-environment performance guarantee.
+These are the benchmark defaults. This is opt-in, not part of ordinary pytest.
+The synthetic workload has 2,122 machines, up to 13,604 referenced CVEs,
+128 products, four severities, and historical events spanning 90 days. Raw pages
+are machine-grouped and bounded to 2,500 rows rather than one giant input file.
+Both portable query-index groups are built and the bundle passes the existing
+integrity checks. The benchmark enforces exact finding/event counts and a
+30-minute processing budget; a timeout fails instead of reporting success.
+
+For a shorter investigation of the customer's `normalize / replay-raw` stage,
+stop after normalization with a ten-minute processing budget:
+
+```bash
+PYTHONPATH=src python tests/benchmark_bounded_finalization.py \
+  --stop-after normalize --budget 600 --enforce-targets \
+  --root output/normalization-benchmark
+```
+
+For rapid hotspot investigations, profile a smaller workload separately instead
+of repeating the three-million-row acceptance run:
+
+```bash
+PYTHONPATH=src python tests/benchmark_bounded_finalization.py \
+  --findings 100000 --history-events 110000 --stop-after normalize \
+  --budget 120 --profile --enforce-targets \
+  --root output/normalization-profile
+```
+
+This processes 100,000 real synthetic rows; it does not claim to verify
+three-million-row throughput, nonlinear costs, or memory use by extrapolation.
+Ordinary pytest runs the small benchmark-harness regressions, not either large
+workload.
+
+Add `--profile` to capture `profile.pstats` and the top cumulative/self-time
+functions in `profile.txt`;
+profiling adds overhead, so do not compare profiled timings with unprofiled
+release budgets. Each run also writes `report.json` with stage wall/CPU times,
+peak RSS, timeout/interrupted-stage details, and exact checkpoint counts.
+`progress.jsonl` captures timestamped substep messages, including raw replay and
+query-index construction. A normalization-only run reports `targetReached=true`
+but `complete=false`: it has not exercised the later stages.
+
+Always select a fresh or empty local root; existing results are not overwritten.
+Input generation is timed separately, outside the processing budget. The
+benchmark exercises actual application processing with synthetic local files
+only, not Azure, network latency, API pacing, or customer records. Passing
+locally is not a customer-environment performance guarantee.
+The baseline contains retained events but no prior finding snapshot, so all
+current findings produce new events; it does not model every reconciliation
+mix in an established customer tenant.
+
+### Scratch SQLite optimizations
+
+Disk-backed mapping membership uses key-only existence queries, without loading
+or decoding the stored value. Bulk row/mapping loads stream parameters through
+SQLite `executemany`; individual appends and assignments remain immediately
+visible on the same connection. No Python batch of full findings is retained.
+Scratch transactions commit every 10,000 writes, with a final commit on close.
+Bulk operations finish inserting before returning, including before checkpoint
+serialization; durable recovery still uses verified artifacts, not scratch
+commits. Duplicate ordering, last-value-wins behavior, key encoding, output
+formats, history retention, and lifecycle/SLA decisions are unchanged.
 
 Tests and benchmarks can create ignored `.test-work/` and `output/` content.
 Those are not release files. Dependency manifests define the environment;

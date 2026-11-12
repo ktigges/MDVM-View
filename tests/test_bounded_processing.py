@@ -2,6 +2,7 @@ import gc
 import gzip
 import json
 import random
+import sqlite3
 import subprocess
 import sys
 import shutil
@@ -130,6 +131,137 @@ def test_ordered_disk_dedup_retains_first_position_and_last_value(store):
         f"EXPLAIN QUERY PLAN SELECT value FROM {ordered.table} ORDER BY {ordered.order}"
     ).fetchall()
     assert not any("TEMP B-TREE" in item[3] for item in plan)
+
+
+def test_disk_membership_does_not_read_or_decode_values(store, monkeypatch):
+    keys = [None, False, True, 0, 1, 1.0, "1", ("x", 1), ["x", 1], {"id": "x"}]
+    mapping = store.mapping((key, {"retained": index}) for index, key in enumerate(keys))
+    statements = []
+    store.connection.set_trace_callback(statements.append)
+    with monkeypatch.context() as patch:
+        patch.setattr(json, "loads", lambda *args, **kwargs: pytest.fail("Membership must not decode a value"))
+        for key in keys:
+            assert key in mapping
+        assert "missing" not in mapping
+    selects = [sql for sql in statements if sql.startswith("SELECT")]
+    assert len(selects) == len(keys) + 1
+    assert all(sql.startswith("SELECT 1 FROM ") for sql in selects)
+    assert mapping[["x", 1]] == {"retained": 8}
+    del mapping[["x", 1]]
+    assert ("x", 1) not in mapping
+    with pytest.raises(KeyError):
+        mapping["missing"]
+    with pytest.raises(TypeError):
+        object() in mapping
+
+
+def test_bulk_loads_use_streaming_executemany_and_bounded_transactions(work, monkeypatch):
+    from vulnerability_view import bounded_processing
+
+    calls = {"execute": 0, "executemany": 0, "commit": 0}
+    connect = sqlite3.connect
+
+    class TrackedConnection(sqlite3.Connection):
+        def execute(self, *args, **kwargs):
+            calls["execute"] += 1
+            return super().execute(*args, **kwargs)
+
+        def executemany(self, *args, **kwargs):
+            calls["executemany"] += 1
+            return super().executemany(*args, **kwargs)
+
+        def commit(self):
+            calls["commit"] += 1
+            return super().commit()
+
+    monkeypatch.setattr(bounded_processing.sqlite3, "connect", lambda path: connect(path, factory=TrackedConnection))
+    path = work / "bulk.sqlite"
+    workspace = Workspace(path)
+    try:
+        rows = workspace.rows({"id": i} for i in range(10001))
+        mapping = workspace.mapping((str(i), {"id": i}) for i in range(10001))
+        assert calls["executemany"] == 2
+        assert calls["execute"] < 20
+        assert calls["commit"] == 2
+        assert workspace.writes == 20002
+        assert len(rows) == len(mapping) == 10001
+        assert rows[-1] == mapping["10000"] == {"id": 10000}
+        with connect(path) as reader:
+            assert reader.execute(f"SELECT count(*) FROM {rows.table}").fetchone()[0] == 10001
+            assert reader.execute(f"SELECT count(*) FROM {mapping.table}").fetchone()[0] == 9999
+    finally:
+        workspace.close()
+    assert calls["commit"] == 3
+    with connect(path) as reader:
+        assert reader.execute(f"SELECT count(*) FROM {mapping.table}").fetchone()[0] == 10001
+
+
+def test_bulk_generators_see_each_prior_write_in_the_same_transaction(store):
+    rows = store.rows()
+
+    def row_source():
+        for index in range(12):
+            assert len(rows) == index
+            if index:
+                assert rows[-1] == {"id": index - 1}
+            yield {"id": index}
+
+    rows.extend(row_source())
+
+    def pair_source():
+        table = f"rows_{store.counter}"
+        for index in range(12):
+            assert store.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == index
+            yield str(index), index
+
+    mapping = store.mapping(pair_source())
+    assert list(rows) == [{"id": i} for i in range(12)]
+    assert list(mapping.items()) == [(str(i), i) for i in range(12)]
+
+
+def test_bulk_map_preserves_duplicate_order_and_last_value_across_commits(store):
+    pairs = [(str(i), {"id": i}) for i in range(10001)]
+    pairs.extend([("2", {"id": "updated"}), ("new", {"id": "new"}), ("0", None)])
+    mapping = store.mapping(iter(pairs))
+    expected = dict(pairs)
+    assert list(mapping.items()) == list(expected.items())
+    assert "0" in mapping and mapping["0"] is None
+    mapping["2"] = {"id": "single-write"}
+    assert mapping["2"] == {"id": "single-write"}
+    assert list(mapping)[:3] == ["0", "1", "2"]
+
+
+def test_bulk_sql_failure_preserves_successful_prefix_and_propagates(store):
+    rows = store.rows()
+    store.connection.execute(
+        f"CREATE TRIGGER reject_bad BEFORE INSERT ON {rows.table} "
+        "WHEN json_extract(NEW.value, '$.id') = 'bad' "
+        "BEGIN SELECT RAISE(ABORT, 'rejected test row'); END"
+    )
+    consumed = []
+
+    def source():
+        for key in ("first", "bad", "last"):
+            consumed.append(key)
+            yield {"id": key}
+
+    before = store.writes
+    with pytest.raises(sqlite3.IntegrityError, match="rejected test row"):
+        rows.extend(source())
+    assert consumed == ["first", "bad"]
+    assert list(rows) == [{"id": "first"}]
+    assert store.writes == before + 1
+    rows.append({"id": "recovered"})
+    assert list(rows) == [{"id": "first"}, {"id": "recovered"}]
+
+
+def test_bulk_serialization_failure_keeps_successful_prefix(store):
+    rows = store.rows()
+    before = store.writes
+    with pytest.raises(TypeError):
+        rows.extend([{"id": 1}, {"unsupported": object()}, {"id": 3}])
+    assert list(rows) == [{"id": 1}]
+    assert store.writes == before + 1
 
 
 def test_disk_sort_copies_rows_in_sql_without_python_replay(store, monkeypatch):
