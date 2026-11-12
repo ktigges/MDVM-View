@@ -14,10 +14,73 @@ from vulnerability_view.dashboard_index import (
 from vulnerability_view.dashboard_queries import (
     DashboardQueryEngine, PREPARED_VIEWS, QUERY_INDEX_BUILD_CACHE_KIB,
 )
+from vulnerability_view import dashboard_queries
 from vulnerability_view.dashboard_snapshots import DashboardSnapshots
 from vulnerability_view.config import Settings
 from vulnerability_view.storage_writer import DATASET_FILES, DatasetIntegrityError, create_run_bundle
 from test_dashboard_queries import SNAPSHOT, datasets
+
+
+def test_index_build_reuses_timestamp_projections_and_reports_real_progress(tmp_path, monkeypatch):
+    data = datasets(600)
+    parsed = []
+    original = dashboard_queries._timestamp
+
+    def observe(value):
+        parsed.append(value)
+        return original(value)
+
+    engine = DashboardQueryEngine(tmp_path, "progress-build", SNAPSHOT, lambda name: iter(data.get(name, [])))
+    monkeypatch.setattr(dashboard_queries, "_timestamp", observe)
+    progress = []
+    engine.build_index({"findings": 600}, progress_callback=progress.append)
+    assert len(parsed) < 20
+    assert any("dataset=findings" in message and "rows=600" in message for message in progress)
+    assert any("step=build-query-index" in message and "findings_recommendation_rank" in message for message in progress)
+    assert list(engine.iter_dataset("findings")) == data["findings"]
+
+
+def test_index_fact_projection_does_not_reparse_row_json_in_sqlite(tmp_path, monkeypatch):
+    data = datasets(4)
+    engine = DashboardQueryEngine(tmp_path, "direct-build", SNAPSHOT, lambda name: iter(data.get(name, [])))
+    original = engine._connect
+    inserts = []
+
+    @contextmanager
+    def observe(*args, **kwargs):
+        with original(*args, **kwargs) as db:
+            db.set_trace_callback(lambda sql: inserts.append(sql) if sql.startswith("INSERT") else None)
+            yield db
+
+    monkeypatch.setattr(engine, "_connect", observe)
+    engine.build_index({"findings": 4})
+    assert inserts
+    assert not any("json_extract" in sql or "json_each" in sql for sql in inserts)
+    assert list(engine.iter_dataset("findings")) == data["findings"]
+
+
+def test_direct_fact_projection_preserves_json_extraction_types(tmp_path):
+    values = [None, "", 0, "12.5", True, False, "MÜNCHEN", ["x", 1], {"nested": 2}, 1.0, 2**70, ("x",)]
+    data = datasets(len(values))
+    for row, value in zip(data["findings"], values, strict=True):
+        row.update(DeviceId=value, DeviceName=value, PriorityScore=value, Status=value)
+    engine = DashboardQueryEngine(tmp_path, "typed-build", SNAPSHOT, lambda name: iter(data.get(name, [])))
+    engine.build_index({"findings": len(values)})
+    with engine._connect() as db:
+        actual = db.execute(
+            "SELECT DeviceId,typeof(DeviceId),DeviceName,typeof(DeviceName),"
+            "PriorityScore,typeof(PriorityScore),Status,typeof(Status) FROM findings ORDER BY _rowid"
+        ).fetchall()
+        for result, source in zip(actual, data["findings"], strict=True):
+            expected = db.execute("""
+                SELECT json_extract(data,'$.DeviceId'),typeof(json_extract(data,'$.DeviceId')),
+                    json_extract(data,'$.DeviceName'),typeof(json_extract(data,'$.DeviceName')),
+                    CAST(json_extract(data,'$.PriorityScore') AS REAL),
+                    typeof(CAST(json_extract(data,'$.PriorityScore') AS REAL)),
+                    json_extract(data,'$.Status'),typeof(json_extract(data,'$.Status'))
+                FROM (SELECT ? data)
+            """, (json.dumps(source, ensure_ascii=False, separators=(",", ":")),)).fetchone()
+            assert tuple(result) == tuple(expected)
 
 
 def test_index_construction_bounds_cache_without_reducing_query_cache(tmp_path, monkeypatch):

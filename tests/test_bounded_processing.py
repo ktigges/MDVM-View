@@ -91,6 +91,23 @@ def test_streaming_parser_handles_chunk_boundaries_unicode_and_api_metadata(work
     assert list(iter_json_rows(work / "rows.json.gz")) == rows
 
 
+def test_checkpoint_compression_prioritizes_throughput_and_stays_deterministic(work, monkeypatch):
+    original = gzip.GzipFile
+    levels = []
+
+    def observe(*args, **kwargs):
+        levels.append(kwargs.get("compresslevel", 9))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(gzip, "GzipFile", observe)
+    rows = [{"FindingKey": "finding-1", "Description": "retained evidence"}]
+    first, second = work / "first.json.gz", work / "second.json.gz"
+    assert write_json_rows(first, rows) == write_json_rows(second, rows) == 1
+    assert levels == [1, 1]
+    assert first.read_bytes() == second.read_bytes()
+    assert list(iter_json_rows(first)) == rows
+
+
 @pytest.mark.parametrize("text,field", [
     ('[{}] invalid', None), ('[{},]', None), ('{"value":[{}],"next":', "value"),
     ('{"value":[]} invalid', "value"), ('{"other":1} invalid', "value"),
@@ -113,6 +130,40 @@ def test_ordered_disk_dedup_retains_first_position_and_last_value(store):
         f"EXPLAIN QUERY PLAN SELECT value FROM {ordered.table} ORDER BY {ordered.order}"
     ).fetchall()
     assert not any("TEMP B-TREE" in item[3] for item in plan)
+
+
+def test_disk_sort_copies_rows_in_sql_without_python_replay(store, monkeypatch):
+    from vulnerability_view.bounded_processing import DiskRows
+
+    source = store.rows([{"id": "b", "n": 1}, {"id": "a", "n": 2}, {"id": "b", "n": 3}])
+    source.reverse()
+    with monkeypatch.context() as patch:
+        patch.setattr(DiskRows, "__iter__", lambda self: pytest.fail("Sort must not decode and re-encode every row"))
+        sorted_rows = source.sorted(("id",))
+    source.append({"id": "a", "n": 4})
+    assert list(sorted_rows) == [{"id": "a", "n": 2}, {"id": "b", "n": 3}, {"id": "b", "n": 1}]
+
+
+def test_daily_summaries_do_not_rescan_event_rows_for_every_day(store):
+    data = normalize_live(payloads(1), SNAPSHOT, RUN_ID)
+    findings = data["findings"]
+    first = iso_utc(SNAPSHOT - timedelta(days=89))
+    findings[0].update(FirstSeenUtc=first, FirstObservedUtc=first)
+    events = [{
+        "EventId": f"event-{i}", "FindingKey": findings[0]["FindingKey"],
+        "EventType": "New", "EffectiveTimeUtc": iso_utc(SNAPSHOT - timedelta(days=i % 90)),
+        **{key: findings[0][key] for key in ("AssetClass", "SubscriptionId", "OwnerTeam", "Severity", "DataOrigin")},
+    } for i in range(900)]
+    queries = []
+    store.connection.set_trace_callback(queries.append)
+    daily, _ = bounded_summary.summaries(findings, events, store)
+    rows = list(daily)
+    assert len(rows) == 90
+    assert all(row["NewCount"] == 10 for row in rows)
+    event_scans = [sql for sql in queries if "FROM events_" in sql]
+    assert len(event_scans) == 1, "Event history must be reduced once, not once per day"
+    plan = store.connection.execute("EXPLAIN QUERY PLAN " + event_scans[0]).fetchall()
+    assert not any("TEMP B-TREE" in row[3] for row in plan)
 
 
 def test_bounded_normalization_matches_every_legacy_dataset(store):

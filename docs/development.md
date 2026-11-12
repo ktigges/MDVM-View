@@ -82,6 +82,20 @@ can be selected explicitly:
 python -m pytest -q -m performance tests/test_bounded_processing.py
 ```
 
+Exercise full finalization with one million current findings and 3.3 million
+retained events (4.3 million events after adding the current findings):
+
+```bash
+PYTHONPATH=src python tests/benchmark_bounded_finalization.py \
+  --findings 1000000 --history-events 3300000 --budget 900 \
+  --enforce-targets --root output/finalization-benchmark
+```
+
+The benchmark checks completion within the processing budget and exact retained
+finding/event counts, and records stage times and peak RSS. Input generation is
+outside that budget. It uses synthetic local files only, not Azure or customer
+records; passing locally is not a customer-environment performance guarantee.
+
 Tests and benchmarks can create ignored `.test-work/` and `output/` content.
 Those are not release files. Dependency manifests define the environment;
 installed framework files are not maintained as project source.

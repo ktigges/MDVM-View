@@ -353,6 +353,35 @@ Function host/platform errors and peak working set/CPU for the same UTC window.
 A completed verified publication, not a heartbeat or activity exit, proves
 completion. Processing recovery remains at stage boundaries, not every row.
 
+### CPU-bound finalization and growing event history
+
+The bundle stage also builds both portable dashboard query indexes. Older logs
+can remain at `stage=bundle step=create-bundle` for that entire operation.
+Increasing heartbeat CPU time indicates CPU work, not an idle API request.
+Updated collector logs identify query-group construction, dataset row counts,
+individual indexes, analysis, and compression within the bundle stage.
+
+Finalization now copies sorted intermediate rows inside SQLite instead of
+decoding and re-encoding every row in Python. Event-writing stages retain compact
+per-run totals and coverage timestamps in their verified checkpoints; the history
+stage reuses those totals instead of rescanning every retained event. Older
+checkpoints without those totals still use the original full-scan path.
+Daily summaries reduce event history once into indexed group/day totals instead
+of rescanning each group's full event history for every reporting day. Missing
+event timestamps, future events, and groups without event evidence retain their
+existing counting rules.
+Checkpoint gzip uses fast deterministic compression, and query-index construction
+reuses bounded timestamp/identifier caches and already decoded field values.
+No events, sources, integrity checks, or prebuilt dashboard indexes are omitted.
+
+Deploy both Function code and Web App code for these shared-Python changes.
+No Terraform apply, storage deletion, or timeout increase is required. Measure a
+new run's phase timings and verified publication before declaring the customer
+performance problem resolved; local benchmarks do not establish Azure runtime.
+A run that already reached its original six-hour deadline cannot be given a new
+deadline by redeploying or retrying it. Preserve its evidence, confirm inactivity,
+and deliberately start a new immutable run after deployment.
+
 ## 5. Scheduled invocation but no current run
 
 `check-runs.sh` lists telemetry emitted after managed-identity publication

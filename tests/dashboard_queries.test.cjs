@@ -149,6 +149,46 @@ test("dates use year-first local time and consistently labeled UTC timestamps",a
   assert.equal(app.run('displayDateTime("OSVersion","1607")'),"1607");
 });
 
+test("recent partial runs explain completion and show only matching source warnings",async()=>{
+  const app=fixture();await tick();
+  app.run(`state.runHistory=[
+    {CollectionRunId:"partial",DataOrigin:"Live",SnapshotTimeUtc:"2026-11-09T05:00:00Z",RunStatus:"PartialSuccess",OpenFindings:12,AffectedMachines:3},
+    {CollectionRunId:"older",DataOrigin:"Live",SnapshotTimeUtc:"2026-11-08T05:00:00Z",RunStatus:"PartialSuccess"}
+  ];state.runs=[
+    {CollectionRunId:"partial",DataOrigin:"Live",Endpoint:"Graph <groups>",RunStatus:"Warning",Error:"Access <denied>"},
+    {CollectionRunId:"partial",DataOrigin:"Live",Endpoint:"Machines",RunStatus:"Success"},
+    {CollectionRunId:"unrelated",DataOrigin:"Live",Endpoint:"Other run",RunStatus:"Warning"},
+    {CollectionRunId:"partial",DataOrigin:"Synthetic",Endpoint:"Other origin",RunStatus:"Warning"}
+  ];renderRecentRuns();`);
+  const rows=app.elements.get("recentRunsList").innerHTML.split("</li>");
+  assert.match(rows[0],/Partial success/);
+  assert.match(rows[0],/Completed with collection warnings, not still running/);
+  assert.match(rows[0],/some data may be missing or stale/);
+  assert.match(rows[0],/12 open findings/);
+  assert.match(rows[0],/Graph &lt;groups&gt;: Warning - Access &lt;denied&gt;/);
+  assert.doesNotMatch(rows[0],/Machines|Other run|Other origin|details are unavailable/);
+  assert.match(rows[1],/Per-source details are unavailable for this historical run/);
+  assert.doesNotMatch(rows[1],/Graph/);
+});
+
+test("recent run fallback explains warnings without changing successful or failed results",async()=>{
+  const app=fixture();await tick();
+  app.run(`state.runs=[
+    {CollectionRunId:"warning",DataOrigin:"Live",RunTimeUtc:"2026-11-09T05:00:00Z",Endpoint:"Recommendations",RunStatus:"Warning",Error:"Optional source unavailable"},
+    {CollectionRunId:"success",DataOrigin:"Live",RunTimeUtc:"2026-11-08T05:00:00Z",Endpoint:"Machines",RunStatus:"Success"},
+    {CollectionRunId:"failed",DataOrigin:"Live",RunTimeUtc:"2026-11-07T05:00:00Z",Endpoint:"Machines",RunStatus:"Failed"}
+  ];renderRecentRuns();`);
+  const rows=app.elements.get("recentRunsList").innerHTML.split("</li>");
+  assert.match(rows[0],/Recommendations: Warning - Optional source unavailable/);
+  assert.match(rows[0],/Completed with collection warnings/);
+  assert.match(rows[1],/>Success</);
+  assert.doesNotMatch(rows[1],/recent-run-explanation/);
+  assert.match(rows[2],/Collection failed/);
+  assert.doesNotMatch(rows[2],/Collection completed|Completed with collection warnings/);
+  app.run('state.runs=[];renderRecentRuns()');
+  assert.match(app.elements.get("recentRunsList").innerHTML,/No collection history is available/);
+});
+
 test("expanded filters identify their fields and the Close Filter button collapses them",async()=>{
   const app=fixture();await tick();
   app.run("setFilterExpanded(false)");

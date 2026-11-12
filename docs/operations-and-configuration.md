@@ -61,6 +61,15 @@ SLA calculations; they do not change collection schemas or stored history.
 
 ## Collection status
 
+Hover over or keyboard-focus the dashboard's data-refresh timestamp to see
+recent collection history. **Partial success** means a completed result with
+one or more collection-source warnings or unsuccessful source requests, not a
+collection still in progress. Some data may be missing or stale; the status
+alone does not identify which data was affected. Each affected history entry
+shows the source status and reported error when available. Older runs without
+retained per-source details say so explicitly; warnings from a different run
+are never used to explain them.
+
 ```bash
 python -m vulnerability_view.operations_cli check-function-logs --hours 1 --limit 3 --status-only
 python -m vulnerability_view.operations_cli check-runs --limit 5 --progress

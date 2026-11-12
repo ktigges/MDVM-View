@@ -73,6 +73,8 @@ def test_every_stage_survives_complete_worker_loss_and_matches_single_pass(work,
         assert (restored / "curated" / f"{basename}.json.gz").read_bytes() == (expected / "curated" / f"{basename}.json.gz").read_bytes()
     assert any("step=replay-raw [replay] endpoint=machine_vulnerabilities rows=" in message for message in progress)
     assert any("step=write-dataset section=datasets dataset=findings rows=" in message for message in progress)
+    assert any("stage=bundle step=load-query-rows dataset=findings rows=" in message for message in progress)
+    assert any("stage=bundle step=build-query-group group=history complete=True" in message for message in progress)
 
 
 def test_retries_reuse_content_addressed_artifacts_and_do_not_repeat_normalization(work, monkeypatch):
@@ -154,3 +156,43 @@ def test_bundle_rejects_raw_inventory_changes_after_normalization(work):
             raw, Settings(), {}, policy, work / "worker",
             snapshot=SNAPSHOT, run_id=RUN_ID, state=state,
         )
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_history_reuses_checkpointed_event_totals_without_rescanning_history(work, monkeypatch, legacy):
+    from vulnerability_view.resumable_processing import Artifacts
+    from vulnerability_view.bounded_processing import iter_json_rows
+
+    raw, policy = setup_run(work)
+    worker = work / "worker"
+    state = None
+    while state is None or state["nextStage"] != "history":
+        state = advance_archived_run(
+            raw, Settings(), {}, policy, worker, snapshot=SNAPSHOT, run_id=RUN_ID, state=state,
+        )
+    artifacts = Artifacts(worker / "processing-artifacts")
+    metadata = json.loads(artifacts.get(state["checkpoint"]).read_text())
+    assert set(metadata["eventSummaries"]) == {"findingEvents", "recommendationEvents"}
+    expected_new = metadata["datasets"]["findingEvents"]["rowCount"]
+    if legacy:
+        metadata.pop("eventSummaries")
+        checkpoint = work / "legacy-checkpoint.json"
+        checkpoint.write_text(json.dumps(metadata))
+        state["checkpoint"] = artifacts.put(checkpoint, "legacy-checkpoint")
+    original = Artifacts.rows
+    scanned = []
+
+    def observe(self, descriptor, progress_callback=None):
+        if descriptor and descriptor["fileName"] in {"finding-events.json.gz", "recommendation-events.json.gz"}:
+            scanned.append(descriptor["fileName"])
+            assert legacy, "New history checkpoints must not rescan event datasets"
+        return original(self, descriptor, progress_callback)
+
+    monkeypatch.setattr(Artifacts, "rows", observe)
+    result = advance_archived_run(
+        raw, Settings(), {}, policy, worker, snapshot=SNAPSHOT, run_id=RUN_ID, state=state,
+    )
+    metadata = json.loads(artifacts.get(result["checkpoint"]).read_text())
+    rows = list(iter_json_rows(artifacts.get(metadata["datasets"]["runHistory"])))
+    assert rows[-1]["NewFindings"] == expected_new
+    assert bool(scanned) == legacy

@@ -93,7 +93,16 @@ function renderRecentRuns(){
   const rows=recentCollectionRuns(),list=$("recentRunsList");
   if(!rows.length){list.innerHTML='<li class="empty">No collection history is available.</li>';return;}
   const statusLabel=status=>status==="PartialSuccess"?"Partial success":status||"Unknown";
-  list.innerHTML=rows.map(row=>{const status=statusLabel(row.RunStatus),metrics=Number.isFinite(Number(row.OpenFindings))?`${fmt(row.OpenFindings)} open findings · ${fmt(row.AffectedMachines||0)} machines`:"Collection completed";return`<li><span><strong>${esc(formatLocal(row.SnapshotTimeUtc))}</strong><small>UTC: ${esc(formatUtc(row.SnapshotTimeUtc))}</small><small>${esc(metrics)}</small></span><b>${esc(status)}</b></li>`;}).join("");
+  list.innerHTML=rows.map(row=>{
+    const status=statusLabel(row.RunStatus),metrics=Number.isFinite(Number(row.OpenFindings))?`${fmt(row.OpenFindings)} open findings · ${fmt(row.AffectedMachines||0)} machines`:row.RunStatus==="Failed"?"Collection failed":"Collection completed";
+    let explanation="";
+    if(["PartialSuccess","Warning"].includes(row.RunStatus)){
+      const issues=state.runs.filter(source=>source.DataOrigin===row.DataOrigin&&(row.CollectionRunId?source.CollectionRunId===row.CollectionRunId:(source.SnapshotTimeUtc||source.RunTimeUtc)===row.SnapshotTimeUtc)&&source.RunStatus!=="Success");
+      explanation='<small class="recent-run-explanation">Completed with collection warnings, not still running. One or more sources reported a warning or did not complete successfully; some data may be missing or stale.</small>';
+      explanation+=issues.length?issues.map(source=>`<small class="recent-run-explanation">${esc(source.Endpoint||"Unknown source")}: ${esc(statusLabel(source.RunStatus))}${source.Error?` - ${esc(source.Error)}`:""}</small>`).join(""):'<small class="recent-run-explanation">Per-source details are unavailable for this historical run.</small>';
+    }
+    return`<li><span><strong>${esc(formatLocal(row.SnapshotTimeUtc))}</strong><small>UTC: ${esc(formatUtc(row.SnapshotTimeUtc))}</small><small>${esc(metrics)}</small>${explanation}</span><b>${esc(status)}</b></li>`;
+  }).join("");
 }
 /** Validate and upload a selected customer-logo PNG. */
 async function uploadCustomerLogo(file){
