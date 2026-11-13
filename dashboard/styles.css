@@ -449,6 +449,11 @@ body.pivot-detail-open .pivot-panel.fullscreen-mode{top:calc(var(--workspace-con
 .sla-chart-legend{display:flex;flex-wrap:wrap;gap:6px 12px}
 .sla-chart-legend span{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#405968}
 .sla-chart-legend i{width:9px;height:9px;border-radius:2px}
+.sla-simple-summary>p{margin:12px 18px;font-size:13px;line-height:1.6}
+.sla-simple-summary table{width:100%;min-width:800px}
+.sla-summary-rates>span{display:block;white-space:nowrap;margin:5px 0}
+.metric-drilldown{display:block;padding:0;border:0;background:transparent;color:inherit;text-align:left;text-decoration:underline;text-underline-offset:4px;cursor:pointer}
+.metric-drilldown:focus-visible{outline:2px solid #176f86;outline-offset:3px}
 .sla-calendar-metric{padding:16px 18px;border-top:1px solid #d5dfe6}
 .sla-calendar-metric h4{margin:0 0 14px;font-size:14px;color:#17384f}
 .sla-calendar-row{margin-bottom:14px}

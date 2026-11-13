@@ -30,7 +30,13 @@ function fixture({snapshotStatus=200, notices=[], now=null, preparation=null, tr
       dispatch(event,value){for(const handler of this.listeners[event]||[])handler({target:{value,checked:value},preventDefault(){},stopPropagation(){}});},
       setAttribute(key,value){this[key]=value;},removeAttribute(key){delete this[key];},
       querySelectorAll(selector){
-        if(selector==="[data-vulnerability-severity]"||selector==="[data-remove-filter]"){
+        if(selector==="[data-sla-summary-status]"){
+          this.summaryButtons=[...this.innerHTML.matchAll(/<button[^>]*data-sla-summary-severity="([^"]+)"[^>]*data-sla-summary-status="([^"]+)"/g)].map(([,severity,status])=>{
+            const button=node();button.dataset.slaSummarySeverity=severity;button.dataset.slaSummaryStatus=status;return button;
+          });
+          return this.summaryButtons;
+        }
+        if(selector==="[data-vulnerability-severity]"||selector==="[data-remove-filter]"||selector==="[data-metric-table]"){
           const attribute=selector.slice(1,-1),key=attribute.slice(5).replace(/-([a-z])/g,(_,letter)=>letter.toUpperCase());
           this.filterButtons=[...this.innerHTML.matchAll(new RegExp(`${attribute}="([^"]+)"`,"g"))].map(([,value])=>{const button=node();button.dataset[key]=value;return button;});
           return this.filterButtons;
@@ -568,7 +574,7 @@ test("snapshot startup failures do not leave a processing animation running",asy
 
 test("shared activity tiles put full-width labels before their counts",()=>{
   const tiles=[...html.matchAll(/<button\b[^>]*data-(?:new|fixed)-view=[^>]*>(.*?)<\/button>/g)];
-  assert.equal(tiles.length,6);
+  assert.equal(tiles.length,7);
   for(const [,markup] of tiles)assert.match(markup,/^<span>[^<]+<\/span><strong id="[^"]+">0<\/strong><small [^>]+>[^<]+<\/small>$/);
   const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
   assert.match(css,/\.new-activity-metrics button,\.new-activity-metrics \.window-metric\{[^}]*grid-template-columns:minmax\(0,1fr\)/);
@@ -576,7 +582,7 @@ test("shared activity tiles put full-width labels before their counts",()=>{
 
 test("activity tiles explain counts and partial fixes in plain language on hover and focus",()=>{
   const tiles=[...html.matchAll(/<button\b([^>]*data-(new|fixed)-view=[^>]*)>(.*?)<\/button>/g)];
-  assert.equal(tiles.length,6);
+  assert.equal(tiles.length,7);
   for(const [,attributes,kind,markup] of tiles){
     const helpId=attributes.match(/aria-describedby="([^"]+)"/)?.[1];
     assert.ok(helpId);
@@ -623,7 +629,7 @@ test("recommendation activity distinguishes observed progress from confirmed cle
   assert.match(tile,/does not mean the recommendation is finished/);
 });
 
-test("vulnerability count help explains distinct CVEs without offering instance metrics",async()=>{
+test("vulnerability count help keeps distinct CVEs separate from explicitly labeled evidence",async()=>{
   const app=fixture();await tick();
   const help=app.run('metricHelp("Distinct active CVEs")');
   assert.match(help,/Each CVE is counted once, even across many devices, products, or versions/);
@@ -634,7 +640,7 @@ test("vulnerability count help explains distinct CVEs without offering instance 
   assert.match(html,/<select id="findingsMode" aria-describedby="findingInstancesHelp"/);
   assert.match(html,/<details class="finding-count-help"><summary>How vulnerabilities are counted<\/summary><p id="findingInstancesHelp">/);
   assert.match(html,/supporting evidence, not additional vulnerabilities/);
-  assert.doesNotMatch(html,/<option value="findings">/);
+  assert.match(html,/<option value="findings">Software\/version evidence rows<\/option>/);
   assert.doesNotMatch(html,/technical-metric|TechnicalEvidence|trendWorkflowEvidence|finding-instance evidence/);
 });
 
@@ -1671,8 +1677,134 @@ function slaDashboardReport(){
     period("Last completed month","2026-09-01","2026-09-30"),
     period("Previous completed month","2026-08-01","2026-08-31"),
   ];
-  return {unit:"distinct-entities",asOfUtc:"2026-10-24T12:00:00Z",history:{startUtc:"2026-08-01T00:00:00Z",snapshots:85},periods,coverageGap:false};
+  return {unit:"distinct-entities",asOfUtc:"2026-10-24T12:00:00Z",history:{startUtc:"2026-08-01T00:00:00Z",snapshots:85},periods,coverageGap:false,
+    machineCveSummary:{unit:"machine-cve",label:"Month to date",start:periods[0].start,end:periods[0].end,coverage:"complete",
+      severity:["Critical","High","Medium","Low"].map((label,index)=>({label,openWithin:index?0:4,openOverdue:index?0:1,unknownOpen:index?0:1,
+        completedWithin:index?0:2,completedLate:index?0:1,completedUnknown:index?0:1,awaitingConfirmation:index?0:1}))},
+  };
 }
+
+test("simple SLA summary shows pair counts and separate honest open and fixed percentages",async()=>{
+  const app=fixture();await tick();
+  const report=slaDashboardReport();
+  report.machineCveSummary.coverage="unavailable";
+  app.context.slaReport=report;
+  app.run("renderSlaDashboard(slaReport)");
+  const markup=app.elements.get("slaDashboardSummary").innerHTML;
+  for(const severity of ["Critical","High","Medium","Low"])assert.ok(markup.includes(`<th scope="row">${severity}</th>`));
+  assert.match(markup,/Open SLA % \(count\)/);
+  assert.match(markup,/Fixed SLA % \(count\)/);
+  assert.match(markup,/80\.0% \(4\)/);
+  assert.match(markup,/20\.0% \(1\)/);
+  assert.match(markup,/66\.7% \(2\)/);
+  assert.match(markup,/33\.3% \(1\)/);
+  assert.match(markup,/Pending confirmation/);
+  assert.match(markup,/Incomplete retained history: current open status is available/);
+  assert.match(markup,/N\/A — no known-deadline outcomes/);
+  assert.doesNotMatch(markup,/Waiting for data|NaN|undefined/);
+  assert.equal(app.elements.get("slaSummaryDetails").hidden,true);
+});
+
+test("SLA summary drilldowns and CSV preserve selected metric, severity, scope and snapshot",async()=>{
+  const app=fixture();await tick();
+  app.run('state.subscription="sub-selected";state.team="Operations";state.osType="Windows11";activateView("slaDashboard")');
+  await tick();
+  app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();
+  const button=app.elements.get("slaDashboardSummary").summaryButtons.find(button=>button.dataset.slaSummarySeverity==="Critical"&&button.dataset.slaSummaryStatus==="Fixed");
+  button.click();await tick();
+  const payload=app.query().at(-1).payload;
+  assert.equal(payload.filters.slaSummarySeverity,"Critical");
+  assert.equal(payload.filters.slaSummaryStatus,"Fixed");
+  assert.equal(payload.filters.subscription,"sub-selected");
+  assert.equal(payload.filters.team,"Operations");
+  assert.equal(payload.filters.osType,"Windows11");
+  assert.equal(payload.snapshotId,snapshotId);
+  app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();
+  assert.equal(app.elements.get("slaSummaryDetails").hidden,false);
+  assert.match(app.elements.get("slaSummaryContext").textContent,/Critical · Confirmed fixed/);
+  app.run('exportDashboardCsv("slaDashboard","slaSummaryTable")');
+  assert.equal(app.query().at(-1).payload.table,"slaSummaryTable");
+  assert.equal(app.query().at(-1).payload.filters.slaSummaryStatus,"Fixed");
+  app.elements.get("clearSlaSummary").click();await tick();
+  assert.equal(app.run("dashboardRequest().filters.slaSummaryStatus"),undefined);
+  assert.equal(app.elements.get("slaSummaryDetails").hidden,true);
+});
+
+test("between-run activity shows authoritative boundaries and no fallback when unavailable",async()=>{
+  const app=fixture();await tick();
+  app.elements.get("newPeriod").dispatch("change","runs");await tick();
+  assert.equal(app.query().at(-1).payload.filters.newPeriod,"runs");
+  app.query().at(-1).resolve(app.payload({metadata:{activityComparison:{available:true,previousUtc:"2026-10-20T12:00:00Z",latestUtc:snapshot.snapshotTimeUtc}},activity:{fixedFindings:12,fixedMachines:3,fixedCves:2,fixedRecommendations:1}}));await tick();
+  assert.equal(app.elements.get("fixedWindowObservationCount").textContent,"12");
+  assert.equal(app.elements.get("fixedWindowMachineCount").textContent,"3");
+  assert.match(app.elements.get("newActivityContext").textContent,/After 2026-10-20 12:00:00 UTC through 2026-10-24 00:00:00 UTC/);
+  app.run("clearDashboardResponseCache();render()");await tick();
+  app.query().at(-1).resolve(app.payload({metadata:{activityComparison:{available:false}}}));await tick();
+  assert.equal(app.elements.get("fixedWindowObservationCount").textContent,"N/A");
+  assert.match(app.elements.get("newActivityContext").textContent,/Two comparable/);
+  assert.doesNotMatch(app.elements.get("newActivityTitle").textContent,/24 hours/);
+});
+
+test("remediation observation shortcut opens evidence instead of silently counting distinct CVEs",async()=>{
+  const app=fixture();await tick();
+  app.run('state.newPeriod="runs";state.severity="High";state.osType="Windows11"');
+  app.selectors["[data-fixed-view]"].find(button=>button.dataset.findingsMode==="findings").click();await tick();
+  const payload=app.query().at(-1).payload;
+  assert.equal(payload.mode,"findings");
+  assert.equal(payload.filters.remediationPeriodFilter,true);
+  assert.equal(payload.filters.newPeriod,"runs");
+  assert.equal(payload.filters.severity,"High");
+  assert.equal(payload.filters.osType,"Windows11");
+  assert.equal(payload.filters.exposureStatus,"All");
+});
+
+test("observed remediation cards link directly to their scoped detail tables",async()=>{
+  const app=fixture();await tick();
+  app.run('renderPivotDetails([{id:"pivotFindingTable",title:"Evidence"},{id:"pivotCveTable",title:"CVEs"}])');
+  app.run('cards("pivotCards",[[3,"Remediation observations","Software/version evidence rows","pivotFindingTable"],[2,"Distinct CVEs with observations","","pivotCveTable"]])');
+  const buttons=app.elements.get("pivotCards").filterButtons;
+  assert.equal(buttons.length,2);
+  buttons[0].click();
+  assert.equal(app.elements.get("pivotFindingTable").tabindex,"-1");
+  assert.match(app.elements.get("pivotCards").innerHTML,/aria-label="View Remediation observations"/);
+  app.run('state.remediationPeriodFilter=true;ensureManagementReport("overview")');
+  assert.equal(app.elements.get("overviewManagement").hidden,true);
+  app.run('state.remediationPeriodFilter=false;ensureManagementReport("overview")');
+  assert.equal(app.elements.get("overviewManagement").hidden,false);
+});
+
+test("management summary cards request the exact counted entity and can restore the full list",async()=>{
+  const app=fixture();await tick();
+  const cardId="executiveManagementFixActivity",action={entity:"machines",status:"Improved",table:"executiveManagementMachineTable"};
+  const payload=()=>app.payload({cards:{[cardId]:[[3,"Machines improved, still unresolved"]]},metadata:{metricActions:{[cardId]:[action]}}});
+  app.query()[0].resolve(payload());await tick();
+  app.elements.get(cardId).filterButtons[0].click();await tick();
+  assert.equal(app.query().at(-1).payload.filters.managementMetricEntity,"machines");
+  assert.equal(app.query().at(-1).payload.filters.managementMetricStatus,"Improved");
+  app.query().at(-1).resolve(payload());await tick();
+  assert.match(app.elements.get(cardId).innerHTML,/aria-pressed="true"/);
+  app.elements.get(cardId).filterButtons[0].click();await tick();
+  assert.equal(app.run("dashboardRequest().filters.managementMetricEntity"),undefined);
+  assert.equal(app.run("dashboardRequest().filters.managementMetricStatus"),undefined);
+});
+
+test("activity lists explain retained evidence and do not masquerade as current inventory or catalog",async()=>{
+  const app=fixture();await tick();
+  app.run('state.remediationPeriodFilter=true;renderDashboardResponse({scope:{activityMachines:4},metadata:{}},"workstations")');
+  assert.equal(app.elements.get("workstationsTitle").textContent,"Machines with matching activity");
+  assert.equal(app.elements.get("assetInventoryControls").hidden,true);
+  assert.equal(app.elements.get("endpointInventoryHelp").hidden,true);
+  assert.match(app.elements.get("filterCount").textContent,/4 machines with matching activity/);
+  assert.match(app.elements.get("workstationsContext").textContent,/without a current endpoint inventory record/);
+  app.run('renderDashboardResponse({scope:{},metadata:{}},"recommendations")');
+  assert.equal(app.elements.get("recommendationCatalogControls").hidden,true);
+  assert.match(app.elements.get("recommendationCatalogContext").textContent,/without a current catalog entry/);
+  app.run('state.remediationPeriodFilter=false;renderDashboardResponse({scope:{},metadata:{}},"workstations");renderDashboardResponse({scope:{},metadata:{}},"recommendations")');
+  assert.equal(app.elements.get("assetInventoryControls").hidden,false);
+  assert.equal(app.elements.get("endpointInventoryHelp").hidden,false);
+  assert.equal(app.elements.get("recommendationCatalogControls").hidden,false);
+  assert.equal(app.elements.get("workstationsTitle").textContent,"Endpoint device inventory");
+});
 
 function compliancePeriods(){
   const current=slaDashboardReport().periods[0];

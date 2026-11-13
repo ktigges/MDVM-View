@@ -385,7 +385,7 @@ def test_detail_pager_reuses_counts_and_does_not_query_sibling_tables(tmp_path, 
     request = {"view": "detail", "selection": {"type": "recommendation", "id": "rec-0"}, "limit": 25}
     first = e.query(request)
     monkeypatch.setattr(e, "_stats", lambda *args, **kwargs: pytest.fail("detail counts were rescanned"))
-    monkeypatch.setattr(e, "_machines", lambda *args: "invalid sibling SQL")
+    monkeypatch.setattr(e, "_machines", lambda *args, **kwargs: "invalid sibling SQL")
     monkeypatch.setattr(e, "_cves", lambda *args: "invalid sibling SQL")
     result = e.query({**request, "page": 1, "table": "pivotFindingTable"})
     assert result["detail"]["counts"] == first["detail"]["counts"]

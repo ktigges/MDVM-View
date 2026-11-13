@@ -326,6 +326,144 @@ def test_sla_dashboard_unknown_only_and_no_history_never_claim_compliance(tmp_pa
     assert all(period["cves"]["completionPercent"] is None for period in report["periods"][1:])
 
 
+def test_simple_sla_summary_counts_machine_cve_pairs_without_software_multiplication(tmp_path):
+    data = compliance_data()
+    data["run-history"] = []
+    result = engine(tmp_path, data).query(request("slaDashboard"))
+    summary = result["metadata"]["slaDashboard"]["machineCveSummary"]
+    assert summary["unit"] == "machine-cve"
+    assert summary["coverage"] == "unavailable"
+    high = next(row for row in summary["severity"] if row["label"] == "High")
+    assert (high["openWithin"], high["openOverdue"], high["unknownOpen"]) == (4, 1, 1)
+    assert (high["completedWithin"], high["completedLate"], high["completedUnknown"]) == (2, 1, 1)
+    assert high["awaitingConfirmation"] == 1
+    assert high["within"] == pytest.approx(200 / 3)
+    assert [row["label"] for row in summary["severity"]] == ["Critical", "High", "Medium", "Low"]
+
+
+@pytest.mark.parametrize(("status", "count", "progress"), [
+    ("Open", 6, {"Open", "Fix observed — awaiting confirmation"}),
+    ("Fixed", 4, {"Confirmed fixed"}),
+    ("Awaiting", 1, {"Fix observed — awaiting confirmation"}),
+    ("OpenWithin", 4, {"Open", "Fix observed — awaiting confirmation"}),
+    ("OpenOverdue", 1, {"Open"}),
+    ("FixedWithin", 2, {"Confirmed fixed"}),
+    ("FixedLate", 1, {"Confirmed fixed"}),
+    ("Unknown", 2, {"Open", "Confirmed fixed"}),
+])
+def test_simple_sla_summary_drilldown_and_export_match_metric(tmp_path, status, count, progress):
+    e = engine(tmp_path, compliance_data())
+    payload = request("slaDashboard", slaSummaryStatus=status, slaSummarySeverity="High")
+    result = e.query(payload)
+    table = result["tables"]["slaSummaryTable"]
+    assert table["total"] == count
+    assert {row["ProgressStatus"] for row in table["items"]} == progress
+    assert len({(row["DeviceId"], row["CveId"]) for row in table["items"]}) == count
+    assert all(row["Severity"] == "High" for row in table["items"])
+    assert len(list(e.iter_export({**payload, "table": "slaSummaryTable"}))) == count
+
+
+@pytest.mark.parametrize("kind,identifier", [
+    ("machine", "one"), ("cve", "CVE-SHARED"), ("recommendation", "rec-0"),
+])
+def test_observed_remediation_detail_keeps_activity_scope_and_explains_pending(tmp_path, kind, identifier):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="one", CveId="CVE-SHARED", RecommendationId="rec-0",
+                FindingStatus="PendingConfirmation", EffectiveRemediationUtc="2026-10-24T10:00:00Z"),
+        finding(1, DeviceId="one", CveId="CVE-SHARED", RecommendationId="rec-0"),
+        finding(2, DeviceId="one", CveId="CVE-SHARED", RecommendationId="rec-0",
+                FindingStatus="Fixed", FixedUtc="2026-10-20T10:00:00Z"),
+        finding(3, DeviceId="one", CveId="CVE-SHARED", RecommendationId="rec-0",
+                Severity="Low", FindingStatus="Fixed", FixedUtc="2026-10-24T10:00:00Z"),
+    ]
+    e = engine(tmp_path, data)
+    payload = {**request("detail", remediationPeriodFilter=True, exposureStatus="All", severity="High"),
+               "selection": {"type": kind, "id": identifier}}
+    result = e.query(payload)
+    assert result["tables"]["pivotFindingTable"]["total"] == 1
+    assert result["tables"]["pivotCveTable"]["total"] == 1
+    assert result["tables"]["pivotRecommendationTable"]["total"] == 1
+    assert result["tables"]["pivotFindingTable"]["items"][0]["FindingStatus"] == "PendingConfirmation"
+    cards = {card[1]: card[0] for card in result["cards"]["pivotCards"]}
+    assert cards["Remediation observations"] == 1
+    assert cards["Observations awaiting confirmation"] == 1
+    assert "not full-CVE clearance" in result["texts"]["pivotSummary"]
+    assert len(list(e.iter_export({**payload, "table": "pivotFindingTable"}))) == 1
+
+
+@pytest.mark.parametrize("view", ["executive", "overview", "sla", "executiveSnapshot", "trend"])
+def test_management_metric_drilldowns_match_every_card_and_export(tmp_path, view):
+    e = engine(tmp_path, management_data())
+    baseline = e.query(request(view))
+    for card_id, actions in baseline["metadata"]["metricActions"].items():
+        for card, action in zip(baseline["cards"][card_id], actions, strict=True):
+            payload = request(view, managementMetricEntity=action["entity"], managementMetricStatus=action["status"])
+            result = e.query(payload)
+            table = result["tables"][action["table"]]
+            assert table["total"] == card[0], (view, card[1], table["items"])
+            assert len(list(e.iter_export({**payload, "table": action["table"]}))) == card[0]
+
+
+def test_observed_machine_detail_can_still_load_full_cve_history_without_losing_activity_evidence(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="one", CveId="CVE-SHARED", FindingStatus="PendingConfirmation",
+                EffectiveRemediationUtc="2026-10-24T10:00:00Z"),
+        finding(1, DeviceId="one", CveId="CVE-SHARED"),
+        finding(2, DeviceId="one", CveId="CVE-CLEARED", FindingStatus="Fixed", FixedUtc="2026-10-20T10:00:00Z"),
+    ]
+    for row in data["findings"]:
+        row["FirstSeenUtc"] = row["FirstObservedUtc"] = "2026-10-01T00:00:00Z"
+    payload = {**request("detail", remediationPeriodFilter=True, exposureStatus="All", machineHistoryPeriod="30days"),
+               "selection": {"type": "machine", "id": "one"}}
+    result = engine(tmp_path, data).query(payload)
+    assert result["tables"]["pivotFindingTable"]["total"] == 1
+    fixes = [row for row in result["tables"]["pivotMachineHistoryTable"]["items"] if row["Change"] == "Confirmed fixed"]
+    assert [row["CveId"] for row in fixes] == ["CVE-CLEARED"]
+
+
+def test_three_machines_with_fixes_do_not_imply_global_cve_clearance(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(index, DeviceId=f"machine-{index}", CveId="CVE-SHARED",
+                FindingStatus="Fixed" if index < 3 else "Open",
+                FixedUtc="2026-10-24T10:00:00Z" if index < 3 else None,
+                FirstObservedUtc="2026-10-01T00:00:00Z")
+        for index in range(4)
+    ]
+    e = engine(tmp_path, data)
+    dashboard = e.query(request("slaDashboard"))
+    report = dashboard["metadata"]["slaDashboard"]
+    assert dashboard["activity"]["fixedMachines"] == 3
+    assert report["periods"][0]["cves"]["confirmedFixes"] == 0
+    high = next(row for row in report["machineCveSummary"]["severity"] if row["label"] == "High")
+    assert high["completedWithin"] == 3
+    assert high["openWithin"] == 1
+    detail = e.query({**request("detail", remediationPeriodFilter=True, exposureStatus="All"),
+                      "selection": {"type": "cve", "id": "CVE-SHARED"}})
+    assert detail["tables"]["pivotFindingTable"]["total"] == 3
+    assert "not full-CVE clearance" in detail["texts"]["pivotSummary"]
+
+
+@pytest.mark.parametrize("view,table,activity", [
+    ("workstations", "workstationTable", "fixedMachines"),
+    ("recommendations", "recommendationTable", "fixedRecommendations"),
+])
+def test_activity_drilldowns_include_history_without_current_inventory_or_catalog(tmp_path, view, table, activity):
+    data = compliance_data()
+    data["devices"] = []
+    data["recommendations"] = []
+    e = engine(tmp_path, data)
+    payload = request(view, newPeriod="week", remediationPeriodFilter=True, exposureStatus="All",
+                      workloadGrouping={"rules": [{"id": "all", "field": "OwnerTeam", "operator": "exact",
+                                                  "value": "Operations", "label": "Grouped workloads"}]})
+    result = e.query(payload)
+    assert result["tables"][table]["total"] == result["activity"][activity]
+    assert result["tables"][table]["total"] == (4 if view == "workstations" else 3)
+    assert len(list(e.iter_export({**payload, "table": table}))) == result["activity"][activity]
+
+
 def test_sla_dashboard_does_not_multiply_cves_machines_or_software(tmp_path):
     data = datasets(0)
     data["findings"] = [

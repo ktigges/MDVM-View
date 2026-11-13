@@ -130,7 +130,7 @@ def test_dashboard_current_navigation_has_a_matching_view(view: str):
     assert f'<section id="{view}"' in html
 
 
-def test_dashboard_counts_entities_without_hidden_instance_metrics():
+def test_dashboard_defaults_to_entities_and_explicitly_labels_observation_evidence():
     html = Path("dashboard/index.html").read_text()
     javascript = Path("dashboard/app.js").read_text()
 
@@ -142,7 +142,9 @@ def test_dashboard_counts_entities_without_hidden_instance_metrics():
     assert 'id="newMachineCount"' in html
     assert 'id="fixedWindowCveCount"' in html
     assert 'id="fixedWindowMachineCount"' in html
-    assert '<option value="findings">' not in html
+    assert '<option value="findings">Software/version evidence rows</option>' in html
+    assert 'id="fixedWindowObservationCount"' in html
+    assert 'id="slaDashboardSummary"' in html
     assert "technical-metric" not in html
     assert "TechnicalEvidence" not in html
     assert "newFindingCount" not in html

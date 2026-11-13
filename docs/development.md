@@ -362,6 +362,24 @@ groups. SLA outcomes are separate from vulnerability severity; there is no
 red/yellow/green rating or `ExecutiveStatus` field. SLA deadlines do not reset
 on deployment; new collection evidence updates tracking at each pinned snapshot.
 
+The dedicated SLA page starts with a compact machine/CVE-pair severity summary,
+reusing `build_sla` outcomes without recalculating lifecycle or policy decisions.
+Its `machineCveSummary` metadata is independent of calendar-history availability:
+open status is current; month-to-date fixes explicitly report partial coverage.
+Summary drilldowns use the same pair projection and predicates as the counts,
+including separate open/fixed percentages and explicit unknown deadlines.
+CSV exports use those identical predicates. The distinct-entity reports remain
+separate below it.
+
+Management-card actions select the counted entity/status table, not a broader
+list. Activity-window details retain the actual evidence scope rather than
+switching to a management report that discards activity dates. Observation
+counts include software/version evidence and pending or subsequently reopened
+fixes; they do not assert full CVE clearance. The optional between-run activity
+window uses an exclusive previous boundary and inclusive latest boundary.
+Queries, read-model eligibility, prepared-response identities, and exports
+respect that window; unavailable comparisons never fall back to a daily window.
+
 A disk-backed scalar clock projection is shared by the entity and pair
 aggregations. Each period endpoint is evaluated once per source row. Full
 evidence payloads are not materialized. Group all periods before joining the

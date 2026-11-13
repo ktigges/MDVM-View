@@ -318,7 +318,7 @@ for(const line of source){
   if(line.startsWith("const presentation=")||line.startsWith("const filterConfig=")||
      line.startsWith("const workloadGroupingConfig=")||line.startsWith("const DEFAULT_RECOMMENDATION_TYPES=")||
      line.startsWith("const DEFAULT_DOMAINS=")||line.startsWith("const DEFAULT_REPORTING_DAYS=")||
-     line.startsWith("const state="))vm.runInContext(line,context);
+     line.startsWith("const state=")||line.startsWith("const findingsList="))vm.runInContext(line,context);
 }
 vm.runInContext("const dashboardQuery={snapshot:{snapshotId:'test'}};const FINDINGS_PAGE_SIZE=100;",context);
 vm.runInContext(sourceText.slice(sourceText.indexOf("function dashboardFilters()"),sourceText.indexOf("function invalidateDashboardChannel(")),context);

@@ -937,6 +937,42 @@ def test_new_and_remediation_activity_have_independent_scope(tmp_path):
     assert result["scope"]["findings"] == 1
 
 
+def test_between_run_activity_uses_comparable_run_boundaries_and_exact_drilldowns(tmp_path):
+    data = datasets(0)
+    previous = "2026-10-20T12:00:00Z"
+    data["collection-runs"][0]["SnapshotTimeUtc"] = previous
+    data["findings"] = [
+        finding(0, FindingStatus="Fixed", FixedUtc=previous),
+        finding(1, FindingStatus="Fixed", FixedUtc="2026-10-21T12:00:00Z"),
+        finding(2, FindingStatus="PendingConfirmation", EffectiveRemediationUtc="2026-10-24T10:00:00Z"),
+        finding(3, FindingStatus="Reopened", FixedUtc="2026-10-23T12:00:00Z"),
+        finding(4, FindingStatus="Fixed", FixedUtc="2026-10-25T10:00:00Z"),
+    ]
+    data["collection-runs"].append({
+        "SnapshotTimeUtc": "2026-10-24T11:00:00Z", "DataOrigin": "Live", "RunStatus": "Failed",
+    })
+    data["collection-runs"].append({
+        "SnapshotTimeUtc": "2026-10-25T12:00:00Z", "DataOrigin": "Live", "RunStatus": "Success",
+    })
+    e = engine(tmp_path, data)
+    filters = {"newPeriod": "runs", "remediationPeriodFilter": True, "exposureStatus": "All"}
+    result = e.query({"view": "overview", "mode": "cves", "filters": filters})
+    assert result["activity"]["fixedFindings"] == result["tables"]["findingsTable"]["total"] == 3
+    assert result["metadata"]["activityComparison"]["previousUtc"] == previous
+    assert result["metadata"]["activityComparison"]["latestUtc"] == SNAPSHOT
+    assert result["metadata"]["activityComparison"]["available"] is True
+    assert len(list(e.iter_export({"view": "overview", "mode": "cves", "filters": filters}))) == 3
+
+
+def test_between_run_activity_without_previous_snapshot_is_unavailable_not_daily_fallback(tmp_path):
+    data = datasets(1)
+    data["collection-runs"] = data["collection-runs"][-1:]
+    result = engine(tmp_path, data).query({"view": "overview", "filters": {
+        "newPeriod": "runs", "remediationPeriodFilter": True, "exposureStatus": "All",
+    }})
+    assert result["metadata"]["activityComparison"]["available"] is False
+    assert result["scope"]["findings"] == result["activity"]["fixedFindings"] == 0
+
 def test_missing_optional_is_explicit_but_missing_required_and_corruption_propagate(tmp_path):
     e = engine(tmp_path / "optional", {"findings": [finding()]})
     result = e.query({"view": "overview"})
