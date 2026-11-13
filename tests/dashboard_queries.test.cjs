@@ -1757,17 +1757,31 @@ test("zero confirmed fixes cannot appear as 100 percent completed SLA",async()=>
 
 test("progress charts show comparable distinct CVE counts without implying exclusive slices",async()=>{
   const app=fixture();await tick();
-  app.context.chart={kind:"remediation-progress",unit:"distinct-cves",rows:[
-    {label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",coverage:"Partial history",new:12,fixed:3,open:20},
+  app.context.chart={kind:"remediation-progress",unit:"distinct-cves",baselineTimeUtc:"2026-10-01T00:00:00Z",rows:[
+    {label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",coverage:"Partial history",baseline:15,new:12,fixed:3,partial:2,awaiting:4,open:20},
   ]};
   app.run('renderDashboardChart("slaDashboardRemediationProgress",chart)');
   const markup=app.elements.get("slaDashboardRemediationProgress").innerHTML;
-  for(const label of ["Newly observed CVEs","CVEs with confirmed fixes","Still-open CVEs","Partial history"])assert.ok(markup.includes(label));
+  for(const label of ["Initial inventory (not new)","First seen after baseline","CVEs cleared on a machine","Partial fixes, CVE still open","Awaiting confirmation (still open)","Still-open CVEs","Partial history"])assert.ok(markup.includes(label));
   assert.match(markup,/width:60%/);
   assert.match(markup,/width:15%/);
   assert.match(markup,/width:100%/);
+  assert.match(markup,/width:20%/);
+  assert.match(markup,/not newly introduced risk/);
   assert.match(markup,/overlap and are not slices of a total/);
   assert.match(markup,/>3<\/strong>/);
+});
+
+test("unknown baseline history is unavailable, not fabricated new or zero inventory",async()=>{
+  const app=fixture();await tick();
+  app.context.chart={kind:"remediation-progress",unit:"distinct-cves",baselineTimeUtc:null,rows:[
+    {label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",coverage:"Unavailable",baseline:null,new:null,fixed:0,partial:2,awaiting:1,open:20},
+  ]};
+  app.run('renderDashboardChart("slaDashboardRemediationProgress",chart)');
+  const markup=app.elements.get("slaDashboardRemediationProgress").innerHTML;
+  assert.equal((markup.match(/<strong>Unavailable<\/strong>/g)||[]).length,2);
+  assert.match(markup,/new versus initial-inventory counts cannot be assessed/);
+  assert.doesNotMatch(markup,/NaN|undefined/);
 });
 
 test("machine remediation prioritizes fixed and open CVEs and preserves status in paging and exports",async()=>{
@@ -1775,7 +1789,7 @@ test("machine remediation prioritizes fixed and open CVEs and preserves status i
   app.query()[0].resolve(app.payload());await tick();
   app.run('state.subscription="sub-selected";state.remediationPeriodFilter=true;pivotToMachine({DeviceId:"machine-x"})');
   const detail={type:"machine",id:"machine-x",record:{DeviceId:"machine-x",DeviceName:"Machine X"}};
-  const metadata={machineRemediation:{label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",Open:2,fixed:1,awaiting:1}};
+  const metadata={machineRemediation:{label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",Open:2,fixed:1,partial:1,awaiting:1}};
   app.query().at(-1).resolve(app.payload({
     detail,metadata,
     tables:{
@@ -1786,17 +1800,17 @@ test("machine remediation prioritizes fixed and open CVEs and preserves status i
     },
   }));await tick();
   assert.equal(app.elements.get("machineRemediation").hidden,false);
-  assert.match(app.elements.get("machineCveCounts").textContent,/1 confirmed fixed · 2 still open · 1 awaiting confirmation/);
+  assert.match(app.elements.get("machineCveCounts").textContent,/1 CVEs cleared · 1 with partial fixes · 2 still open · 1 awaiting confirmation/);
   assert.match(app.elements.get("machineRemediationContext").textContent,/unresolved exposure even when opened from an activity count/);
   const sections=app.elements.get("pivotDetails").innerHTML;
   assert.ok(sections.indexOf('id="pivotSlaCveTable"')<sections.indexOf('id="pivotRecommendationTable"'));
-  app.elements.get("machineCveStatus").dispatch("change","Fixed");await tick();
+  app.elements.get("machineCveStatus").dispatch("change","Partial");await tick();
   const selected=app.query().at(-1).payload;
-  assert.equal(selected.filters.machineCveStatus,"Fixed");
+  assert.equal(selected.filters.machineCveStatus,"Partial");
   assert.equal(selected.filters.subscription,"sub-selected");
   assert.equal(selected.selection.id,"machine-x");
   assert.equal(selected.filters.remediationPeriodFilter,true);
-  assert.equal(app.run('dashboardRequest("detail","pivotSlaCveTable",1).filters.machineCveStatus'),"Fixed");
+  assert.equal(app.run('dashboardRequest("detail","pivotSlaCveTable",1).filters.machineCveStatus'),"Partial");
   app.query().at(-1).resolve(app.payload({detail,metadata}));await tick();
   app.run('pivotToMachine({DeviceId:"machine-y"})');
   assert.equal(app.query().at(-1).payload.filters.machineCveStatus,"All");

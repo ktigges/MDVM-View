@@ -179,11 +179,11 @@
       </div>
       <div id="pivotCards" class="metric-grid compact"></div>
       <section id="machineRemediation" class="panel" hidden aria-labelledby="machineRemediationTitle">
-        <div class="panel-title"><h3 id="machineRemediationTitle">This machine: new, fixed, and still-open CVEs</h3></div>
+        <div class="panel-title"><h3 id="machineRemediationTitle">This machine: CVE inventory and remediation</h3></div>
         <p id="machineRemediationContext" class="coverage-note"></p>
         <div id="machineRemediationProgress"></div>
         <div class="findings-list-controls">
-          <label>Show CVEs<select id="machineCveStatus"><option value="All">Fixed and still open</option><option value="Open">Still open (including pending)</option><option value="Fixed">Confirmed fixed in period</option><option value="Awaiting">Fixes awaiting confirmation</option></select></label>
+          <label>Show CVEs<select id="machineCveStatus"><option value="All">Fixed and still open</option><option value="Open">Still open (including pending)</option><option value="Fixed">CVEs fully cleared in period</option><option value="Partial">Confirmed partial fixes (still open)</option><option value="Awaiting">Fixes awaiting confirmation</option></select></label>
           <span id="machineCveCounts" role="status"></span>
         </div>
       </section>
@@ -286,7 +286,7 @@
       <p id="slaDashboardContext" class="coverage-note"></p>
       <div id="slaDashboardSummary"></div>
       <article class="panel">
-        <div class="panel-title"><h3>New, fixed, and still-open vulnerabilities</h3><span>Distinct CVEs, not software records</span></div>
+        <div class="panel-title"><h3>Vulnerability inventory and remediation</h3><span>Distinct CVEs, not software records</span></div>
         <div id="slaDashboardRemediationProgress"></div>
       </article>
       <section id="slaSummaryDetails" class="panel" hidden>

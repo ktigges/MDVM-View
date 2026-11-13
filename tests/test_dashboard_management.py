@@ -448,12 +448,78 @@ def test_three_machines_with_fixes_do_not_imply_global_cve_clearance(tmp_path):
 
 def test_remediation_progress_counts_distinct_cves_and_keeps_partial_fixes_open(tmp_path):
     data = management_data()
+    data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
+                            "FindingHistoryStartUtc": "2026-10-17T00:00:00Z"}]
     result = engine(tmp_path, data).query(request("executiveSnapshot"))
     chart = result["charts"]["executiveSnapshotManagementRemediationProgress"]
     current = chart["rows"][-1]
-    assert (current["new"], current["fixed"], current["open"]) == (6, 2, 5)
+    assert (current["baseline"], current["new"], current["fixed"], current["open"]) == (6, 0, 2, 5)
     assert chart["unit"] == "distinct-cves"
     assert current["fixed"] != result["metadata"]["management"]["periods"][0]["cves"]["FullyResolved"]
+
+
+def partial_progress_data():
+    data = datasets(0)
+    baseline = "2026-10-01T00:00:00Z"
+    data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
+                            "FindingHistoryStartUtc": baseline}]
+    data["findings"] = [
+        finding(0, DeviceId="one", CveId="CVE-PARTIAL", FirstObservedUtc=baseline),
+        finding(1, DeviceId="one", CveId="CVE-PARTIAL", FirstObservedUtc=baseline,
+                FindingStatus="Fixed", FixedUtc="2026-10-24T10:00:00Z"),
+        finding(2, DeviceId="one", CveId="CVE-PENDING", FirstObservedUtc=baseline),
+        finding(3, DeviceId="one", CveId="CVE-PENDING", FirstObservedUtc=baseline,
+                FindingStatus="PendingConfirmation", EffectiveRemediationUtc="2026-10-24T10:00:00Z"),
+        finding(4, DeviceId="one", CveId="CVE-ADDED", FirstObservedUtc="2026-10-22T00:00:00Z"),
+        finding(5, DeviceId="one", CveId="CVE-PARTIAL", FirstObservedUtc="2026-10-23T00:00:00Z"),
+    ] * 4
+    return data
+
+
+@pytest.mark.parametrize("view", ["executiveSnapshot", "detail"])
+def test_progress_separates_initial_inventory_partial_fixes_and_pending_evidence(tmp_path, view):
+    payload = request(view)
+    if view == "detail":
+        payload["selection"] = {"type": "machine", "id": "one"}
+    result = engine(tmp_path, partial_progress_data()).query(payload)
+    chart_id = "machineRemediationProgress" if view == "detail" else "executiveSnapshotManagementRemediationProgress"
+    current = result["charts"][chart_id]["rows"][-1]
+    assert {key: current[key] for key in ("baseline", "new", "fixed", "partial", "awaiting", "open")} == {
+        "baseline": 2, "new": 1, "fixed": 0, "partial": 1, "awaiting": 1, "open": 3,
+    }
+
+
+@pytest.mark.parametrize(("status", "cve"), [("Partial", "CVE-PARTIAL"), ("Awaiting", "CVE-PENDING")])
+def test_machine_progress_filters_include_partial_and_mixed_pending_evidence(tmp_path, status, cve):
+    payload = {**request("detail", machineCveStatus=status), "selection": {"type": "machine", "id": "one"}}
+    e = engine(tmp_path, partial_progress_data())
+    result = e.query(payload)
+    rows = result["tables"]["pivotSlaCveTable"]["items"]
+    assert [row["CveId"] for row in rows] == [cve]
+    assert "still open" in rows[0]["EvidenceProgress"]
+    assert rows[0]["FixedUtc"] is None
+    assert rows[0]["EffectiveRemediationUtc"] == "2026-10-24T10:00:00Z"
+    assert [row["CveId"] for row in e.iter_export({**payload, "table": "pivotSlaCveTable"})] == [cve]
+
+
+def test_discovery_chart_does_not_invent_new_counts_without_baseline_history(tmp_path):
+    result = engine(tmp_path, management_data()).query(request("executiveSnapshot"))
+    current = result["charts"]["executiveSnapshotManagementRemediationProgress"]["rows"][-1]
+    assert current["new"] is current["baseline"] is None
+    assert current["open"] == 5
+
+
+def test_progress_date_range_excludes_baseline_and_prior_additions_but_keeps_pending_backlog(tmp_path):
+    data = partial_progress_data()
+    for row in data["findings"]:
+        if row["FindingStatus"] == "PendingConfirmation":
+            row["EffectiveRemediationUtc"] = "2026-10-20T10:00:00Z"
+    result = engine(tmp_path, data).query(request(
+        "executiveSnapshot", executiveSnapshotPeriod="custom",
+        executiveSnapshotStart="2026-10-23", executiveSnapshotEnd="2026-10-24",
+    ))
+    current = result["charts"]["executiveSnapshotManagementRemediationProgress"]["rows"][-1]
+    assert (current["baseline"], current["new"], current["partial"], current["awaiting"]) == (0, 0, 1, 1)
 
 
 @pytest.mark.parametrize("activity", [False, True])

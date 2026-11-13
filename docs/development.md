@@ -387,11 +387,21 @@ list, so activity filtering never conceals that machine's other unresolved CVEs.
 The original activity evidence and exports retain their activity scope.
 
 Summary, SLA, Remediate, Reporting, and Executive Snapshot include a new/fixed/open
-comparison using distinct CVEs for each stated reporting period. New is the
-earliest retained collector observation for a CVE in scope, not publication time
-or a new software/version row. Fixed means a CVE with a confirmed machine/CVE
-clearance during the period, including partial progress across machines. Open
-is unresolved exposure at the period endpoint, including pending confirmation.
+comparison using distinct CVEs for each stated reporting period. Initial
+inventory is shown separately in periods containing the first retained collection.
+First seen after baseline excludes CVEs already present in that initial inventory;
+it uses the earliest retained collector observation for a CVE in scope, not
+publication time or a new software/version row. It does not establish when the
+vulnerability was introduced. If retained baseline history is unavailable, both
+discovery counts are unavailable, not zero or the whole backlog.
+
+Cleared means a CVE with a confirmed machine/CVE clearance during the period,
+including partial progress across machines. Partial fixes count distinct CVEs
+with confirmed supporting-evidence removal while the same CVE remains unresolved
+on that machine; these do not count as completed SLA outcomes. Awaiting
+confirmation counts distinct CVEs with pending-confirmation evidence at period
+end, even if other software evidence for the CVE remains detected. Open is the
+unresolved backlog at that endpoint, including both partial and pending fixes.
 These measures can overlap and are not additive slices or a remediation rate.
 Charts label retained-history coverage; missing history is not proof of zero
 activity. Existing immutable history and deadlines are unchanged.
@@ -410,7 +420,7 @@ than performing a correlated type lookup for every evidence row. First-catalog
 row and missing-identifier semantics are preserved. The scale benchmark includes
 an unrelated misconfiguration action to exercise that customer-data path.
 The compact SLA cache retains only per-machine/per-CVE rollups and percentage
-charts, never the full machine/CVE pair collection. Prepared response version 17
+charts, never the full machine/CVE pair collection. Prepared response version 18
 invalidates earlier presentations without changing retained source data.
 
 Machine/CVE detail defaults to `pivotSlaCveTable`: one row per machine/CVE,
@@ -420,9 +430,12 @@ Machine exports include `FixedCVEs` and completed on-time/late/unknown outcomes;
 CVE exports include `FixedMachines`. Pair detail exports
 carry the period, pinned snapshot, and selected identity.
 Machine detail prioritizes the CVE status table above recommendations, with
-All, Still open, Confirmed fixed in period, and Awaiting confirmation filters.
+All, Still open, CVEs fully cleared in period, Confirmed partial fixes, and
+Awaiting confirmation filters. `EvidenceProgress` distinguishes partial
+supporting-evidence clearance from full CVE resolution without changing
+`ProgressStatus` or the SLA completion calculation.
 Paging and CSV exports use the identical filter and preserve workspace scope.
-Its compact current-period new/fixed/open chart and fixed/open/pending counts stay unfiltered so the
+Its current-period inventory/remediation chart and cleared/partial/open/pending counts stay unfiltered so the
 full machine context remains visible. SLA-origin detail uses month to date;
 Executive Snapshot and Reporting retain their chosen periods, and other machine
 details use the explicitly labeled latest 30 days. Optional dated event history
