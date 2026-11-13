@@ -446,6 +446,52 @@ def test_three_machines_with_fixes_do_not_imply_global_cve_clearance(tmp_path):
     assert "not full-CVE clearance" in detail["texts"]["pivotSummary"]
 
 
+def test_remediation_progress_counts_distinct_cves_and_keeps_partial_fixes_open(tmp_path):
+    data = management_data()
+    result = engine(tmp_path, data).query(request("executiveSnapshot"))
+    chart = result["charts"]["executiveSnapshotManagementRemediationProgress"]
+    current = chart["rows"][-1]
+    assert (current["new"], current["fixed"], current["open"]) == (6, 2, 5)
+    assert chart["unit"] == "distinct-cves"
+    assert current["fixed"] != result["metadata"]["management"]["periods"][0]["cves"]["FullyResolved"]
+
+
+@pytest.mark.parametrize("activity", [False, True])
+@pytest.mark.parametrize(("status", "expected"), [
+    ("All", {"CVE-FIXED", "CVE-OPEN", "CVE-PENDING"}),
+    ("Open", {"CVE-OPEN", "CVE-PENDING"}),
+    ("Fixed", {"CVE-FIXED"}),
+    ("Awaiting", {"CVE-PENDING"}),
+])
+def test_machine_remediation_shows_fixed_and_remaining_even_from_activity(tmp_path, activity, status, expected):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="one", CveId="CVE-FIXED", FindingStatus="Fixed",
+                FixedUtc="2026-10-24T10:00:00Z"),
+        finding(1, DeviceId="one", CveId="CVE-OPEN"),
+        finding(2, DeviceId="one", CveId="CVE-PENDING", FindingStatus="PendingConfirmation",
+                EffectiveRemediationUtc="2026-10-24T10:00:00Z"),
+        finding(3, DeviceId="other", CveId="CVE-OTHER"),
+    ]
+    data["findings"] *= 3
+    data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
+                            "FindingHistoryStartUtc": "2026-08-01T00:00:00Z"}]
+    payload = {**request("detail", remediationPeriodFilter=activity, exposureStatus="All",
+                        machineCveStatus=status), "selection": {"type": "machine", "id": "one"}}
+    e = engine(tmp_path, data)
+    result = e.query(payload)
+    table = result["tables"]["pivotSlaCveTable"]
+    assert table["total"] == len(expected)
+    assert {row["CveId"] for row in table["items"]} == expected
+    assert {row["CveId"] for row in e.iter_export({**payload, "table": "pivotSlaCveTable"})} == expected
+    current = result["charts"]["machineRemediationProgress"]["rows"][-1]
+    assert len(result["charts"]["machineRemediationProgress"]["rows"]) == 1
+    assert "Full-period history: complete" in current["coverage"]
+    assert (current["new"], current["fixed"], current["open"]) == (3, 1, 2)
+    if activity:
+        assert result["tables"]["pivotFindingTable"]["total"] == 6
+
+
 @pytest.mark.parametrize("view,table,activity", [
     ("workstations", "workstationTable", "fixedMachines"),
     ("recommendations", "recommendationTable", "fixedRecommendations"),

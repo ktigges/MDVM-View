@@ -342,8 +342,9 @@ when these calculations change; retained collection evidence and published
 query indexes are not rewritten.
 
 Summary contains only current machine/CVE headline totals, their severity
-breakdowns, observed/confirmed fix activity, and a compact SLA-by-severity status table. It does not show
-compliance percentages, progress charts, period comparisons, or detailed
+breakdowns, observed/confirmed fix activity, a new/fixed/open CVE comparison,
+and a compact SLA-by-severity status table. It does not show
+compliance percentages, period comparison tables, or detailed
 remediation tables. Detailed SLA analysis remains in Executive Snapshot,
 Reporting, and Remediate. The compact table separates open-within-deadline,
 open-overdue, completed-on-time, completed-late, and unknown-deadline outcomes.
@@ -367,7 +368,9 @@ reusing `build_sla` outcomes without recalculating lifecycle or policy decisions
 Its `machineCveSummary` metadata is independent of calendar-history availability:
 open status is current; month-to-date fixes explicitly report partial coverage.
 Summary drilldowns use the same pair projection and predicates as the counts,
-including separate open/fixed percentages and explicit unknown deadlines.
+including open deadline counts, confirmed-fix percentages, and explicit unknown deadlines.
+Open deadline status is labeled not yet due or overdue, not completed SLA.
+With no confirmed fixes with known deadlines, completion is N/A, never 100%.
 CSV exports use those identical predicates. The distinct-entity reports remain
 separate below it.
 
@@ -379,6 +382,19 @@ fixes; they do not assert full CVE clearance. The optional between-run activity
 window uses an exclusive previous boundary and inclusive latest boundary.
 Queries, read-model eligibility, prepared-response identities, and exports
 respect that window; unavailable comparisons never fall back to a daily window.
+Machine activity detail additionally includes a separate full-scope CVE status
+list, so activity filtering never conceals that machine's other unresolved CVEs.
+The original activity evidence and exports retain their activity scope.
+
+Summary, SLA, Remediate, Reporting, and Executive Snapshot include a new/fixed/open
+comparison using distinct CVEs for each stated reporting period. New is the
+earliest retained collector observation for a CVE in scope, not publication time
+or a new software/version row. Fixed means a CVE with a confirmed machine/CVE
+clearance during the period, including partial progress across machines. Open
+is unresolved exposure at the period endpoint, including pending confirmation.
+These measures can overlap and are not additive slices or a remediation rate.
+Charts label retained-history coverage; missing history is not proof of zero
+activity. Existing immutable history and deadlines are unchanged.
 
 A disk-backed scalar clock projection is shared by the entity and pair
 aggregations. Each period endpoint is evaluated once per source row. Full
@@ -394,7 +410,7 @@ than performing a correlated type lookup for every evidence row. First-catalog
 row and missing-identifier semantics are preserved. The scale benchmark includes
 an unrelated misconfiguration action to exercise that customer-data path.
 The compact SLA cache retains only per-machine/per-CVE rollups and percentage
-charts, never the full machine/CVE pair collection. Prepared response version 10
+charts, never the full machine/CVE pair collection. Prepared response version 17
 invalidates earlier presentations without changing retained source data.
 
 Machine/CVE detail defaults to `pivotSlaCveTable`: one row per machine/CVE,
@@ -403,6 +419,14 @@ including confirmed fixed and remaining CVEs in the selected reporting period.
 Machine exports include `FixedCVEs` and completed on-time/late/unknown outcomes;
 CVE exports include `FixedMachines`. Pair detail exports
 carry the period, pinned snapshot, and selected identity.
+Machine detail prioritizes the CVE status table above recommendations, with
+All, Still open, Confirmed fixed in period, and Awaiting confirmation filters.
+Paging and CSV exports use the identical filter and preserve workspace scope.
+Its compact current-period new/fixed/open chart and fixed/open/pending counts stay unfiltered so the
+full machine context remains visible. SLA-origin detail uses month to date;
+Executive Snapshot and Reporting retain their chosen periods, and other machine
+details use the explicitly labeled latest 30 days. Optional dated event history
+remains independently selectable.
 
 Recommendations is an alphabetical catalog, with independent
 `recommendationCatalogStatus` and `recommendationCatalogSort` controls and

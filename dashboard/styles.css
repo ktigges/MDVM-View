@@ -334,6 +334,15 @@ main{width:100%;max-width:1600px!important;min-width:0;padding:22px clamp(16px,2
 .server-chart-row>span{min-width:100px}
 .server-chart-row .server-bar{height:12px;min-width:2px;background:var(--cyan,#1673c9);border-radius:3px}
 .server-chart-row strong{font-size:13px}
+.remediation-chart-period{padding:14px 18px}
+.remediation-chart-period h4{margin:0 0 8px}
+.remediation-chart-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(60px,3fr) minmax(35px,auto);align-items:center;gap:12px;margin:12px 0;font-size:13px}
+.remediation-chart-track{height:14px;background:#edf2f6;border-radius:3px;overflow:hidden}
+.remediation-chart-track i{display:block;height:100%}
+.remediation-chart-row strong{text-align:right}
+.remediation-chart-definitions{margin:12px 18px;font-size:12px;line-height:1.6}
+#machineRemediation[hidden]{display:none}
+@media(max-width:600px){.remediation-chart-row{grid-template-columns:minmax(110px,1fr) minmax(45px,1fr) auto;font-size:11px}}
 .server-chart-legend{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;font-size:12px;margin:6px 0}
 .server-chart-legend span{display:flex;align-items:center;gap:6px}
 .server-chart-legend i{height:9px;width:9px;border-radius:2px}

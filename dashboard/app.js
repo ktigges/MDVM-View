@@ -20,6 +20,7 @@ const FINDINGS_PAGE_SIZE=100;
 const findingsList={mode:"cves",page:0,scopeKey:""};
 let pivotFilterRestore=null;
 state.machineHistory={enabled:false,period:"30days",start:"",end:""};
+state.machineCveStatus="All";
 state.slaCompliance={start:"",end:""};
 state.slaSummary={severity:"All",status:""};
 state.managementMetric=null;
@@ -222,6 +223,10 @@ function initialize(){
     state.machineHistory={enabled:true,period:$("machineHistoryPeriod").value,start:$("machineHistoryStart").value,end:$("machineHistoryEnd").value};
     if(state.selectedEntity?.type==="machine")void queryDashboardView("detail");
   });
+  $("machineCveStatus").addEventListener("change",event=>{
+    state.machineCveStatus=event.target.value;
+    if(state.selectedEntity?.type==="machine")void queryDashboardView("detail");
+  });
   $("exportReportingCsv").addEventListener("click",exportLifecycleCsv);
   $("openWorkflowHelp").addEventListener("click",()=>activateView("help"));
   document.addEventListener("click",event=>{const controls=document.querySelector(".workspace-controls");if(!$("filterBar").hidden&&controls&&!controls.contains(event.target))setFilterExpanded(false,true);});
@@ -296,6 +301,7 @@ function clearSelectedWorkItem(){
   if($("pivotBackdrop"))$("pivotBackdrop").hidden=true;
   if($("pivotPanel"))$("pivotPanel").hidden=true;
   $("machineHistoryControls").hidden=true;
+  $("machineRemediation").hidden=true;
 }
 function defenderDeviceUrl(device){const id=String(device.DeviceId||"");return id?`https://security.microsoft.com/machines/${encodeURIComponent(id)}`:"https://security.microsoft.com/machines";}
 function copyRecommendationReference(recommendation,message){const text=`${recommendation.RecommendationName}\nRecommendation ID: ${recommendation.RecommendationId}`;navigator.clipboard?.writeText(text).then(()=>{$("pivotActionStatus").textContent=message;}).catch(()=>{$("pivotActionStatus").textContent=`Recommendation ID: ${recommendation.RecommendationId}`;});}
@@ -668,6 +674,7 @@ function dashboardRequest(view=state.activeView,tableId=null,page=0){
   if(tableId)request.table=tableId;
   if(view==="detail"){
     request.selection=state.selectedEntity;request.filters.managementSourceView=state.pivotSourceLabel||state.activeView;
+    if(state.selectedEntity?.type==="machine")request.filters.machineCveStatus=state.machineCveStatus;
     if(state.selectedEntity?.type==="machine"&&state.machineHistory.enabled){
       request.filters.machineHistoryPeriod=state.machineHistory.period;
       if(state.machineHistory.period==="custom"){
@@ -1076,6 +1083,21 @@ function renderDashboardFacets(facets){
 function renderDashboardChart(id,chart){
   id=({executiveSnapshotSubscriptionConcentration:"executiveSubscriptionConcentration",executiveSnapshotOwnerConcentration:"executiveOwnerConcentration"})[id]||id;
   if(!$(id))return;
+  if(chart.kind==="remediation-progress"){
+    const series=[["new","Newly observed CVEs","var(--red)"],["fixed","CVEs with confirmed fixes","var(--green)"],["open","Still-open CVEs","var(--blue)"]];
+    const rows=chart.rows||[];
+    let maximum=1;
+    for(const row of rows)for(const [key] of series){
+      if(typeof row[key]!=="number"||!Number.isFinite(row[key])||row[key]<0)throw new Error("Vulnerability progress counts are incomplete. Retry the dashboard query.");
+      maximum=Math.max(maximum,row[key]);
+    }
+    $(id).innerHTML=rows.length?`${rows.map(row=>`<section class="remediation-chart-period"><h4>${esc(row.label)}</h4><p class="coverage-note">${esc(row.start)} to ${esc(row.end)} UTC · ${esc(row.coverage)}</p>
+      ${series.map(([key,label,color])=>`<div class="remediation-chart-row"><span>${label}</span><div class="remediation-chart-track" aria-hidden="true"><i style="width:${100*row[key]/maximum}%;background:${color}"></i></div><strong>${fmt(row[key])}</strong></div>`).join("")}</section>`).join("")}
+      <p class="coverage-note">New/fixed are period activity; still open is backlog at period end. Pending confirmation stays open. These measures overlap and are not slices of a total.</p>
+      <details class="remediation-chart-definitions"><summary>Counting and history definitions</summary><p>A CVE with a confirmed fix on one machine can still be open on another. New uses the earliest retained machine observation for each CVE in scope, not publication time or software/version additions. Partial or unavailable history means activity covers retained evidence only, not necessarily the complete period.</p></details>`
+      :'<p class="coverage-note">No retained observations cover this reporting period; progress is unavailable, not zero.</p>';
+    return;
+  }
   if(chart.kind==="entity-severity"){
     if(chart.available===false){$(id).innerHTML='<p class="coverage-note">No retained observations cover this period; historical severity totals are unavailable, not zero.</p>';return;}
     $(id).innerHTML=[["machines","Machines / workload instances"],["cves","Unique CVEs"]].map(([key,title])=>`
@@ -1173,14 +1195,16 @@ function renderComplianceSnapshots(view,periods){
         const rate=(label,help,percent,numerator,other,unknown,kind)=>{
           const known=available&&count(values[numerator])&&count(values[other]);
           const denominator=known?values[numerator]+values[other]:null;
+          const noCompletions=known&&denominator===0&&percent==="completionPercent";
           return `<div class="sla-compliance-rate">
-            <span>${metricLabel(label,help)}</span><strong>${slaDashboardPercent(known&&denominator>0?values[percent]:null)}</strong>
+            <span>${metricLabel(label,help)}</span><strong>${noCompletions?"N/A - no confirmed clearances with known deadlines":slaDashboardPercent(known&&denominator>0?values[percent]:null)}</strong>
             <small>${known?`${fmt(values[numerator])} / ${fmt(denominator)} known-deadline ${kind}${denominator?"":"; none to assess"}`:"Numerator / denominator unavailable"}</small>
+            ${percent==="openWithinPercent"?'<small>Still open, not remediated. This is deadline status, not a completion rate.</small>':""}
             <small>${available&&count(values[unknown])?`${fmt(values[unknown])} deadline unknown (excluded)`:"Unknown-deadline count unavailable"}</small>
           </div>`;
         };
         return `<section class="sla-compliance-entity"><h4>${title}</h4>
-          ${rate("Unresolved within SLA %","Open within SLA %","openWithinPercent","openWithin","openOverdue","unknownOpen","unresolved")}
+          ${rate("Still open - not yet due %","Open within SLA %","openWithinPercent","openWithin","openOverdue","unknownOpen","unresolved")}
           ${rate("Confirmed on-time clearance %","Confirmed on-time %","completionPercent","completedWithin","completedLate","completedUnknown","full clearances")}
           <p>${available&&count(values.awaitingConfirmation)?`${fmt(values.awaitingConfirmation)} awaiting confirmation; still unresolved, not a clearance.`:"Awaiting-confirmation count unavailable."}</p>
         </section>`;
@@ -1293,19 +1317,19 @@ function renderSimpleSla(summary){
     const open=row.openWithin+row.openOverdue+row.unknownOpen,fixed=row.completedWithin+row.completedLate+row.completedUnknown;
     const rates=(within,outside,withinStatus,outsideStatus)=>{
       const known=within+outside;
-      return known?`<span>Within ${link(row.label,withinStatus,`${slaDashboardPercent(100*within/known)} (${fmt(within)})`)}</span><span>Outside ${link(row.label,outsideStatus,`${slaDashboardPercent(100*outside/known)} (${fmt(outside)})`)}</span>`:'<span>N/A — no known-deadline outcomes</span>';
+      return known?`<span>On time ${link(row.label,withinStatus,`${slaDashboardPercent(100*within/known)} (${fmt(within)})`)}</span><span>Late ${link(row.label,outsideStatus,`${slaDashboardPercent(100*outside/known)} (${fmt(outside)})`)}</span>`:'<span>N/A — no confirmed fixes with known deadlines</span>';
     };
     return `<tr><th scope="row">${esc(row.label)}</th><td>${link(row.label,"Open",fmt(open))}</td><td>${link(row.label,"Fixed",fmt(fixed))}</td>
-      <td class="sla-summary-rates">${rates(row.openWithin,row.openOverdue,"OpenWithin","OpenOverdue")}</td>
+      <td>${link(row.label,"OpenWithin",fmt(row.openWithin))} not yet due · ${link(row.label,"OpenOverdue",fmt(row.openOverdue))} overdue</td>
       <td class="sla-summary-rates">${rates(row.completedWithin,row.completedLate,"FixedWithin","FixedLate")}</td>
       <td>${link(row.label,"Awaiting",fmt(row.awaitingConfirmation))}</td><td>${link(row.label,"Unknown",fmt(row.unknownOpen+row.completedUnknown))}</td></tr>`;
   }).join("");
   root.innerHTML=`<article class="panel sla-simple-summary" aria-label="Simple machine/CVE SLA summary">
     <div class="panel-title"><h2>SLA by severity — open and fixed</h2><span>Machine/CVE pairs</span></div>
     <p>Open at the current snapshot; confirmed fixes during ${esc(summary.label)} (${esc(summary.start)} to ${esc(summary.end)} UTC).</p>
-    <div class="table-wrap"><table><thead><tr><th scope="col">Severity</th><th scope="col">Open</th><th scope="col">Confirmed fixed</th><th scope="col">Open SLA % (count)</th><th scope="col">Fixed SLA % (count)</th><th scope="col">Pending confirmation</th><th scope="col">Deadline unknown</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Severity</th><th scope="col">Still open</th><th scope="col">Confirmed fixed</th><th scope="col">Open deadline status (not fixed)</th><th scope="col">Confirmed fixed on-time % (count)</th><th scope="col">Pending confirmation</th><th scope="col">Deadline unknown</th></tr></thead><tbody>${rows}</tbody></table></div>
     <p class="coverage-note">One CVE on three machines counts as three machine/CVE pairs; software versions do not multiply counts. Pending fixes remain open.
-      Within / outside percentages use known deadlines separately for open and fixed pairs. Unknown deadlines are excluded, never compliant by default. Click any count or percentage for its evidence.</p>
+      Open counts describe remaining risk, never successful remediation. On-time percentages assess confirmed fixes only. Unknown deadlines are excluded, never compliant by default. Click any count or percentage for its evidence.</p>
     ${summary.coverage==="complete"?"":'<p class="coverage-note">Incomplete retained history: current open status is available, but fixes cover retained observations only, not necessarily the entire month.</p>'}
   </article>`;
   root.querySelectorAll("[data-sla-summary-status]").forEach(button=>button.addEventListener("click",()=>{
@@ -1469,6 +1493,10 @@ function ensureManagementReport(view){
       <p id="${prefix}Context" class="coverage-note"></p>
       <div id="${prefix}Cards" class="metric-grid"></div>
       <div id="${prefix}FixActivity" class="metric-grid"></div>
+      <article class="panel">
+        <div class="panel-title"><h3>New, fixed, and still-open vulnerabilities</h3><span>Distinct CVEs in the reporting periods</span></div>
+        <div id="${prefix}RemediationProgress"></div>
+      </article>
       <div id="${prefix}LeadershipSnapshot"></div>
       <p class="coverage-note">Full clearance, partial progress, and pending fixes are separate.
         A CVE is fully cleared only when no in-scope machine remains vulnerable; a machine is fully cleared only when no in-scope CVE remains unresolved.
@@ -1562,6 +1590,7 @@ function openDashboardDetail(selection,row={}){
   clearSelectedWorkItem();
   state.selectedEntity=selection;
   state.machineHistory.enabled=false;
+  state.machineCveStatus="All";
   $("machineHistoryCards").innerHTML="";
   state.selectedRecommendationId=selection.type==="recommendation"?selection.id:"";
   state.pivotSourceLabel=state.activeView;
@@ -1589,6 +1618,17 @@ function prepareDashboardDetail(payload){
   const ids=Object.keys(payload.tables||{}).filter(id=>id!=="pivotTable"),machine=selection.type==="machine";
   if(machine&&ids.includes("pivotRecommendationTable"))ids.unshift(...ids.splice(ids.indexOf("pivotRecommendationTable"),1));
   if(machine&&ids.includes("pivotMachineHistoryTable"))ids.unshift(...ids.splice(ids.indexOf("pivotMachineHistoryTable"),1));
+  if(machine&&ids.includes("pivotSlaCveTable"))ids.unshift(...ids.splice(ids.indexOf("pivotSlaCveTable"),1));
+  $("machineRemediation").hidden=!machine;
+  if(machine){
+    const progress=payload.metadata?.machineRemediation;
+    $("machineCveStatus").value=state.machineCveStatus;
+    $("machineRemediationProgress").innerHTML="";
+    $("machineCveCounts").textContent=progress?`${fmt(progress.fixed)} confirmed fixed · ${fmt(progress.Open)} still open · ${fmt(progress.awaiting)} awaiting confirmation (included in open)`:"";
+    $("machineRemediationContext").textContent=progress
+      ?`${progress.label}: ${progress.start} to ${progress.end} UTC. The CVE list includes this machine's unresolved exposure even when opened from an activity count; workspace scope is preserved. Confirmed fixes are limited to this reporting period.`
+      :"Machine remediation status unavailable. Update the Web App and reload this snapshot.";
+  }
   $("machineHistoryControls").hidden=!machine;
   if(machine){
     const history=payload.metadata?.machineHistory,custom=state.machineHistory.period==="custom";
@@ -1604,7 +1644,7 @@ function prepareDashboardDetail(payload){
       ?`${history.start} through ${history.end} UTC. Each row is a CVE change on a machine, not a software/version record. Confirmed fixed requires all in-scope software evidence for that CVE to be cleared. Pending evidence is not fixed. ${history.coverage==="lifecycle-only"?"No matching retained events were available; only transitions supported by retained lifecycle timestamps can be shown.":"Retained events and lifecycle timestamps supply the history."} This is observed clearance, not an exact patch-installation audit. Reopened CVEs can also appear among previously cleared CVEs.`
       :"Load dated CVE additions, confirmed clearance, and reopened exposure for this machine. History is prepared only when requested.";
   }
-  const titles={pivotMachineHistoryTable:"CVE additions, confirmed clearance, and reopened exposure",pivotSlaCveTable:"Machine/CVE SLA outcomes: fixed and remaining",pivotManagementMachineTable:"Machines: remaining CVEs and SLA progress",pivotManagementCveTable:"Unique CVEs and affected-machine progress",pivotRecommendationTable:"Related recommendations",pivotCveTable:"CVE evidence",pivotFindingTable:"Exposure instance evidence"};
+  const titles={pivotMachineHistoryTable:"CVE additions, confirmed clearance, and reopened exposure",pivotSlaCveTable:"CVEs: confirmed fixed and still open",pivotManagementMachineTable:"Machines: remaining CVEs and SLA progress",pivotManagementCveTable:"Unique CVEs and affected-machine progress",pivotRecommendationTable:"Related recommendations",pivotCveTable:"CVE evidence",pivotFindingTable:"Exposure instance evidence"};
   renderPivotDetails(ids.map(id=>({id,title:titles[id]||headerLabel(id.replace(/^pivot/,"").replace(/Table$/,""))})));
   $("pivotDetails").insertAdjacentHTML(machine?"beforeend":"afterbegin",`<div class="server-record">${Object.entries(record).filter(([,value])=>value===null||typeof value!=="object").map(([key,value])=>`<div><small>${esc(headerLabel(key))}</small>${value===null?"Unknown":esc(displayDateTime(key,value))}</div>`).join("")}</div>`);
   const position=state.detailRecommendationIds.indexOf(selection.id);
