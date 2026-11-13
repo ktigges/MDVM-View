@@ -487,6 +487,44 @@ def test_progress_separates_initial_inventory_partial_fixes_and_pending_evidence
     assert {key: current[key] for key in ("baseline", "new", "fixed", "partial", "awaiting", "open")} == {
         "baseline": 2, "new": 1, "fixed": 0, "partial": 1, "awaiting": 1, "open": 3,
     }
+    assert current["openBreakdown"] == {"withoutProgress": 1, "confirmedProgress": 1, "awaiting": 1}
+    assert sum(current["openBreakdown"].values()) == current["open"]
+    assert current["resolved"] == 0
+
+
+@pytest.mark.parametrize("view", ["executiveSnapshot", "detail"])
+def test_open_progress_groups_count_pending_and_confirmed_overlap_only_once(tmp_path, view):
+    data = partial_progress_data()
+    data["findings"].append(finding(
+        90, DeviceId="one", CveId="CVE-PARTIAL", FirstObservedUtc="2026-10-01T00:00:00Z",
+        FindingStatus="PendingConfirmation", EffectiveRemediationUtc="2026-10-24T11:00:00Z",
+    ))
+    payload = request(view)
+    if view == "detail":
+        payload["selection"] = {"type": "machine", "id": "one"}
+    result = engine(tmp_path, data).query(payload)
+    chart_id = "machineRemediationProgress" if view == "detail" else "executiveSnapshotManagementRemediationProgress"
+    current = result["charts"][chart_id]["rows"][-1]
+    assert current["openBreakdown"] == {"withoutProgress": 1, "confirmedProgress": 0, "awaiting": 2}
+    assert sum(current["openBreakdown"].values()) == current["open"] == 3
+    if view == "detail":
+        partial = engine(tmp_path / "filtered", data).query({
+            **payload, "filters": {**payload["filters"], "machineCveStatus": "Partial"},
+        })
+        assert partial["tables"]["pivotSlaCveTable"]["total"] == 0
+
+
+def test_open_progress_counts_clearance_on_other_machine_as_progress_not_global_resolution(tmp_path):
+    data = partial_progress_data()
+    data["findings"].append(finding(
+        91, DeviceId="other", CveId="CVE-ADDED", FirstObservedUtc="2026-10-22T00:00:00Z",
+        FindingStatus="Fixed", FixedUtc="2026-10-24T11:00:00Z",
+    ))
+    result = engine(tmp_path, data).query(request("executiveSnapshot"))
+    current = result["charts"]["executiveSnapshotManagementRemediationProgress"]["rows"][-1]
+    assert current["openBreakdown"] == {"withoutProgress": 0, "confirmedProgress": 2, "awaiting": 1}
+    assert current["resolved"] == 0
+    assert current["fixed"] == 1
 
 
 @pytest.mark.parametrize(("status", "cve"), [("Partial", "CVE-PARTIAL"), ("Awaiting", "CVE-PENDING")])

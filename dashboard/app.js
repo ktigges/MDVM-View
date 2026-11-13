@@ -1084,18 +1084,21 @@ function renderDashboardChart(id,chart){
   id=({executiveSnapshotSubscriptionConcentration:"executiveSubscriptionConcentration",executiveSnapshotOwnerConcentration:"executiveOwnerConcentration"})[id]||id;
   if(!$(id))return;
   if(chart.kind==="remediation-progress"){
-    const series=[["baseline","Initial inventory (not new)","var(--muted)"],["new","First seen after baseline","var(--red)"],["fixed","CVEs cleared on a machine","var(--green)"],["partial","Partial fixes, CVE still open","var(--cyan)"],["awaiting","Awaiting confirmation (still open)","var(--amber)"],["open","Still-open CVEs","var(--blue)"]];
+    const series=[["withoutProgress","No recorded fix progress","var(--blue)"],["confirmedProgress","Confirmed progress, still open","var(--cyan)"],["awaiting","Awaiting confirmation","var(--amber)"]];
     const rows=chart.rows||[];
-    let maximum=1;
-    for(const row of rows)for(const [key] of series){
-      if((key==="new"||key==="baseline")&&row[key]===null)continue;
-      if(typeof row[key]!=="number"||!Number.isFinite(row[key])||row[key]<0)throw new Error("Vulnerability progress counts are incomplete. Retry the dashboard query.");
-      maximum=Math.max(maximum,row[key]);
+    const count=value=>Number.isSafeInteger(value)&&value>=0;
+    for(const row of rows){
+      if(!["open","resolved"].every(key=>count(row[key]))||!["new","baseline"].every(key=>row[key]===null||count(row[key]))||!series.every(([key])=>count(row.openBreakdown?.[key])))throw new Error("Vulnerability progress counts are incomplete. Retry the dashboard query.");
+      if(series.reduce((sum,[key])=>sum+row.openBreakdown[key],0)!==row.open)throw new Error("Unresolved CVE progress counts do not reconcile. Retry the dashboard query.");
     }
     $(id).innerHTML=rows.length?`${rows.map(row=>`<section class="remediation-chart-period"><h4>${esc(row.label)}</h4><p class="coverage-note">${esc(row.start)} to ${esc(row.end)} UTC · ${esc(row.coverage)}</p>
-      ${series.map(([key,label,color])=>`<div class="remediation-chart-row"><span>${label}</span><div class="remediation-chart-track" aria-hidden="true">${row[key]===null?"":`<i style="width:${100*row[key]/maximum}%;background:${color}"></i>`}</div><strong>${row[key]===null?"Unavailable":fmt(row[key])}</strong></div>`).join("")}</section>`).join("")}
-      <p class="coverage-note">${chart.baselineTimeUtc?`Initial inventory was recorded ${esc(formatUtc(chart.baselineTimeUtc))}; it is not newly introduced risk. `:"Baseline history is unavailable; new versus initial-inventory counts cannot be assessed. "}Partial fixes and awaiting confirmation remain open. These measures overlap and are not slices of a total.</p>
-      <details class="remediation-chart-definitions"><summary>Counting and history definitions</summary><p>First seen after baseline means a distinct CVE was first recorded in this scope after the initial retained collection; it does not prove when the vulnerability was introduced. Initial inventory appears in periods containing that collection, so overlapping date ranges can contain the same baseline. New software/version evidence does not make an already-known CVE new. Cleared means all evidence for a CVE on at least one machine is confirmed gone. Partial fixes mean some evidence was confirmed removed but the same CVE remains open on that machine. Awaiting confirmation counts CVEs with pending fix evidence at period end, even if other evidence remains detected. These are distinct CVEs, not software-record totals. Clearances and partial fixes are period activity; pending and open are endpoint status. Partial history covers retained evidence only.</p></details>`
+      <p class="coverage-note">Inventory context for this date range: initial inventory (not new) <strong>${row.baseline===null?"Unavailable":fmt(row.baseline)}</strong> · first seen after baseline <strong>${row.new===null?"Unavailable":fmt(row.new)}</strong>.</p>
+      <p><strong>${fmt(row.open)} unresolved CVEs at period end</strong></p>
+      ${series.map(([key,label,color])=>`<div class="remediation-chart-row"><span>${label}</span><div class="remediation-chart-track" aria-hidden="true"><i style="width:${100*row.openBreakdown[key]/Math.max(1,row.open)}%;background:${color}"></i></div><strong>${fmt(row.openBreakdown[key])}</strong></div>`).join("")}
+      <p class="remediation-chart-equation">${fmt(row.open)} = ${series.map(([key])=>fmt(row.openBreakdown[key])).join(" + ")}. Each unresolved CVE appears in exactly one group.</p>
+      <p class="coverage-note">Fully cleared during this period: <strong>${fmt(row.resolved)}</strong> CVEs. Partial progress does not reduce the unresolved total.</p></section>`).join("")}
+      <p class="coverage-note">${chart.baselineTimeUtc?`Initial inventory was recorded ${esc(formatUtc(chart.baselineTimeUtc))}; it is not newly introduced risk. `:"Baseline history is unavailable; new versus initial-inventory counts cannot be assessed. "}A CVE with both confirmed progress and pending evidence appears only under awaiting confirmation.</p>
+      <details class="remediation-chart-definitions"><summary>Counting and history definitions</summary><p>The three status groups add up to the unresolved total. Confirmed progress means evidence was confirmed removed during the period, but the CVE remains unresolved in this scope. Awaiting confirmation counts CVEs with pending fix evidence at period end, not the entire open inventory. Full clearance requires no unresolved evidence for that CVE anywhere in scope. Initial inventory and later additions are separate historical context, not additional unresolved categories. First seen after baseline uses the earliest retained collector observation in scope, not the date a vulnerability was introduced. Partial history covers retained evidence only.</p></details>`
       :'<p class="coverage-note">No retained observations cover this reporting period; progress is unavailable, not zero.</p>';
     return;
   }
@@ -1623,9 +1626,10 @@ function prepareDashboardDetail(payload){
   $("machineRemediation").hidden=!machine;
   if(machine){
     const progress=payload.metadata?.machineRemediation;
+    const breakdown=progress?.openBreakdown;
     $("machineCveStatus").value=state.machineCveStatus;
     $("machineRemediationProgress").innerHTML="";
-    $("machineCveCounts").textContent=progress?`${fmt(progress.fixed)} CVEs cleared · ${fmt(progress.partial)} with partial fixes · ${fmt(progress.Open)} still open · ${fmt(progress.awaiting)} awaiting confirmation (included in open)`:"";
+    $("machineCveCounts").textContent=breakdown?`${fmt(progress.Open)} unresolved total: ${fmt(breakdown.withoutProgress)} with no recorded fix progress · ${fmt(breakdown.confirmedProgress)} with confirmed progress · ${fmt(breakdown.awaiting)} awaiting confirmation. ${fmt(progress.resolved)} fully cleared this period.`:progress?"Unresolved status breakdown unavailable. Reload after the Web App update.":"";
     $("machineRemediationContext").textContent=progress
       ?`${progress.label}: ${progress.start} to ${progress.end} UTC. The CVE list includes this machine's unresolved exposure even when opened from an activity count; workspace scope is preserved. Confirmed fixes are limited to this reporting period.`
       :"Machine remediation status unavailable. Update the Web App and reload this snapshot.";

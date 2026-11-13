@@ -1755,27 +1755,58 @@ test("zero confirmed fixes cannot appear as 100 percent completed SLA",async()=>
   assert.match(snapshots,/N\/A - no confirmed clearances with known deadlines/);
 });
 
-test("progress charts show comparable distinct CVE counts without implying exclusive slices",async()=>{
+test("progress charts reconcile exclusive unresolved groups and separate historical context",async()=>{
   const app=fixture();await tick();
   app.context.chart={kind:"remediation-progress",unit:"distinct-cves",baselineTimeUtc:"2026-10-01T00:00:00Z",rows:[
-    {label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",coverage:"Partial history",baseline:15,new:12,fixed:3,partial:2,awaiting:4,open:20},
+    {label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",coverage:"Partial history",baseline:15,new:12,fixed:3,resolved:1,open:20,
+      openBreakdown:{withoutProgress:14,confirmedProgress:2,awaiting:4}},
   ]};
   app.run('renderDashboardChart("slaDashboardRemediationProgress",chart)');
   const markup=app.elements.get("slaDashboardRemediationProgress").innerHTML;
-  for(const label of ["Initial inventory (not new)","First seen after baseline","CVEs cleared on a machine","Partial fixes, CVE still open","Awaiting confirmation (still open)","Still-open CVEs","Partial history"])assert.ok(markup.includes(label));
-  assert.match(markup,/width:60%/);
-  assert.match(markup,/width:15%/);
-  assert.match(markup,/width:100%/);
+  for(const label of ["Inventory context","No recorded fix progress","Confirmed progress, still open","Awaiting confirmation","20 unresolved CVEs at period end","Partial history"])assert.ok(markup.includes(label));
+  assert.equal((markup.match(/class="remediation-chart-row"/g)||[]).length,3);
+  assert.match(markup,/width:70%/);
+  assert.match(markup,/width:10%/);
   assert.match(markup,/width:20%/);
   assert.match(markup,/not newly introduced risk/);
-  assert.match(markup,/overlap and are not slices of a total/);
-  assert.match(markup,/>3<\/strong>/);
+  assert.match(markup,/20 = 14 \+ 2 \+ 4/);
+  assert.match(markup,/Fully cleared during this period: <strong>1<\/strong>/);
+  assert.doesNotMatch(markup,/CVEs cleared on a machine/);
+});
+
+test("907 unresolved CVEs display 897 without progress plus 10 partial plus zero awaiting",async()=>{
+  const app=fixture();await tick();
+  app.context.chart={kind:"remediation-progress",unit:"distinct-cves",baselineTimeUtc:"2026-11-12T16:30:45Z",rows:[
+    {label:"Latest 30 days",start:"2026-10-14",end:"2026-11-12",coverage:"Partial history",baseline:907,new:0,resolved:0,open:907,
+      openBreakdown:{withoutProgress:897,confirmedProgress:10,awaiting:0}},
+  ]};
+  app.run('renderDashboardChart("slaDashboardRemediationProgress",chart)');
+  const markup=app.elements.get("slaDashboardRemediationProgress").innerHTML;
+  assert.match(markup,/907 = 897 \+ 10 \+ 0/);
+  assert.match(markup,/907 unresolved CVEs at period end/);
+  assert.match(markup,/Each unresolved CVE appears in exactly one group/);
+  assert.match(markup,/Partial progress does not reduce the unresolved total/);
+  app.context.chart.rows[0].openBreakdown.withoutProgress=907;
+  assert.throws(()=>app.run('renderDashboardChart("slaDashboardRemediationProgress",chart)'),/do not reconcile/);
+});
+
+test("zero unresolved CVEs have a valid empty breakdown without invalid chart widths",async()=>{
+  const app=fixture();await tick();
+  app.context.chart={kind:"remediation-progress",unit:"distinct-cves",baselineTimeUtc:null,rows:[
+    {label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",coverage:"Unknown",baseline:null,new:null,resolved:3,open:0,
+      openBreakdown:{withoutProgress:0,confirmedProgress:0,awaiting:0}},
+  ]};
+  app.run('renderDashboardChart("slaDashboardRemediationProgress",chart)');
+  const markup=app.elements.get("slaDashboardRemediationProgress").innerHTML;
+  assert.match(markup,/0 = 0 \+ 0 \+ 0/);
+  assert.doesNotMatch(markup,/NaN|Infinity|undefined/);
 });
 
 test("unknown baseline history is unavailable, not fabricated new or zero inventory",async()=>{
   const app=fixture();await tick();
   app.context.chart={kind:"remediation-progress",unit:"distinct-cves",baselineTimeUtc:null,rows:[
-    {label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",coverage:"Unavailable",baseline:null,new:null,fixed:0,partial:2,awaiting:1,open:20},
+    {label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",coverage:"Unavailable",baseline:null,new:null,resolved:0,open:20,
+      openBreakdown:{withoutProgress:17,confirmedProgress:2,awaiting:1}},
   ]};
   app.run('renderDashboardChart("slaDashboardRemediationProgress",chart)');
   const markup=app.elements.get("slaDashboardRemediationProgress").innerHTML;
@@ -1789,7 +1820,8 @@ test("machine remediation prioritizes fixed and open CVEs and preserves status i
   app.query()[0].resolve(app.payload());await tick();
   app.run('state.subscription="sub-selected";state.remediationPeriodFilter=true;pivotToMachine({DeviceId:"machine-x"})');
   const detail={type:"machine",id:"machine-x",record:{DeviceId:"machine-x",DeviceName:"Machine X"}};
-  const metadata={machineRemediation:{label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",Open:2,fixed:1,partial:1,awaiting:1}};
+  const metadata={machineRemediation:{label:"Latest 30 days",start:"2026-09-25",end:"2026-10-24",Open:2,resolved:1,
+    openBreakdown:{withoutProgress:0,confirmedProgress:1,awaiting:1}}};
   app.query().at(-1).resolve(app.payload({
     detail,metadata,
     tables:{
@@ -1800,7 +1832,7 @@ test("machine remediation prioritizes fixed and open CVEs and preserves status i
     },
   }));await tick();
   assert.equal(app.elements.get("machineRemediation").hidden,false);
-  assert.match(app.elements.get("machineCveCounts").textContent,/1 CVEs cleared · 1 with partial fixes · 2 still open · 1 awaiting confirmation/);
+  assert.match(app.elements.get("machineCveCounts").textContent,/2 unresolved total: 0 with no recorded fix progress · 1 with confirmed progress · 1 awaiting confirmation/);
   assert.match(app.elements.get("machineRemediationContext").textContent,/unresolved exposure even when opened from an activity count/);
   const sections=app.elements.get("pivotDetails").innerHTML;
   assert.ok(sections.indexOf('id="pivotSlaCveTable"')<sections.indexOf('id="pivotRecommendationTable"'));

@@ -340,6 +340,7 @@ main{width:100%;max-width:1600px!important;min-width:0;padding:22px clamp(16px,2
 .remediation-chart-track{height:14px;background:#edf2f6;border-radius:3px;overflow:hidden}
 .remediation-chart-track i{display:block;height:100%}
 .remediation-chart-row strong{text-align:right}
+.remediation-chart-equation{font-size:13px;font-weight:700;line-height:1.6}
 .remediation-chart-definitions{margin:12px 18px;font-size:12px;line-height:1.6}
 #machineRemediation[hidden]{display:none}
 @media(max-width:600px){.remediation-chart-row{grid-template-columns:minmax(110px,1fr) minmax(45px,1fr) auto;font-size:11px}}
