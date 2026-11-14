@@ -218,3 +218,123 @@ def test_clean_worktree_failure_lists_files_and_recovery_step(monkeypatch):
     assert "config.py" in str(raised.value)
     assert "new.py" in str(raised.value)
     assert "option 3" in str(raised.value)
+
+
+def _patch(monkeypatch, *, branch="refactor/work", status="", head="abc", remote_head="abc", main="m1",
+           remote_main="m1", ancestor=True, remote_exists=True, tests_fail=False):
+    calls = []
+    answers = {
+        ("branch", "--show-current"): branch,
+        ("status", "--porcelain"): status,
+        ("status", "--short"): status,
+        ("rev-parse", "HEAD"): head,
+        ("rev-parse", f"origin/{branch}"): remote_head,
+        ("rev-parse", "main"): main,
+        ("rev-parse", "origin/main"): remote_main,
+        ("rev-parse", "--short", "HEAD"): "abc1234",
+    }
+
+    def fake_git(*args, capture=False, check=True):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    def fake_run_tests():
+        if tests_fail:
+            raise subprocess.CalledProcessError(1, ["pytest"])
+
+    monkeypatch.setattr(github_workflow_cli, "_output", lambda *args: answers.get(args, ""))
+    monkeypatch.setattr(github_workflow_cli, "_git", fake_git)
+    monkeypatch.setattr(github_workflow_cli, "_require_repository", lambda: None)
+    monkeypatch.setattr(github_workflow_cli, "_require_clean", lambda: None)
+    monkeypatch.setattr(github_workflow_cli, "_remote_branch_exists", lambda remote, name: remote_exists)
+    monkeypatch.setattr(github_workflow_cli, "_is_ancestor", lambda ancestor_ref, descendant: ancestor)
+    monkeypatch.setattr(github_workflow_cli, "_worktree_fingerprint", lambda: "same")
+    monkeypatch.setattr(github_workflow_cli, "_run_tests", fake_run_tests)
+    return calls
+
+
+def _pushes(calls):
+    return [call for call in calls if call and call[0] == "push"]
+
+
+@pytest.mark.parametrize("branch", ["main", "latest", "archive/pre-sla-simplification", ""])
+def test_work_branch_guard_refuses_main_latest_archive_and_detached(monkeypatch, branch):
+    _patch(monkeypatch, branch=branch)
+    with pytest.raises(RuntimeError):
+        github_workflow_cli._require_work_branch()
+
+
+def test_work_branch_guard_returns_work_branch(monkeypatch):
+    _patch(monkeypatch, branch="refactor/sla-simplification")
+    assert github_workflow_cli._require_work_branch() == "refactor/sla-simplification"
+
+
+def test_main_only_commands_point_work_branches_to_new_options(monkeypatch):
+    _patch(monkeypatch, branch="refactor/sla-simplification")
+    with pytest.raises(RuntimeError, match="option 5"):
+        github_workflow_cli._require_main()
+
+
+def test_publish_branch_pushes_only_the_work_branch(monkeypatch):
+    calls = _patch(monkeypatch, status=" M file.py")
+    github_workflow_cli.publish_branch("origin", "step 1", "PUSH", False)
+    assert _pushes(calls) == [("push", "--set-upstream", "origin", "HEAD:refs/heads/refactor/work")]
+    assert ("commit", "-m", "step 1") in calls
+    assert not any("refs/heads/main" in arg or "refs/heads/latest" in arg for call in calls for arg in call)
+
+
+def test_publish_branch_requires_push_confirmation(monkeypatch):
+    calls = _patch(monkeypatch)
+    with pytest.raises(RuntimeError, match="PUSH confirmation"):
+        github_workflow_cli.publish_branch("origin", "step 1", "", False)
+    assert _pushes(calls) == []
+
+
+def test_publish_branch_stops_on_failing_tests_by_default(monkeypatch):
+    calls = _patch(monkeypatch, tests_fail=True)
+    with pytest.raises(subprocess.CalledProcessError):
+        github_workflow_cli.publish_branch("origin", "step 1", "PUSH", False)
+    assert _pushes(calls) == []
+
+
+def test_publish_branch_can_explicitly_push_with_failing_tests(monkeypatch, capsys):
+    calls = _patch(monkeypatch, tests_fail=True)
+    github_workflow_cli.publish_branch("origin", "step 1", "PUSH", True)
+    assert _pushes(calls) == [("push", "--set-upstream", "origin", "HEAD:refs/heads/refactor/work")]
+    assert "Tests FAILED" in capsys.readouterr().out
+
+
+def test_publish_branch_refuses_diverged_remote(monkeypatch):
+    calls = _patch(monkeypatch, ancestor=False)
+    with pytest.raises(RuntimeError, match="behind or diverged"):
+        github_workflow_cli.publish_branch("origin", "step 1", "PUSH", False)
+    assert _pushes(calls) == []
+
+
+def test_merge_into_main_fast_forwards_without_pushing(monkeypatch):
+    calls = _patch(monkeypatch)
+    github_workflow_cli.merge_into_main("origin", "MERGE")
+    assert ("switch", "main") in calls
+    assert ("merge", "--ff-only", "refactor/work") in calls
+    assert _pushes(calls) == []
+
+
+def test_merge_into_main_requires_pushed_branch(monkeypatch):
+    calls = _patch(monkeypatch, head="abc", remote_head="old")
+    with pytest.raises(RuntimeError, match="Push refactor/work first"):
+        github_workflow_cli.merge_into_main("origin", "MERGE")
+    assert ("switch", "main") not in calls
+
+
+def test_merge_into_main_refuses_when_main_moved(monkeypatch):
+    calls = _patch(monkeypatch, ancestor=False)
+    with pytest.raises(RuntimeError, match="has commits that"):
+        github_workflow_cli.merge_into_main("origin", "MERGE")
+    assert ("switch", "main") not in calls
+
+
+def test_merge_into_main_requires_merge_confirmation(monkeypatch):
+    calls = _patch(monkeypatch)
+    with pytest.raises(RuntimeError, match="MERGE confirmation"):
+        github_workflow_cli.merge_into_main("origin", "")
+    assert ("switch", "main") not in calls

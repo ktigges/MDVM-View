@@ -344,6 +344,16 @@ if (-not $GitRevision) {
     $GitRevision = "unavailable"
 }
 
+function Show-SourceBranch {
+    $branch = (& git -C $RootDirectory branch --show-current 2>$null)
+    if (-not $branch) { $branch = "detached HEAD" }
+    $changes = (& git -C $RootDirectory status --porcelain 2>$null)
+    $line = "Source branch: $branch"
+    if ($changes) { $line += " (uncommitted changes will be included in code deployments)" }
+    if ($branch -like "archive/*") { $line += " (read-only archive branch: code deployments are refused)" }
+    Write-Host $line
+}
+
 Write-Host @"
 
 Deployment identity notice
@@ -355,8 +365,9 @@ Deployment identity notice
 "@
 
 while ($true) {
+    Write-Host ""
+    Show-SourceBranch
     Write-Host @"
-
 Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)
   1) Complete initial deployment or update: infrastructure, Function, and Web App
   2) Plan, review, and apply Web App infrastructure

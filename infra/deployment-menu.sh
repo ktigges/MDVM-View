@@ -225,6 +225,20 @@ fi
 
 GIT_REVISION=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || printf 'unavailable')
 
+show_source_branch() {
+  local branch changes
+  branch=$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || true)
+  changes=$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null || true)
+  printf 'Source branch: %s' "${branch:-detached HEAD}"
+  if [[ -n "$changes" ]]; then
+    printf ' (uncommitted changes will be included in code deployments)'
+  fi
+  if [[ "$branch" == archive/* ]]; then
+    printf ' (read-only archive branch: code deployments are refused)'
+  fi
+  printf '\n'
+}
+
 cat <<'EOF'
 
 Deployment identity notice
@@ -237,6 +251,7 @@ EOF
 
 while true; do
   printf '\nVulnerability View deployment menu %s (revision %s)\n' "$DEPLOYMENT_MENU_VERSION" "$GIT_REVISION"
+  show_source_branch
   cat <<'EOF'
   1) Complete initial deployment or update: infrastructure, Function, and Web App
   2) Plan, review, and apply Web App infrastructure

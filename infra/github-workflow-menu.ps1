@@ -58,14 +58,20 @@ while ($true) {
     Write-Host @"
 GitHub development and customer release workflow
 
-  main   = active development and testing
-  latest = customer-ready stable release
+  main      = active development and testing
+  latest    = customer-ready stable release
+  archive/* = read-only snapshots (never pushed or merged from here)
+  other     = work branches (for example refactor/sla-simplification)
+
+  Options 1-4 run on main; options 5-6 run on a work branch.
 
   1) Test, commit, and publish current work to main
   2) Test and promote origin/main to latest for customers
   3) Test once, publish main, and promote latest
   4) Validate customer release readiness
-  5) Exit
+  5) Test, commit, and push the current work branch
+  6) Merge the pushed work branch into main (fast-forward; no push)
+  7) Exit
 "@
     $choice = Read-Host "Select an option"
     switch ($choice) {
@@ -96,6 +102,26 @@ GitHub development and customer release workflow
             Pause-Menu
         }
         "5" {
+            Invoke-GitHubWorkflow status
+            $commitMessage = Read-Host "Commit message (required only when changes are uncommitted)"
+            $allowFailing = Read-Host "Work branches normally require passing tests. Type ALLOW-FAILING to push even if tests fail, or press Enter"
+            Write-Host "This stages all current worktree changes, runs tests, commits if needed, and pushes this work branch only."
+            $confirmation = Read-Host "Type PUSH to continue"
+            $branchArguments = @("publish-branch", "--message", $commitMessage, "--confirm", $confirmation)
+            if ($allowFailing -eq "ALLOW-FAILING") {
+                $branchArguments += "--allow-failing-tests"
+            }
+            try { Invoke-GitHubWorkflow @branchArguments } catch { Write-Host $_ }
+            Pause-Menu
+        }
+        "6" {
+            Invoke-GitHubWorkflow status
+            Write-Host "This fast-forwards local main to the pushed work branch and switches to main. Nothing is pushed."
+            $confirmation = Read-Host "Type MERGE to continue"
+            try { Invoke-GitHubWorkflow merge-into-main --confirm $confirmation } catch { Write-Host $_ }
+            Pause-Menu
+        }
+        "7" {
             return
         }
         default {

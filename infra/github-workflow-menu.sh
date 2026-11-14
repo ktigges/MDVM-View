@@ -37,14 +37,20 @@ while true; do
   cat <<'EOF'
 GitHub development and customer release workflow
 
-  main   = active development and testing
-  latest = customer-ready stable release
+  main      = active development and testing
+  latest    = customer-ready stable release
+  archive/* = read-only snapshots (never pushed or merged from here)
+  other     = work branches (for example refactor/sla-simplification)
+
+  Options 1-4 run on main; options 5-6 run on a work branch.
 
   1) Test, commit, and publish current work to main
   2) Test and promote origin/main to latest for customers
   3) Test once, publish main, and promote latest
   4) Validate customer release readiness
-  5) Exit
+  5) Test, commit, and push the current work branch
+  6) Merge the pushed work branch into main (fast-forward; no push)
+  7) Exit
 EOF
   printf '\nSelect an option: '
   read -r choice
@@ -78,6 +84,28 @@ EOF
       pause_menu
       ;;
     5)
+      run_workflow status
+      printf '\nCommit message (required only when changes are uncommitted): '
+      read -r commit_message
+      printf 'Work branches normally require passing tests. Type ALLOW-FAILING to push even if tests fail, or press Enter: '
+      read -r allow_failing
+      printf 'This stages all current worktree changes, runs tests, commits if needed, and pushes this work branch only.\nType PUSH to continue: '
+      read -r confirmation
+      branch_args=(publish-branch --message "$commit_message" --confirm "$confirmation")
+      if [[ "$allow_failing" == "ALLOW-FAILING" ]]; then
+        branch_args+=(--allow-failing-tests)
+      fi
+      run_workflow "${branch_args[@]}" || true
+      pause_menu
+      ;;
+    6)
+      run_workflow status
+      printf '\nThis fast-forwards local main to the pushed work branch and switches to main. Nothing is pushed.\nType MERGE to continue: '
+      read -r confirmation
+      run_workflow merge-into-main --confirm "$confirmation" || true
+      pause_menu
+      ;;
+    7)
       exit 0
       ;;
     *)

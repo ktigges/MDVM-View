@@ -62,7 +62,9 @@ def test_cached_artifacts_hash_once_and_repair_corruption(work, monkeypatch, cor
 
     monkeypatch.setattr(resumable_processing, "_sha256", observe)
     assert artifacts.get(descriptor).read_bytes() == source.read_bytes()
-    assert sum(scanned) == source.stat().st_size * (2 if corrupt_cache else 1)
+    # An unchanged cached file is not re-hashed; a modified one is re-verified, then
+    # re-downloaded and verified again.
+    assert sum(scanned) == source.stat().st_size * (2 if corrupt_cache else 0)
 
 
 class DurableArtifacts:

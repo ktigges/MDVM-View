@@ -366,6 +366,11 @@ def test_deployment_menus_show_version_and_revision_in_title():
     assert '$DeploymentMenuVersion = "2026.11.05.1"' in powershell
     assert "Vulnerability View deployment menu $DeploymentMenuVersion (revision $GitRevision)" in powershell
     assert 'PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in shell
+    assert "show_source_branch" in shell
+    assert "Show-SourceBranch" in powershell
+    for source in (shell, powershell):
+        assert "uncommitted changes will be included in code deployments" in source
+        assert "read-only archive branch: code deployments are refused" in source
 
 
 def test_github_workflow_menus_offer_single_publish_and_promote_action():
@@ -375,8 +380,13 @@ def test_github_workflow_menus_offer_single_publish_and_promote_action():
     for source in (shell, powershell):
         assert "3) Test once, publish main, and promote latest" in source
         assert "4) Validate customer release readiness" in source
-        assert "5) Exit" in source
+        assert "5) Test, commit, and push the current work branch" in source
+        assert "6) Merge the pushed work branch into main (fast-forward; no push)" in source
+        assert "7) Exit" in source
         assert "publish-and-promote" in source
+        assert "publish-branch" in source
+        assert "merge-into-main" in source
+        assert "ALLOW-FAILING" in source
         assert "Type RELEASE" not in source
 
 

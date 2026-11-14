@@ -213,6 +213,27 @@ tf_destroy() {
   terraform -chdir="$TF_DIR" apply destroy-function.tfplan
 }
 
+show_deploy_source() {
+  # Shows which Git source is packaged and refuses read-only archive branches.
+  local branch commit changes
+  commit="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || true)"
+  if [[ -z "$commit" ]]; then
+    echo "Deploying source: Git history unavailable"
+    return
+  fi
+  branch="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || true)"
+  if [[ "$branch" == archive/* ]]; then
+    echo "$branch is a read-only archive branch; switch to a work branch or main before deploying." >&2
+    exit 1
+  fi
+  changes="$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null || true)"
+  if [[ -n "$changes" ]]; then
+    echo "Deploying source: branch ${branch:-detached HEAD} at commit $commit; UNCOMMITTED CHANGES ARE INCLUDED in this package"
+  else
+    echo "Deploying source: branch ${branch:-detached HEAD} at commit $commit; worktree clean"
+  fi
+}
+
 tf_deploy() {
   # Packages and publishes application code to the selected existing compute resource.
   local stage="${1:-}"
@@ -237,6 +258,7 @@ tf_deploy() {
         exit 1
       fi
 
+      show_deploy_source
       rm -f "$package"
       require_command python3
       local source_dashboard_version

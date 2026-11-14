@@ -3135,3 +3135,49 @@ def test_webapp_startup_reports_persistent_unavailability(monkeypatch):
             attempts=3,
             delay_seconds=2,
         )
+
+
+def _fake_git(monkeypatch, *, branch, status):
+    answers = {"rev-parse": "0123456789abcdef\n", "branch": f"{branch}\n", "status": status}
+    monkeypatch.setattr(operations_cli, "_require", lambda name: name)
+    monkeypatch.setattr(
+        operations_cli, "_run",
+        lambda arguments, **kwargs: subprocess.CompletedProcess(arguments, 0, stdout=answers[arguments[1]]),
+    )
+
+
+def test_source_provenance_reports_work_branch_and_uncommitted_changes(monkeypatch, capsys):
+    _fake_git(monkeypatch, branch="refactor/sla-simplification", status=" M src/file.py\n")
+    provenance = operations_cli._source_provenance()
+    assert provenance == {
+        "commit": "0123456789abcdef", "branch": "refactor/sla-simplification", "uncommittedChanges": True,
+    }
+    operations_cli._print_provenance(provenance)
+    output = capsys.readouterr().out
+    assert "branch refactor/sla-simplification at commit 0123456789ab" in output
+    assert "UNCOMMITTED CHANGES ARE INCLUDED" in output
+
+
+def test_source_provenance_reports_clean_main(monkeypatch, capsys):
+    _fake_git(monkeypatch, branch="main", status="")
+    provenance = operations_cli._source_provenance()
+    assert provenance["uncommittedChanges"] is False
+    operations_cli._print_provenance(provenance)
+    assert "worktree clean" in capsys.readouterr().out
+
+
+def test_deployments_refuse_archive_branches(monkeypatch):
+    _fake_git(monkeypatch, branch="archive/pre-sla-simplification", status="")
+    with pytest.raises(RuntimeError, match="read-only archive branch"):
+        operations_cli._source_provenance()
+
+
+def test_source_provenance_tolerates_packaging_without_git_history(monkeypatch):
+    monkeypatch.setattr(operations_cli, "_require", lambda name: name)
+    monkeypatch.setattr(
+        operations_cli, "_run",
+        lambda arguments, **kwargs: subprocess.CompletedProcess(arguments, 128, stdout="", stderr="not a git repository"),
+    )
+    assert operations_cli._source_provenance() == {
+        "commit": "unavailable", "branch": "unavailable", "uncommittedChanges": False,
+    }
