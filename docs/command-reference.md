@@ -521,13 +521,13 @@ not raw finding contents or tokens. Debug retains the 10-second connection and
 not the synchronous diagnostic-capture wrapper described below. Use
 `check-runs --progress` for durable phase/state, even before the first publication,
 and `export-function-logs` for support logs. Manual receipts identify accepted
-requests only; an active run within its six-hour budget is retained and a failed
+requests only; an active run within its original deadline is retained and a failed
 run within that budget is resumed. The next trigger starts fresh after timeout
 or an expired failure, without deleting retained evidence. An expired instance
 still marked active is terminated without an overlapping replacement in that
 trigger. `check-runs --watch` reports `timed_out` as failure even when Durable
 labels the orchestration `Completed`. Two-hour console warnings identify slow
-runs; retries and recovery do not reset the six-hour limit. These requests do
+runs; retries and recovery do not reset the eight-hour limit. These requests do
 not create new legacy diagnostic chunks.
 
 The following download instructions apply to evidence already captured by the
@@ -608,7 +608,7 @@ Possible results:
 | `ACTIVE - DO NOT INVOKE ANOTHER RUN` | Fresh collector progress exists; wait |
 | Latest invocation completed | Safe to inspect the published run |
 | `INDETERMINATE` | Start exists without a completion trace, completed request record, or fresh progress; this is uncertainty, not a failure or permission to invoke again |
-| `TIMED_OUT` | The original six-hour run budget expired; retained evidence remains and the next trigger starts fresh |
+| `TIMED_OUT` | The original run deadline expired (eight hours for new runs); retained evidence remains and the next trigger starts fresh |
 | No invocation start | No start was found in the selected time window |
 
 Continuously monitor without modifying Azure:

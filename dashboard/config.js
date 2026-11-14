@@ -28,8 +28,8 @@ window.VULNERABILITY_VIEW_DEFAULTS = {
 };
 
 window.VULNERABILITY_VIEW_CONFIG = {
-  version: "2026.11.13.4",
-  revision: "2026-11-13T14:07:04Z",
+  version: "2026.11.14.2",
+  revision: "2026-11-14T08:48:03Z",
   branding: {
     eyebrow: "VULNERABILITY VIEW",
     title: "Microsoft Vulnerability Management",
@@ -45,7 +45,7 @@ window.VULNERABILITY_VIEW_CONFIG = {
     density: "comfortable",
   },
   navigation: {
-    order: ["executive", "recommendations", "overview", "workstations", "slaDashboard", "sla", "trend", "executiveSnapshot", "help"],
+    order: ["executive", "overview", "recommendations", "workstations", "slaDashboard", "trend", "executiveSnapshot", "jobHistory"],
     hidden: [],
   },
   filters: window.VULNERABILITY_VIEW_DEFAULTS.filters,

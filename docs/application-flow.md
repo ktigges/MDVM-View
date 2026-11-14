@@ -130,7 +130,7 @@ from the previous completed stage; an interrupted stage repeats that stage,
 not necessarily the whole collection.
 
 The Dedicated Function host uses `functionTimeout: "-1"`. Activity supervisors
-enforce a six-hour limit from the original run timestamp, including collection,
+enforce an eight-hour limit from the original run timestamp, including collection,
 waits, retries, processing, verification, and publication. Recovery and continuation
 do not reset it. Two-hour warnings report slow runs; expiry stops workers and
 reports a timeout. The next trigger starts fresh without deleting expired run

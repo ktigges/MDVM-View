@@ -152,7 +152,7 @@ No retained history is deleted or overwritten.
 | Operations **7 → 1** fails with `Invalid isoformat string: 'None'` | A missing completion timestamp can be returned as the literal string `"None"` rather than JSON null. Updated local operations code treats both as missing and uses the invocation start time when comparing activity. Missing progress timestamps report indeterminate activity instead of failing or claiming success. Update the local checkout and reopen the menu; no Function deployment or blob permissions are required. This depends on returned telemetry, not the operating system. |
 | Test whether a device-filtered Defender request times out | Use deployment menu **5 → D → M**, enter **1**, then confirm `DEBUG`. The Function requests `/api/machines?$top=1`, selects the returned Defender ID, then requests `machinesVulnerabilities?$filter=machineId eq '<id>'&$top=1`. The menu displays the selected device and actual result. It stops after these two requests, without retries, following links, or snapshot Storage access. An empty machine inventory cannot pass the findings test. Choose **V** to independently probe one catalog page (default 1,000 rows). A successful zero-findings response is clearly labeled `EMPTY RESULT`. Debug success does not publish a baseline or prove all devices can be collected. Use **5 → C** for complete collection. |
 | Optional route is unavailable | The run can complete as partial success. Experimental compatibility routes are disabled by default. |
-| Secure Score is unavailable | Check the `secure_scores` collection status. Microsoft Graph requires `SecurityEvents.Read.All` with tenant admin consent. |
+| Secure Score is unavailable | Check the `secure_scores` collection status. Microsoft Graph requires `SecurityEvents.Read.All` with tenant admin consent. Graph timeouts, throttling, and temporary service failures are recorded as `OptionalUnavailable` with the actual error; they do not hold vulnerability collection in a Durable retry loop or produce a zero score. Normal batch-budget yields still resume the lookup in the next activity. |
 | Client-secret mode is rejected in Azure | Expected. Client-secret authentication is restricted to explicitly acknowledged local development. Hosted workloads use managed identity. |
 | A manual trigger is accepted but no run appears | Check Function telemetry. An `Executed ... (Failed)` record is not a completed collection. If runtime storage reports `AuthenticationFailed`, remove the legacy base `AzureWebJobsStorage` setting and retain the `AzureWebJobsStorage__*` managed-identity settings. Current apply/verify helpers reconcile and validate this automatically. |
 
@@ -181,7 +181,7 @@ streaming Storage downloads. Larger individual files are handled alone.
 Completed per-file proofs and manifest-bound batch receipts are immutable;
 publication rejects missing, conflicting, or incomplete coverage. Legacy
 orchestration inputs retain the original single-file activity sequence for
-replay compatibility. Retries and continuations preserve the original six-hour
+replay compatibility. Retries and continuations preserve the original eight-hour
 deadline.
 
 New full runs freeze machine inventory, completed endpoint phases, referenced
@@ -208,7 +208,7 @@ or an end-to-end customer SLA.
 
 Function version `2026.11.06.6` adds `[timing]` markers. This is also a
 Function-code-only update; existing schedules, infrastructure, dashboard,
-Defender pacing, and the original six-hour deadline remain unchanged.
+Defender pacing, and the original run deadline remain unchanged.
 
 | Scope | Meaning |
 |---|---|
@@ -236,6 +236,16 @@ warning is explicitly **not a timeout**. An activity failure is not by itself
 proof that the entire run failed; Durable retries can still recover. Likewise,
 a completed run means publication succeeded, not that every optional endpoint
 was available; manifest statuses and publication warnings remain authoritative.
+
+Secure Score is optional supporting information. A failed Graph lookup is not
+retried by pausing the entire collection: its warning is retained and vulnerability
+processing can continue. Successful responses still use immutable request
+checkpoints. A normal exhausted activity/request budget is not an endpoint failure
+and still yields to the next batch. Progress identifies the Secure Score and
+subsequent Azure subscription lookups even when earlier Defender responses came
+from cache; a stale machine-inventory label must not identify these failures.
+This does not change required vulnerability endpoint retries or completeness
+safeguards for recognizing fixes.
 
 This query exports correlated timing markers for recent nightly comparisons.
 The `timingId` deduplication prevents the same event in `AppTraces` and
@@ -378,7 +388,7 @@ Deploy both Function code and Web App code for these shared-Python changes.
 No Terraform apply, storage deletion, or timeout increase is required. Measure a
 new run's phase timings and verified publication before declaring the customer
 performance problem resolved; local benchmarks do not establish Azure runtime.
-A run that already reached its original six-hour deadline cannot be given a new
+A run that already reached its original deadline cannot be given a new
 deadline by redeploying or retrying it. Preserve its evidence, confirm inactivity,
 and deliberately start a new immutable run after deployment.
 

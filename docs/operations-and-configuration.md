@@ -19,12 +19,15 @@ severity. Unknown severity appears separately when unresolved counts are
 present. Missing counts show **Waiting for data**, not zero. Select a severity
 to open the corresponding vulnerability list with the existing scope filters.
 
-**Fully cleared** means clearance has already been confirmed and no unresolved
-exposure remains for that entity in the selected scope. A first qualified
-absence is **awaiting confirmation** and remains unresolved until the required
-consecutive qualified collections confirm it. Confirmed clearance is dated to
-the first qualified absence, not the later confirmation collection, and does
-not establish an exact patch-installation time.
+**Fully cleared** means no unresolved exposure remains for that entity in scope.
+The default counts evidence fixed at its first qualified absence: inventory and
+vulnerability collection succeeded, and the machine is active and recently
+reporting. No extra collection is required, even when its entire vulnerability
+list becomes empty. Missing/stale machines and incomplete collections do not
+earn fix credit. A machine/CVE remains open while any of its software evidence
+is unresolved. Clearance is an observed between-run outcome, not an exact
+patch-installation time. Retained snapshots or explicitly configured policies
+requiring multiple absent collections can still contain pending confirmation.
 
 ## Compliance percentage snapshots
 
@@ -113,10 +116,16 @@ for Log Analytics. It shows the collection mode, delta `sinceTime`, new requests
 newly downloaded rows/bytes for the latest activity, throttle delays, and the
 processing/publication phase. Ctrl+C stops the watcher, not the collector.
 An active run older than the two-hour operating target produces a console
-warning. A separate six-hour maximum covers the entire original run: preparation,
+warning. A separate eight-hour maximum covers the entire original run: preparation,
 collection, throttle waits, retries, processing, verification, and publication.
 Stage changes, host restarts, checkpoint recovery, and continuation do not reset
 that budget. Supervisors stop even silent activity workers at the deadline.
+New runs receive eight hours; existing runs keep any earlier frozen deadline.
+Live-only processing restores and checkpoints only prior findings,
+recommendations, their lifecycle events, and run history. Combined mode retains
+all baseline datasets to preserve synthetic history. Cached processing artifacts
+are size-checked and hashed once per restore; corrupt cached files are replaced
+from retained storage and verified again.
 Function logs also report saved-page resume positions and raw-page restoration;
 continuation URLs and credentials are not printed.
 
@@ -145,7 +154,7 @@ An intentional new full baseline uses `invoke function --confirm --full`.
 The menu's full operation requires `FULL` confirmation.
 
 There is one Durable collection instance. An active run keeps its original
-scope; retrying a failed run within its six-hour budget reuses its run ID, timestamp, frozen policy,
+scope; retrying a failed run within its original deadline reuses its run ID, timestamp, frozen policy,
 baseline, and verified checkpoints. A full request does not change an already
 active or failing run into a new full collection.
 
@@ -217,11 +226,12 @@ handling remain in force. A failed findings request prevents publication.
 
 Snapshots are compared with the previous publication. A confirmed absent finding
 is described as **resolved between runs**, not as having an exact patch timestamp.
-The existing two-qualified-snapshot confirmation, 48-hour device freshness,
-missing/stale/offboarded-device classification, and wholesale-disappearance
-corroboration protections are unchanged. Intermediate changes between snapshots
-are not reconstructed. Prior scale-set findings are removed from scope before
-reconciliation, not credited as remediation.
+The default is one qualified absent collection, with a 48-hour device freshness
+window. A complete empty vulnerability list on a fresh, active machine counts
+as clearance; incomplete collections and missing/stale/offboarded machines do
+not. Intermediate changes between snapshots are not reconstructed. Prior
+scale-set findings are removed from scope before reconciliation, not credited
+as remediation.
 
 The flag is frozen in a run's plan. Stop an old active run before deployment,
 then start a fresh run to use updated settings. An old immutable run with

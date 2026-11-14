@@ -31,8 +31,8 @@ function fixture({snapshotStatus=200, notices=[], now=null, preparation=null, tr
       setAttribute(key,value){this[key]=value;},removeAttribute(key){delete this[key];},
       querySelectorAll(selector){
         if(selector==="[data-sla-summary-status]"){
-          this.summaryButtons=[...this.innerHTML.matchAll(/<button[^>]*data-sla-summary-severity="([^"]+)"[^>]*data-sla-summary-status="([^"]+)"/g)].map(([,severity,status])=>{
-            const button=node();button.dataset.slaSummarySeverity=severity;button.dataset.slaSummaryStatus=status;return button;
+          this.summaryButtons=[...this.innerHTML.matchAll(/<button[^>]*data-sla-summary-severity="([^"]+)"[^>]*data-sla-summary-status="([^"]+)"([^>]*)/g)].map(([,severity,status,attributes])=>{
+            const button=node();button.dataset.slaSummarySeverity=severity;button.dataset.slaSummaryStatus=status;button.dataset.slaSummaryEntity=attributes.match(/data-sla-summary-entity="([^"]+)"/)?.[1];return button;
           });
           return this.summaryButtons;
         }
@@ -72,7 +72,7 @@ function fixture({snapshotStatus=200, notices=[], now=null, preparation=null, tr
   }
   for(const [,id] of html.matchAll(/\bid="([^"]+)"/g))node(id);
   const views = ["executive","overview","workstations","recommendations","slaDashboard","sla","trend","executiveSnapshot","help"];
-  const navigation = views.map(view=>{const button=node();button.dataset.view=view;button.textContent=view;if(view==="executive")button.classList.add("active");return button;});
+  const navigation = [...html.matchAll(/<button[^>]*data-view="([^"]+)"/g)].map(([,view])=>{const button=node();button.dataset.view=view;button.textContent=view;if(view==="executive")button.classList.add("active");return button;});
   const pageButtons = ["first","previous","next","last"].map(action=>{const button=node();button.dataset.findingsPage=action;return button;});
   const activityButtons = attribute => [...html.matchAll(/<button [^>]+>/g)].map(([tag])=>{
     if(!tag.includes(`data-${attribute}=`))return null;
@@ -145,6 +145,65 @@ test("initial load pins metadata and requests only the summary, never full datas
   assert.equal(app.elements.get("loadingNotice").hidden,true);
 });
 
+test("restored primary views retain machine and executive access without a Prioritization page",async()=>{
+  const app=fixture();await tick();
+  assert.deepEqual(app.selectors[".story-nav button[data-view]"].map(button=>button.dataset.view),
+    ["executive","overview","recommendations","workstations","slaDashboard","trend","executiveSnapshot","jobHistory"]);
+  assert.deepEqual(app.selectors[".story-nav button[data-view]"].map(button=>button["aria-label"]),
+    ["Summary","Vulnerabilities","Recommendations","Machines","SLA","Reporting","Executive View","Job history"]);
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('state.osType="Linux";activateView("recommendations")');
+  app.query().at(-1).resolve(app.payload());await tick();
+  app.run('openSeverityVulnerabilities("Critical");renderScope()');
+  assert.equal(app.run("state.activeView"),"overview");
+  assert.equal(app.run("dashboardRequest().view"),"overview");
+  assert.equal(app.selectors[".story-nav button[data-view]"].find(button=>button.classList.contains("active")).dataset.view,"overview");
+  app.run('activateView("workstations")');
+  assert.equal(app.run("state.severity"),"All");
+  assert.equal(app.run("state.osType"),"Linux");
+  app.run('activateView("help")');
+  assert.equal(app.elements.get("contextualViewBar").hidden,false);
+  assert.equal(app.elements.get("returnToPrimary").textContent,"Back to Machines");
+  app.elements.get("returnToPrimary").click();
+  assert.equal(app.run("state.activeView"),"workstations");
+  assert.equal(app.run("state.severity"),"All");
+  assert.equal(app.run("state.osType"),"Linux");
+  assert.equal(app.elements.get("contextualViewBar").hidden,true);
+  app.run('activateView("executiveSnapshot")');
+  assert.equal(app.query().at(-1).payload.view,"executiveSnapshot");
+  assert.equal(app.query().at(-1).payload.filters.simplifiedDashboard,false);
+});
+
+test("Reporting owns the only activity date selector and prints only a loaded report",async()=>{
+  const app=fixture();await tick();
+  let printed=0;
+  app.context.window.print=()=>printed++;
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('activateView("trend")');
+  assert.equal(app.query().at(-1).payload.filters.newPeriod,"reporting");
+  assert.equal(app.elements.get("reportingActivitySlot").children[0].id,"newActivityBar");
+  app.elements.get("printReporting").click();
+  assert.equal(printed,0);
+  app.query().at(-1).resolve(app.payload({metadata:{activityWindow:{
+    startUtc:"2026-10-19T00:00:00Z",endUtc:"2026-10-24T23:59:59.999Z",
+  }},tables:{trendManagementComparisonTable:{columns:["Period","CVEsOpen"],
+    items:[{Period:"This week",CVEsOpen:3}],total:1,offset:0,limit:10,action:"none"}}}));await tick();
+  assert.equal(app.elements.get("newActivityTitle").textContent,"Observed activity in the selected reporting period");
+  app.elements.get("printReporting").click();
+  assert.equal(printed,1);
+  assert.equal(app.elements.get("body").classList.contains("reporting-print"),true);
+  app.elements.get("statisticsStartDate").value="2026-10-22";
+  app.elements.get("statisticsEndDate").value="2026-10-23";
+  app.elements.get("statisticsPeriod").dispatch("change","custom");
+  assert.equal(app.query().at(-1).payload.filters.statisticsStartDate,"2026-10-22");
+  assert.equal(app.query().at(-1).payload.filters.newPeriod,"reporting");
+  app.elements.get("printReporting").click();
+  assert.equal(printed,1);
+  app.elements.get("exportReportCsv").click();
+  assert.equal(app.query().at(-1).payload.table,"trendManagementComparisonTable");
+  assert.equal(app.query().at(-1).payload.filters.statisticsEndDate,"2026-10-23");
+});
+
 test("dates use year-first local time and consistently labeled UTC timestamps",async()=>{
   const app=fixture();await tick();
   assert.match(app.run('formatLocal("2026-11-09T05:06:07Z")'),/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} .+$/);
@@ -158,7 +217,7 @@ test("dates use year-first local time and consistently labeled UTC timestamps",a
 test("recent partial runs explain completion and show only matching source warnings",async()=>{
   const app=fixture();await tick();
   app.run(`state.runHistory=[
-    {CollectionRunId:"partial",DataOrigin:"Live",SnapshotTimeUtc:"2026-11-09T05:00:00Z",RunStatus:"PartialSuccess",OpenFindings:12,AffectedMachines:3},
+    {CollectionRunId:"partial",DataOrigin:"Live",SnapshotTimeUtc:"2026-11-09T05:00:00Z",RunStatus:"PartialSuccess",OpenFindings:12,ActiveCves:4,AffectedMachines:3},
     {CollectionRunId:"older",DataOrigin:"Live",SnapshotTimeUtc:"2026-11-08T05:00:00Z",RunStatus:"PartialSuccess"}
   ];state.runs=[
     {CollectionRunId:"partial",DataOrigin:"Live",Endpoint:"Graph <groups>",RunStatus:"Warning",Error:"Access <denied>"},
@@ -170,10 +229,12 @@ test("recent partial runs explain completion and show only matching source warni
   assert.match(rows[0],/Partial success/);
   assert.match(rows[0],/Completed with collection warnings, not still running/);
   assert.match(rows[0],/some data may be missing or stale/);
-  assert.match(rows[0],/12 open findings/);
+  assert.match(rows[0],/4 published unresolved CVEs · 3 affected machines/);
+  assert.doesNotMatch(rows[0],/12|open findings/);
   assert.match(rows[0],/Graph &lt;groups&gt;: Warning - Access &lt;denied&gt;/);
   assert.doesNotMatch(rows[0],/Machines|Other run|Other origin|details are unavailable/);
   assert.match(rows[1],/Per-source details are unavailable for this historical run/);
+  assert.match(rows[1],/Published CVE\/machine counts unavailable/);
   assert.doesNotMatch(rows[1],/Graph/);
 });
 
@@ -305,7 +366,7 @@ test("replacement status preserves the pinned results and exposes preparation st
   const app=fixture();await tick();
   app.query()[0].resolve(app.payload({texts:{filterCount:"complete results"}}));await tick();
   const pinnedCount=app.elements.get("filterCount").textContent;
-  assert.match(pinnedCount,/detected CVEs.*CVEs awaiting verification.*recommendations/);
+  assert.match(pinnedCount,/detected CVEs.*CVEs with some pending evidence \(can overlap detected\).*recommendations/);
   assert.notEqual(pinnedCount,"complete results");
   app.setPreparation({status:"preparing",readySnapshotId:snapshotId,progress:{stage:"validate-query-index",elapsedSeconds:4}});
   app.flushTimers();await tick();
@@ -316,6 +377,16 @@ test("replacement status preserves the pinned results and exposes preparation st
   assert.equal(app.run("dashboardQuery.snapshot.snapshotId"),snapshotId);
   assert.equal(app.elements.get("filterCount").textContent,pinnedCount);
   assert.equal(app.query().length,1);
+});
+
+test("a newer ready snapshot offers an explicit reload without silently changing pinned charts",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.setPreparation({status:"ready",readySnapshotId:"b".repeat(64)});
+  app.flushTimers();await tick();
+  assert.match(app.elements.get("dashboardPreparationStatus").textContent,/newer complete snapshot is ready/);
+  assert.equal(app.run("dashboardQuery.snapshot.snapshotId"),snapshotId);
+  assert.ok(app.elements.get("loadLatestSnapshot").listeners.click.length);
 });
 
 test("cold report polling displays the actual per-query index stage",async()=>{
@@ -574,33 +645,31 @@ test("snapshot startup failures do not leave a processing animation running",asy
 
 test("shared activity tiles put full-width labels before their counts",()=>{
   const tiles=[...html.matchAll(/<button\b[^>]*data-(?:new|fixed)-view=[^>]*>(.*?)<\/button>/g)];
-  assert.equal(tiles.length,7);
+  assert.equal(tiles.length,6);
   for(const [,markup] of tiles)assert.match(markup,/^<span>[^<]+<\/span><strong id="[^"]+">0<\/strong><small [^>]+>[^<]+<\/small>$/);
   const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
   assert.match(css,/\.new-activity-metrics button,\.new-activity-metrics \.window-metric\{[^}]*grid-template-columns:minmax\(0,1fr\)/);
 });
 
-test("activity tiles explain counts and partial fixes in plain language on hover and focus",()=>{
+test("activity tiles distinguish raw removals from proven fixes on hover and focus",()=>{
   const tiles=[...html.matchAll(/<button\b([^>]*data-(new|fixed)-view=[^>]*)>(.*?)<\/button>/g)];
-  assert.equal(tiles.length,7);
+  assert.equal(tiles.length,6);
   for(const [,attributes,kind,markup] of tiles){
     const helpId=attributes.match(/aria-describedby="([^"]+)"/)?.[1];
     assert.ok(helpId);
     assert.ok(markup.includes(`<small id="${helpId}" class="activity-metric-help" role="tooltip">`));
-    assert.match(markup,/selected dates/);
-    assert.match(markup,/loaded collection and your filters/);
+    assert.match(markup,/selected dates|these dates/);
     assert.doesNotMatch(markup,/non-empty|FirstObservedUtc|FirstSeenUtc|EffectiveRemediationUtc|FixedUtc|DeviceId|RecommendationId|pinned snapshot/i);
     if(kind==="fixed"){
-      assert.match(markup,/awaiting.*confirm/);
-      assert.match(markup,/except the detected\/fixed filter/);
+      assert.match(markup,/not proof|do not prove/);
     }
   }
   assert.match(html,/same CVE on 100 machines counts once/);
   assert.match(html,/not necessarily new machines/);
   assert.match(html,/existing recommendation can appear here/);
-  assert.match(html,/vulnerability may remain on other machines or software versions/);
-  assert.match(html,/does not mean the machine is fully fixed/);
-  assert.match(html,/does not mean the recommendation is finished/);
+  assert.match(html,/changed evidence IDs and legacy pending confirmation/);
+  assert.match(html,/not proof of fixes or full machine clearance/);
+  assert.match(html,/do not prove improvement or completion/);
   const css=fs.readFileSync(path.join(__dirname,"../dashboard/styles.css"),"utf8");
   assert.match(css,/button:hover \.activity-metric-help,\.new-activity-metrics button:focus-visible \.activity-metric-help\{display:block\}/);
   for(const selector of [/\.lifecycle-tooltip::after\{([^}]+)\}/,/\.new-activity-metrics \.activity-metric-help\{([^}]+)\}/]){
@@ -617,16 +686,13 @@ test("entity tiles place distinct CVE labels above their values",async()=>{
   assert.match(app.elements.get("pivotCards").innerHTML,/>Distinct active CVEs <button[^>]+data-help-key="Distinct active CVEs"[^>]*>\?<\/button><\/span><strong class="value">14,009<\/strong>/);
 });
 
-test("recommendation activity distinguishes observed progress from confirmed clearance",()=>{
+test("recommendation activity distinguishes recorded removals from confirmed clearance",()=>{
   const tile=html.match(/<button\b[^>]*aria-describedby="fixedRecommendationHelp"[^>]*>(.*?)<\/button>/)?.[1];
   assert.ok(tile);
-  assert.match(tile,/<span>recommendations with observed progress<\/span>/);
-  assert.match(tile,/recommendation counts once when at least one linked remediation observation/);
-  assert.match(tile,/not the same as confirmed Improved or Fully resolved/);
-  assert.match(tile,/Software and version records are supporting evidence, not additional vulnerabilities to count/);
-  assert.match(tile,/awaiting confirmation/);
-  assert.match(tile,/same CVE may remain on the machine or other machines/);
-  assert.match(tile,/does not mean the recommendation is finished/);
+  assert.match(tile,/<span>recommendations with recorded removals<\/span>/);
+  assert.match(tile,/Distinct recommendations linked to recorded evidence removals/);
+  assert.match(tile,/changed IDs and pending confirmation/);
+  assert.match(tile,/do not prove improvement or completion/);
 });
 
 test("vulnerability count help keeps distinct CVEs separate from explicitly labeled evidence",async()=>{
@@ -982,10 +1048,10 @@ test("snapshot warnings stay visible without Retry and oversized pages expose a 
 test("every workspace view queries lazily and generic tables receive bounded First/Previous/Next/Last controls",async()=>{
   const app=fixture();await tick();
   app.query()[0].resolve(app.payload());await tick();
-  for(const view of ["workstations","recommendations","sla","trend","executiveSnapshot","help"]){
+  for(const view of ["workstations","recommendations","slaDashboard","trend","executiveSnapshot","help"]){
     app.run(`activateView("${view}")`);
     assert.equal(app.query().at(-1).payload.view,view);
-    app.query().at(-1).resolve(app.payload());await tick();
+    app.query().at(-1).resolve(app.payload(view==="slaDashboard"?{metadata:{slaDashboard:slaDashboardReport()}}:{}));await tick();
   }
   app.run('clearDashboardResponseCache();activateView("workstations")');
   const table={columns:["DeviceName"],items:[{DeviceId:"machine-1",DeviceName:"Machine 1"}],total:150,offset:0,limit:100,action:"machine"};
@@ -1125,14 +1191,14 @@ test("help is available on status cells, SLA columns, cards and Summary without 
   const app=fixture();await tick();
   app.run(`cards("pivotCards",[[3,"Machines with open risk"],[2,"CVEs improved"],[1,"Recommendations fully resolved"]]);
     table("recommendationTable",["ProgressStatus","SlaStatus"],[{ProgressStatus:"Improved",SlaStatus:"Overdue"}],()=>{window.rowOpened=true;});
-    ensureManagementReport("executive");
-    renderDashboardChart("executiveManagementSlaSnapshot",{kind:"entity-sla-status",rows:[]});`);
+    ensureManagementReport("executiveSnapshot");
+    renderDashboardChart("executiveSnapshotManagementSlaSnapshot",{kind:"entity-sla-status",rows:[]});`);
   assert.equal((app.elements.get("pivotCards").innerHTML.match(/data-help-key=/g)||[]).length,3);
   const markup=app.elements.get("recommendationTable").innerHTML;
   for(const key of ["Progress Status","SLA risk status","Improved","Overdue"])assert.ok(markup.includes(`data-help-key="${key}"`),key);
-  assert.match(app.elements.get("executiveManagement").innerHTML,/data-help-key="Summary"/);
+  assert.match(app.elements.get("executiveSnapshotManagement").innerHTML,/data-help-key="Status and progress"/);
   for(const label of ["Not yet due","Overdue","Deadline unknown","Fully cleared","Cleared on time","Cleared late"]){
-    assert.ok(app.elements.get("executiveManagementSlaSnapshot").innerHTML.includes(`data-help-key="${label}"`),label);
+    assert.ok(app.elements.get("executiveSnapshotManagementSlaSnapshot").innerHTML.includes(`data-help-key="${label}"`),label);
   }
   const row=app.elements.get("recommendationTable").tableRows[0],target={closest:()=>({dataset:{helpKey:"Improved"}})};
   row.listeners.click[0]({target});
@@ -1204,8 +1270,8 @@ test("management reports use entity views and have no hidden finding-instance se
   }));await tick();
   assert.match(app.elements.get("filterCount").textContent,/5 machines with open risk · 3 unique open CVEs · 2 open recommendations/);
   assert.match(app.elements.get("executiveManagementCards").innerHTML,/Machines with open risk/);
-  assert.match(app.elements.get("executiveManagement").innerHTML,/500 machines is one vulnerability/);
-  assert.match(app.elements.get("executiveManagement").innerHTML,/pending verification remains open/);
+  assert.doesNotMatch(app.elements.get("executiveManagement").innerHTML,/SlaStatus|SlaSeverity/);
+  assert.match(app.elements.get("executiveManagement").innerHTML,/FixActivity|RemediationProgress/);
   assert.equal(app.query().at(-1).payload.filters.includeFindingEvidence,false);
   for(const id of ["executiveTechnicalEvidence","executiveSnapshotTechnicalEvidence","slaTechnicalEvidence","trendTechnicalEvidence","trendWorkflowEvidence"]){
     assert.equal(app.elements.has(id),false);
@@ -1258,7 +1324,7 @@ test("Summary contains machine and CVE severity totals plus only a compact SLA s
     },
   }));await tick();
   const root=app.elements.get("executiveManagement");
-  assert.ok(root.innerHTML.indexOf('id="executiveManagementSeverity"')<root.innerHTML.indexOf('id="executiveManagementSlaSnapshot"'));
+  assert.ok(root.innerHTML.includes('id="executiveManagementSeverity"'));
   const severity=app.elements.get("executiveManagementSeverity").innerHTML;
   assert.ok(severity.indexOf('data-severity-entity="machines"')<severity.indexOf('data-severity-entity="cves"'));
   assert.match(severity,/Machines \/ workload instances by severity/);
@@ -1266,19 +1332,15 @@ test("Summary contains machine and CVE severity totals plus only a compact SLA s
   assert.match(severity,/Critical<\/span><strong>3<\/strong>/);
   assert.match(severity,/Critical<\/span><strong>5<\/strong>/);
   assert.ok(!severity.includes("Unknown"));
-  for(const suffix of ["SlaStatus","SlaPolicy","SlaSeverity","Movement","Progress","ComparisonTable","MachineTable","CveTable","RecommendationTable"]){
+  for(const suffix of ["SlaStatus","SlaPolicy","SlaSeverity","Movement","Progress","ComparisonTable"]){
     assert.ok(!root.innerHTML.includes(`id="executiveManagement${suffix}"`),suffix);
   }
-  const status=app.elements.get("executiveManagementSlaSnapshot").innerHTML;
-  assert.match(status,/Distinct CVEs and machines, counted separately/);
-  assert.match(status,/<th scope="row">CVEs<\/th><td>13<\/td><td>10<\/td><td>2<\/td><td>1<\/td>/);
-  assert.match(status,/<th scope="row">Machines<\/th>/);
-  assert.match(status,/Fully cleared/);
-  assert.doesNotMatch(status,/machine\/CVE outcomes|Open within SLA %|Confirmed on-time %/);
+  assert.equal(app.elements.has("executiveManagementSlaSnapshot"),true);
+  assert.equal(app.elements.get("executiveManagementDetail").hidden,true);
   assert.ok(!app.query()[0].payload.filters.includeFindingEvidence);
 });
 
-for(const view of ["slaDashboard","executiveSnapshot"]){
+for(const view of ["executiveSnapshot"]){
   test(`${view} shows separate CVE and machine severity snapshots and preserves drill-down scope`,async()=>{
     const app=fixture();await tick();
     app.query()[0].resolve(app.payload());await tick();
@@ -1298,7 +1360,7 @@ for(const view of ["slaDashboard","executiveSnapshot"]){
       assert.match(card,new RegExp(`<strong>${cves}</strong><span>Distinct unresolved CVEs</span>`));
       assert.match(card,new RegExp(`<strong>${machines}</strong><span>Affected machines</span>`));
     }
-    assert.match(markup,/Fully cleared means confirmation is complete/);
+    assert.match(markup,/Fully cleared means no unresolved CVE evidence remains/);
     root.filterButtons.find(button=>button.dataset.vulnerabilitySeverity==="Critical").click();await tick();
     const query=app.query().at(-1).payload;
     assert.equal(query.view,"overview");
@@ -1366,8 +1428,7 @@ test("SLA displays show distinct entity counts, full clearances, and retained po
 test("Reporting severity links open distinct vulnerabilities and preserve workspace filters",async()=>{
   const app=fixture();await tick();
   app.query()[0].resolve(app.payload());await tick();
-  app.run('activateView("trend");state.osType="Linux";state.search="openssl";state.subscription="sub-a";state.team="Ops";ensureManagementReport("trend");renderDashboardChart("trendManagementSeverity",{kind:"entity-severity",rows:[{label:"Critical",machines:1,cves:2}]});');
-  app.elements.get("trendManagementSeverity").filterButtons[0].click();await tick();
+  app.run('activateView("trend");state.osType="Linux";state.search="openssl";state.subscription="sub-a";state.team="Ops";openSeverityVulnerabilities("Critical");');await tick();
   app.flushTimers();await tick();
   const request=app.query().at(-1).payload;
   assert.equal(request.view,"overview");
@@ -1419,11 +1480,11 @@ test("persistent quick filters and removable chips refresh the selected item wit
 test("SLA no-outcome states remain ungraded and coverage gaps stay explicit without colors",async()=>{
   const app=fixture();await tick();
   app.context.entitySla={entityPeriods:[slaDashboardReport().periods[0]]};
-  app.run(`ensureManagementReport("sla");renderManagementSla("sla",entitySla)`);
-  assert.match(app.elements.get("slaManagementSlaStatus").innerHTML,/No fully cleared CVEs to assess/);
-  assert.ok(!app.elements.get("slaManagementSlaStatus").innerHTML.includes("100.0%"));
-  app.run(`entitySla.coverageGap=true;renderManagementSla("sla",entitySla)`);
-  assert.match(app.elements.get("slaManagementSlaStatus").innerHTML,/Coverage gap/);
+  app.run(`ensureManagementReport("executiveSnapshot");renderManagementSla("executiveSnapshot",entitySla)`);
+  assert.match(app.elements.get("executiveSnapshotManagementSlaStatus").innerHTML,/No fully cleared CVEs to assess/);
+  assert.ok(!app.elements.get("executiveSnapshotManagementSlaStatus").innerHTML.includes("100.0%"));
+  app.run(`entitySla.coverageGap=true;renderManagementSla("executiveSnapshot",entitySla)`);
+  assert.match(app.elements.get("executiveSnapshotManagementSlaStatus").innerHTML,/Coverage gap/);
 });
 
 test("provisional fixes are visible without inventing a completed SLA rate",async()=>{
@@ -1445,7 +1506,7 @@ test("provisional fixes are visible without inventing a completed SLA rate",asyn
   const report=app.elements.get("executiveSnapshotManagement").innerHTML;
   assert.match(report,/id="executiveSnapshotManagementFixActivity"/);
   assert.match(report,/first qualified absence/);
-  assert.match(report,/returned detection revokes/);
+  assert.match(report,/no extra collection is required/);
   assert.match(report,/excluded from completed SLA outcomes/);
 });
 
@@ -1476,8 +1537,8 @@ test("catalog options and legacy Prioritize navigation use the single Recommenda
   app.elements.get("recommendationWorkspaceFilters").click();
   assert.equal(app.elements.get("filterBar").hidden,false);
   app.elements.get("resetRecommendationCatalog").click();await tick();
-  assert.equal(app.run("state.recommendationCatalogStatus"),"All");
-  assert.equal(app.run("state.recommendationCatalogSort"),"name");
+  assert.equal(app.run("state.recommendationCatalogStatus"),"Unresolved exposure");
+  assert.equal(app.run("state.recommendationCatalogSort"),"priority");
   app.run('activateView("priority")');await tick();
   assert.equal(app.query().at(-1).payload.view,"recommendations");
   assert.equal(app.query().at(-1).payload.filters.recommendationCatalogSort,"priority");
@@ -1689,7 +1750,7 @@ test("simple SLA summary separates open deadline counts from confirmed completio
   const report=slaDashboardReport();
   report.machineCveSummary.coverage="unavailable";
   app.context.slaReport=report;
-  app.run("renderSlaDashboard(slaReport)");
+  app.run("renderSimpleSla(slaReport.machineCveSummary)");
   const markup=app.elements.get("slaDashboardSummary").innerHTML;
   for(const severity of ["Critical","High","Medium","Low"])assert.ok(markup.includes(`<th scope="row">${severity}</th>`));
   assert.match(markup,/Open deadline status \(not fixed\)/);
@@ -1711,10 +1772,11 @@ test("SLA summary drilldowns and CSV preserve selected metric, severity, scope a
   app.run('state.subscription="sub-selected";state.team="Operations";state.osType="Windows11";activateView("slaDashboard")');
   await tick();
   app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();
-  const button=app.elements.get("slaDashboardSummary").summaryButtons.find(button=>button.dataset.slaSummarySeverity==="Critical"&&button.dataset.slaSummaryStatus==="Fixed");
+  const button=app.elements.get("slaDashboardVisuals").summaryButtons.find(button=>button.dataset.slaSummaryEntity==="cves"&&button.dataset.slaSummaryStatus==="Fixed");
   button.click();await tick();
   const payload=app.query().at(-1).payload;
-  assert.equal(payload.filters.slaSummarySeverity,"Critical");
+  assert.equal(payload.filters.slaSummarySeverity,"All");
+  assert.equal(payload.filters.slaSummaryEntity,"cves");
   assert.equal(payload.filters.slaSummaryStatus,"Fixed");
   assert.equal(payload.filters.subscription,"sub-selected");
   assert.equal(payload.filters.team,"Operations");
@@ -1722,12 +1784,13 @@ test("SLA summary drilldowns and CSV preserve selected metric, severity, scope a
   assert.equal(payload.snapshotId,snapshotId);
   app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();
   assert.equal(app.elements.get("slaSummaryDetails").hidden,false);
-  assert.match(app.elements.get("slaSummaryContext").textContent,/Critical · Confirmed fixed/);
+  assert.match(app.elements.get("slaSummaryContext").textContent,/Distinct CVEs · Fixed/);
   app.run('exportDashboardCsv("slaDashboard","slaSummaryTable")');
   assert.equal(app.query().at(-1).payload.table,"slaSummaryTable");
   assert.equal(app.query().at(-1).payload.filters.slaSummaryStatus,"Fixed");
   app.elements.get("clearSlaSummary").click();await tick();
   assert.equal(app.run("dashboardRequest().filters.slaSummaryStatus"),undefined);
+  app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();
   assert.equal(app.elements.get("slaSummaryDetails").hidden,true);
 });
 
@@ -1740,9 +1803,9 @@ test("zero confirmed fixes cannot appear as 100 percent completed SLA",async()=>
   }
   app.context.slaReport=report;
   app.run("renderSlaDashboard(slaReport)");
-  const markup=app.elements.get("slaDashboardSummary").innerHTML;
-  assert.match(markup,/not yet due/);
-  assert.match(markup,/N\/A — no confirmed fixes with known deadlines/);
+  const markup=app.elements.get("slaDashboardVisuals").innerHTML;
+  assert.match(markup,/Not yet due/);
+  assert.match(markup,/No fully cleared CVEs to assess/);
   assert.doesNotMatch(markup,/100\.0%/);
   const period=compliancePeriods()[0];
   for(const entity of ["cves","machines"]){
@@ -1772,6 +1835,19 @@ test("progress charts reconcile exclusive unresolved groups and separate histori
   assert.match(markup,/20 = 14 \+ 2 \+ 4/);
   assert.match(markup,/Fully cleared during this period: <strong>1<\/strong>/);
   assert.doesNotMatch(markup,/CVEs cleared on a machine/);
+  assert.match(markup,/first complete collection/);
+  assert.match(markup,/no extra collection is required/);
+});
+
+test("fix explanations distinguish immediate defaults from retained multi-collection policies",async()=>{
+  const app=fixture();await tick();
+  assert.match(app.run('findingLifecycleDescription("Fixed")'),/counts it fixed immediately/);
+  assert.match(app.run('findingLifecycleDescription("PendingConfirmation")'),/older or explicitly configured/);
+  assert.match(app.run('findingLifecycleDescription("PendingVerification")'),/incomplete/);
+  app.run('state.slaPolicy={lifecycle:{fixedConfirmationRuns:2}}');
+  assert.match(app.run('fixRecognitionDescription()'),/2 consecutive qualified absent collections/);
+  app.run('state.slaPolicy={lifecycle:{fixedConfirmationRuns:1}}');
+  assert.match(app.run('fixRecognitionDescription()'),/no extra collection is required/);
 });
 
 test("907 unresolved CVEs display 897 without progress plus 10 partial plus zero awaiting",async()=>{
@@ -1854,22 +1930,22 @@ test("between-run activity shows authoritative boundaries and no fallback when u
   app.elements.get("newPeriod").dispatch("change","runs");await tick();
   assert.equal(app.query().at(-1).payload.filters.newPeriod,"runs");
   app.query().at(-1).resolve(app.payload({metadata:{activityComparison:{available:true,previousUtc:"2026-10-20T12:00:00Z",latestUtc:snapshot.snapshotTimeUtc}},activity:{fixedFindings:12,fixedMachines:3,fixedCves:2,fixedRecommendations:1}}));await tick();
-  assert.equal(app.elements.get("fixedWindowObservationCount").textContent,"12");
+  assert.equal(app.elements.get("fixedWindowCveCount").textContent,"2");
   assert.equal(app.elements.get("fixedWindowMachineCount").textContent,"3");
   assert.match(app.elements.get("newActivityContext").textContent,/After 2026-10-20 12:00:00 UTC through 2026-10-24 00:00:00 UTC/);
   app.run("clearDashboardResponseCache();render()");await tick();
   app.query().at(-1).resolve(app.payload({metadata:{activityComparison:{available:false}}}));await tick();
-  assert.equal(app.elements.get("fixedWindowObservationCount").textContent,"N/A");
+  assert.equal(app.elements.get("fixedWindowCveCount").textContent,"N/A");
   assert.match(app.elements.get("newActivityContext").textContent,/Two comparable/);
   assert.doesNotMatch(app.elements.get("newActivityTitle").textContent,/24 hours/);
 });
 
-test("remediation observation shortcut opens evidence instead of silently counting distinct CVEs",async()=>{
+test("remediation progress shortcut opens distinct CVEs without software-record totals",async()=>{
   const app=fixture();await tick();
   app.run('state.newPeriod="runs";state.severity="High";state.osType="Windows11"');
-  app.selectors["[data-fixed-view]"].find(button=>button.dataset.findingsMode==="findings").click();await tick();
+  app.selectors["[data-fixed-view]"].find(button=>button.dataset.findingsMode==="cves").click();await tick();
   const payload=app.query().at(-1).payload;
-  assert.equal(payload.mode,"findings");
+  assert.equal(payload.mode,"cves");
   assert.equal(payload.filters.remediationPeriodFilter,true);
   assert.equal(payload.filters.newPeriod,"runs");
   assert.equal(payload.filters.severity,"High");
@@ -1889,12 +1965,12 @@ test("observed remediation cards link directly to their scoped detail tables",as
   app.run('state.remediationPeriodFilter=true;ensureManagementReport("overview")');
   assert.equal(app.elements.get("overviewManagement").hidden,true);
   app.run('state.remediationPeriodFilter=false;ensureManagementReport("overview")');
-  assert.equal(app.elements.get("overviewManagement").hidden,false);
+  assert.equal(app.elements.get("overviewManagement").hidden,true);
 });
 
 test("management summary cards request the exact counted entity and can restore the full list",async()=>{
   const app=fixture();await tick();
-  const cardId="executiveManagementFixActivity",action={entity:"machines",status:"Improved",table:"executiveManagementMachineTable"};
+  const cardId="executiveManagementCards",action={entity:"machines",status:"Improved",table:"executiveManagementMachineTable"};
   const payload=()=>app.payload({cards:{[cardId]:[[3,"Machines improved, still unresolved"]]},metadata:{metricActions:{[cardId]:[action]}}});
   app.query()[0].resolve(payload());await tick();
   app.elements.get(cardId).filterButtons[0].click();await tick();
@@ -2013,36 +2089,65 @@ test("compliance percentages distinguish real zero, empty denominator and insuff
   assert.match(html,/not a period average/);
 });
 
-test("dedicated graphical SLA navigation leaves the Remediate work lists separate",async()=>{
+test("SLA restores severity charts, clearance charts and calendar details alongside exact count links",async()=>{
   const app=fixture();await tick();
   app.run('state.slaPolicy={policies:[{severity:"Critical",knownExploitRequired:false,slaDays:2},{severity:"Critical",knownExploitRequired:true,slaDays:4}]}');
   app.run('activateView("slaDashboard")');await tick();
   assert.equal(app.query().at(-1).payload.view,"slaDashboard");
   app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();
   const markup=app.elements.get("slaDashboardVisuals").innerHTML;
-  assert.match(markup,/Distinct unresolved CVEs/);
-  assert.match(markup,/3 CVEs/);
-  assert.match(markup,/3 machines/);
-  assert.match(markup,/1 not yet due/);
-  assert.match(markup,/1 overdue/);
-  assert.match(markup,/1 deadline unknown/);
-  assert.match(markup,/CVEs fully cleared this month/);
+  assert.match(markup,/Still open/);
+  assert.match(markup,/Fully cleared/);
+  assert.equal((markup.match(/<table>/g)||[]).length,2);
+  for(const label of ["SLA at a glance","Distinct CVEs by severity","Affected machines by severity","Week over week","Month over month"])assert.ok(markup.includes(label),label);
+  assert.match(markup,/sla-summary-donut/);
+  assert.match(markup,/data-sla-summary-status="Open" data-sla-summary-entity="cves">3<\/button>/);
+  assert.match(markup,/data-sla-summary-status="Open" data-sla-summary-entity="machines">3<\/button>/);
   assert.match(markup,/No fully cleared CVEs to assess/);
   assert.doesNotMatch(markup,/50\.0%|sla-rate-ring|NaN|undefined/);
-  assert.match(markup,/with fixes awaiting confirmation/);
-  assert.match(markup,/Pending fixes remain unresolved/);
+  assert.match(markup,/retained pending evidence remain open/);
   assert.match(markup,/Standard: 2 days · Known exploit: 4 days/);
-  assert.doesNotMatch(markup,/<table/);
   assert.match(app.elements.get("filterCount").textContent,/3 distinct unresolved CVEs · 3 affected machines/);
-  const critical=app.elements.get("slaDashboardVisuals").filterButtons[0];
-  critical.click();await tick();
-  assert.equal(app.query().at(-1).payload.view,"overview");
-  assert.equal(app.query().at(-1).payload.filters.severity,"Critical");
+  const count=app.elements.get("slaDashboardVisuals").summaryButtons[0];
+  count.click();await tick();
+  assert.equal(app.query().at(-1).payload.view,"slaDashboard");
+  assert.equal(app.query().at(-1).payload.filters.slaSummaryEntity,"cves");
+  assert.equal(app.query().at(-1).payload.filters.slaSummaryStatus,"OpenWithin");
   app.run('activateView("sla")');await tick();
-  assert.equal(app.query().at(-1).payload.view,"sla");
+  assert.equal(app.run("state.activeView"),"slaDashboard");
 });
 
-test("SLA calendar graphics compare backlog and confirmed-fix counts in completed periods",async()=>{
+test("Job history is a primary workspace with scoped checks and separate published run balances",async()=>{
+  const app=fixture();await tick();
+  app.query()[0].resolve(app.payload());await tick();
+  app.run('activateView("jobHistory")');await tick();
+  assert.equal(app.query().at(-1).payload.view,"jobHistory");
+  app.query().at(-1).resolve(app.payload({texts:{jobHistoryContext:"Published snapshot history only"}}));await tick();
+  assert.equal(app.elements.get("contextualViewBar").hidden,true);
+  assert.match(app.elements.get("jobHistoryRecognition").textContent,/first complete collection/);
+  assert.match(app.elements.get("jobHistoryRecognition").textContent,/third-party software/);
+  for(const id of ["jobHistoryTable","jobHistoryChecksTable","jobHistoryEndpointsTable"])assert.ok(html.includes(`id="${id}"`));
+  assert.match(html,/Opening \+ added - removed = closing/);
+  assert.match(html,/Removed is not synonymous with fixed/);
+});
+
+test("WS11-style detection decline and legacy waiting reconcile without reporting a confirmed clearance",async()=>{
+  const app=fixture();await tick();
+  app.context.chart={kind:"remediation-progress",unit:"distinct-cves",baselineTimeUtc:"2026-11-12T16:30:45Z",rows:[
+    {label:"Friday",start:"2026-11-13",end:"2026-11-13",coverage:"Retained observations",baseline:0,new:64,
+      resolved:0,open:971,openBreakdown:{withoutProgress:150,confirmedProgress:0,awaiting:821},
+      scanBreakdown:{detected:152,awaitingClearance:819,verificationRequired:0}},
+  ]};
+  app.run('renderDashboardChart("machineRemediationProgress",chart)');
+  const markup=app.elements.get("machineRemediationProgress").innerHTML;
+  assert.match(markup,/971 = 152 \+ 819 \+ 0/);
+  assert.match(markup,/No longer detected; legacy confirmation pending/);
+  assert.match(markup,/Fully cleared during this period: <strong>0<\/strong>/);
+  app.run('chart.rows[0].scanBreakdown.awaitingClearance=971');
+  assert.throws(()=>app.run('renderDashboardChart("machineRemediationProgress",chart)'),/Detected and absent CVE counts do not reconcile/);
+});
+
+test("calendar comparison rendering retains backlog and confirmed-fix counts",async()=>{
   const app=fixture();await tick();
   const report=slaDashboardReport();
   report.periods[1].cves.totalOpen=13;
@@ -2054,8 +2159,7 @@ test("SLA calendar graphics compare backlog and confirmed-fix counts in complete
   report.periods[4].cves.completedWithin=6;
   report.periods[4].cves.completionPercent=100;
   app.context.slaReport=report;
-  app.run("renderSlaDashboard(slaReport)");
-  const markup=app.elements.get("slaDashboardVisuals").innerHTML;
+  const markup=app.run('slaCalendarComparison("Week over week",slaReport.periods[1],slaReport.periods[2])+slaCalendarComparison("Month over month",slaReport.periods[3],slaReport.periods[4])');
   assert.match(markup,/Week over week/);
   assert.match(markup,/Month over month/);
   assert.match(markup,/2026-10-12 - 2026-10-18/);
@@ -2064,7 +2168,6 @@ test("SLA calendar graphics compare backlog and confirmed-fix counts in complete
   assert.match(markup,/Change: -3 CVEs fully cleared/);
   assert.match(markup,/100\.0% of assessed fully cleared CVEs were on time/);
   assert.doesNotMatch(markup,/sla-rate-ring|NaN|undefined/);
-  assert.match(markup,/Monday through Sunday in UTC/);
 });
 
 test("partial SLA history withholds rates and changes instead of fabricating success",async()=>{
@@ -2077,9 +2180,8 @@ test("partial SLA history withholds rates and changes instead of fabricating suc
   app.context.slaReport=report;
   app.run("renderSlaDashboard(slaReport)");
   const markup=app.elements.get("slaDashboardVisuals").innerHTML;
-  assert.match(markup,/Full-period history is unavailable/);
-  assert.match(markup,/Change: Waiting for data/);
-  assert.match(markup,/Month-to-date completion counts cover retained observations only/);
+  assert.match(markup,/Partial retained coverage/);
+  assert.match(markup,/clearances cover retained observations only/);
   assert.doesNotMatch(markup,/99\.0%|Change: -49/);
 });
 
@@ -2091,7 +2193,7 @@ test("zero SLA rates remain zero and absent assessments remain unavailable",asyn
   app.run("renderSlaDashboard(slaReport)");
   const markup=app.elements.get("slaDashboardVisuals").innerHTML;
   assert.match(markup,/0\.0% of assessed fully cleared CVEs were on time/);
-  assert.match(markup,/2 overdue/);
+  assert.match(markup,/data-sla-summary-status="OpenOverdue" data-sla-summary-entity="cves">2<\/button>/);
   assert.doesNotMatch(markup,/sla-rate-ring/);
   assert.doesNotMatch(markup,/100\.0%/);
   assert.equal(app.run("slaDashboardPercent(null)"),"Waiting for data");
@@ -2107,13 +2209,13 @@ test("all unresolved work not yet due never looks like completed remediation",as
   app.context.slaReport=report;
   app.run("renderSlaDashboard(slaReport)");
   const markup=app.elements.get("slaDashboardVisuals").innerHTML;
-  assert.match(markup,/12 CVEs/);
-  assert.match(markup,/12 not yet due/);
-  assert.match(markup,/CVEs fully cleared this month/);
-  assert.match(markup,/Not yet due does not mean remediated/);
+  assert.match(markup,/data-sla-summary-status="Open" data-sla-summary-entity="cves">12<\/button>/);
+  assert.match(markup,/data-sla-summary-status="OpenWithin" data-sla-summary-entity="cves">12<\/button>/);
+  assert.match(markup,/Fully cleared/);
+  assert.match(markup,/Not yet due is not a fix/);
   assert.match(markup,/No fully cleared CVEs to assess/);
   assert.doesNotMatch(markup,/sla-rate-ring|NaN|undefined/);
-  assert.doesNotMatch(markup.replace(/<[^>]*>/g,""),/100(?:\.0)?%/);
+  assert.doesNotMatch(markup.replace(/<[^>]*>/g,"").replace("not 100%",""),/100(?:\.0)?%/);
 });
 
 test("confirmed fixes with unknown deadlines are counted but not assessed as on time",async()=>{
@@ -2124,10 +2226,10 @@ test("confirmed fixes with unknown deadlines are counted but not assessed as on 
   app.context.slaReport=report;
   app.run("renderSlaDashboard(slaReport)");
   const markup=app.elements.get("slaDashboardVisuals").innerHTML;
-  assert.match(markup,/2 CVEs fully cleared this month/);
-  assert.match(markup,/2 deadline unknown/);
+  assert.match(markup,/data-sla-summary-status="Fixed" data-sla-summary-entity="cves">2<\/button>/);
+  assert.match(markup,/data-sla-summary-status="FixedUnknown" data-sla-summary-entity="cves">2<\/button>/);
   assert.match(markup,/No known completion deadlines to assess/);
-  assert.doesNotMatch(markup.replace(/<[^>]*>/g,""),/100(?:\.0)?%|NaN|undefined/);
+  assert.doesNotMatch(markup.replace(/<[^>]*>/g,"").replace("not 100%",""),/100(?:\.0)?%|NaN|undefined/);
 });
 
 test("SLA screen rejects old pair-count reports and never renders pair totals",async()=>{
@@ -2157,8 +2259,7 @@ test("leadership donuts keep remaining exposure separate from confirmed clearanc
   Object.assign(report.periods[0].cves,{completedWithin:2,completedLate:1,completedUnknown:1,confirmedFixes:4,completionPercent:200/3});
   Object.assign(report.periods[0].machines,{openWithin:7,openOverdue:2,unknownOpen:1,totalOpen:10});
   app.context.slaReport=report;
-  app.run("renderSlaDashboard(slaReport)");
-  const markup=app.elements.get("slaDashboardVisuals").innerHTML;
+  const markup=app.run('slaLeadershipSnapshot(slaReport.periods[0],"Month to date: 2026-10-01 - 2026-10-24 UTC")');
   assert.equal((markup.match(/class="sla-summary-donut"/g)||[]).length,4);
   assert.match(markup,/CVEs remaining: 1 Not yet due, 1 Overdue, 1 Deadline unknown/);
   assert.match(markup,/Machines remaining: 7 Not yet due, 2 Overdue, 1 Deadline unknown/);
@@ -2174,10 +2275,10 @@ test("management summaries use the same leadership charts and colored confirmed-
   const app=fixture();await tick();
   const report=slaDashboardReport();
   app.context.sla={entityPeriods:[report.periods[0]],periods:[{Period:"Latest 30 days"}]};
-  app.run('ensureManagementReport("sla");renderManagementSla("sla",sla)');
-  assert.match(app.elements.get("slaManagementLeadershipSnapshot").innerHTML,/SLA at a glance/);
-  assert.match(app.elements.get("slaManagementLeadershipSnapshot").innerHTML,/Latest 30 days/);
-  const markup=app.elements.get("slaManagementSlaStatus").innerHTML;
+  app.run('ensureManagementReport("executiveSnapshot");renderManagementSla("executiveSnapshot",sla)');
+  assert.match(app.elements.get("executiveSnapshotManagementLeadershipSnapshot").innerHTML,/SLA at a glance/);
+  assert.match(app.elements.get("executiveSnapshotManagementLeadershipSnapshot").innerHTML,/Latest 30 days/);
+  const markup=app.elements.get("executiveSnapshotManagementSlaStatus").innerHTML;
   for(const category of ["cleared","late","pending","improved","unknown"])assert.match(markup,new RegExp(`class="sla-outcome-${category}"`));
   assert.match(markup,/No fully cleared CVEs to assess/);
 });

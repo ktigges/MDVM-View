@@ -12,7 +12,10 @@ const DEFAULT_DOMAINS=filterConfig.defaultDomains||["Devices","Cloud"];
 const DEFAULT_REPORTING_DAYS=[7,14,30,60,90].includes(Number(filterConfig.defaultReportingDays))?Number(filterConfig.defaultReportingDays):30;
 if("scrollRestoration" in history)history.scrollRestoration="manual";
 window.addEventListener("pageshow",()=>requestAnimationFrame(()=>window.scrollTo(0,0)));
-const state={runHistory:[],runs:[],secureScores:[],slaPolicy:null,recommendationTracking:new Map(),recommendationsById:new Map(),subscriptionInventoryById:new Map(),vulnerabilityDetailsById:new Map(),watchlistCves:new Map(),origin:"Both",osType:"All",reportingBreakdown:"All",severity:filterConfig.defaultSeverity||"All",exposureStatus:"DetectedAndPending",assetClass:"All",subscription:"All",hideNonReporting:Boolean(filterConfig.defaultHideNonReporting),reportingDays:DEFAULT_REPORTING_DAYS,includeDiscoveredOnly:Boolean(filterConfig.defaultIncludeDiscoveredOnly),recommendationTypes:new Set(DEFAULT_RECOMMENDATION_TYPES),recommendationTrackingFilter:"All",recommendationCatalogStatus:"All",recommendationCatalogSort:"name",recommendationTrackingEnabled:false,recommendationTrackingLocalPreview:false,team:"All",search:"",domains:new Set(DEFAULT_DOMAINS),newPeriod:"day",newPeriodFilter:false,remediationPeriodFilter:false,latestRunChangesOnly:false,newPeriodStart:"",newPeriodEnd:"",statisticsPeriod:"week",reportingEntity:"machines",reportingChange:"Fixed",executiveSnapshotPeriod:"30days",executiveSnapshotStart:"",executiveSnapshotEnd:"",executiveSnapshotSubscription:"All",executiveSnapshotOwner:"All",executiveSnapshotUnit:"machines",selectedRecommendationId:"",detailRecommendationIds:[],selectedEntity:null,selectedCveDialogId:"",pivotSourceLabel:"",snapshotTimeMs:NaN,activeView:"executive"};
+const state={runHistory:[],runs:[],secureScores:[],slaPolicy:null,recommendationTracking:new Map(),recommendationsById:new Map(),subscriptionInventoryById:new Map(),vulnerabilityDetailsById:new Map(),watchlistCves:new Map(),origin:"Both",osType:"All",reportingBreakdown:"All",severity:filterConfig.defaultSeverity||"All",exposureStatus:"DetectedAndPending",assetClass:"All",subscription:"All",hideNonReporting:Boolean(filterConfig.defaultHideNonReporting),reportingDays:DEFAULT_REPORTING_DAYS,includeDiscoveredOnly:Boolean(filterConfig.defaultIncludeDiscoveredOnly),recommendationTypes:new Set(DEFAULT_RECOMMENDATION_TYPES),recommendationTrackingFilter:"All",recommendationCatalogStatus:"Unresolved exposure",recommendationCatalogSort:"priority",recommendationTrackingEnabled:false,recommendationTrackingLocalPreview:false,team:"All",search:"",domains:new Set(DEFAULT_DOMAINS),newPeriod:"day",newPeriodFilter:false,remediationPeriodFilter:false,latestRunChangesOnly:false,newPeriodStart:"",newPeriodEnd:"",statisticsPeriod:"week",reportingEntity:"machines",reportingChange:"Fixed",executiveSnapshotPeriod:"30days",executiveSnapshotStart:"",executiveSnapshotEnd:"",executiveSnapshotSubscription:"All",executiveSnapshotOwner:"All",executiveSnapshotUnit:"machines",selectedRecommendationId:"",detailRecommendationIds:[],selectedEntity:null,selectedCveDialogId:"",pivotSourceLabel:"",snapshotTimeMs:NaN,activeView:"executive"};
+const PRIMARY_VIEWS={executive:"Summary",overview:"Vulnerabilities",recommendations:"Recommendations",workstations:"Machines",slaDashboard:"SLA",trend:"Reporting",executiveSnapshot:"Executive View",jobHistory:"Job history"};
+let primaryView="executive";
+state.slaEntity="cves";
 const DEFENDER_RECOMMENDATIONS_URL="https://security.microsoft.com/exposure-recommendations?tabId=Devices";
 const DEFENDER_VULNERABILITIES_URL="https://security.microsoft.com/vulnerabilities/devices";
 const MAX_CUSTOMER_LOGO_BYTES=2*1024*1024;
@@ -29,7 +32,13 @@ const $=id=>document.getElementById(id);
 /** Interpret supported boolean representations. */
 const truthy=value=>value===true||value==="True"||value==="true";
 function findingLifecycleLabel(status){return{Open:"Detected",Reopened:"Reopened",DetectionReturned:"Detection returned",PendingConfirmation:"Pending confirmation",PendingVerification:"Pending verification",Fixed:"Confirmed fixed",StaleDevice:"Stale device",OutOfScope:"Out of scope",Unknown:"Unknown evidence"}[status]||status||"Unknown";}
-function findingLifecycleDescription(status){return{Open:"Defender currently reports this vulnerability on the endpoint. It remains open while awaiting remediation or a later Defender reassessment showing it absent.",Reopened:"Defender reports this vulnerability again after it was previously confirmed fixed.",DetectionReturned:"The finding disappeared once but returned before remediation could be confirmed.",PendingConfirmation:"The individual finding was absent from one qualified collection and is awaiting a second collection to confirm the fix.",PendingVerification:"All findings for the device disappeared together, so remediation cannot yet be confirmed.",Fixed:"The finding remained absent through the required confirmation collection and is confirmed fixed.",StaleDevice:"The finding is absent, but the device has not reported recently enough to infer remediation.",OutOfScope:"The device is offboarded, unsupported, or outside the qualified collection scope.",Unknown:"The finding is absent, but machine evidence is insufficient to determine its lifecycle state."}[status]||"Lifecycle state reported by Vulnerability View.";}
+function findingLifecycleDescription(status){return{Open:"Defender currently reports this vulnerability on the endpoint. It remains open until a qualified complete collection shows it absent.",Reopened:"Defender reports this vulnerability again after it was previously counted fixed.",DetectionReturned:"The finding disappeared under an older or explicitly configured confirmation rule, then returned before it counted as fixed.",PendingConfirmation:"Retained evidence is awaiting confirmation under an older or explicitly configured multi-collection rule. The default now counts the first qualified absence as fixed; retained snapshots are not rewritten.",PendingVerification:"The collection or machine evidence is incomplete, so absence does not establish a fix.",Fixed:"The evidence is no longer detected in a qualified complete collection while the machine is active and recently reporting. The default counts it fixed immediately, without another collection. A machine/CVE is fixed only when all its software evidence is gone.",StaleDevice:"The finding is absent, but the device has not reported recently enough to infer remediation.",OutOfScope:"The device is offboarded, unsupported, or outside the qualified collection scope.",Unknown:"The finding is absent, but machine evidence is insufficient to determine its lifecycle state."}[status]||"Lifecycle state reported by Vulnerability View.";}
+function fixRecognitionDescription(){
+  const runs=state.slaPolicy?.lifecycle?.fixedConfirmationRuns;
+  return Number.isInteger(runs)&&runs>1
+    ?`This snapshot uses ${runs} consecutive qualified absent collections before counting a fix.`
+    :"A fix counts at the first complete collection showing it absent on an active, recently reporting machine; no extra collection is required.";
+}
 /** Format a numeric value for display. */
 const fmt=value=>Number(value||0).toLocaleString();
 /** Escape a value for safe HTML rendering. */
@@ -97,7 +106,7 @@ function renderRecentRuns(){
   if(!rows.length){list.innerHTML='<li class="empty">No collection history is available.</li>';return;}
   const statusLabel=status=>status==="PartialSuccess"?"Partial success":status||"Unknown";
   list.innerHTML=rows.map(row=>{
-    const status=statusLabel(row.RunStatus),metrics=Number.isFinite(Number(row.OpenFindings))?`${fmt(row.OpenFindings)} open findings · ${fmt(row.AffectedMachines||0)} machines`:row.RunStatus==="Failed"?"Collection failed":"Collection completed";
+    const status=statusLabel(row.RunStatus),metrics=Number.isInteger(row.ActiveCves)&&Number.isInteger(row.AffectedMachines)?`${fmt(row.ActiveCves)} published unresolved CVEs · ${fmt(row.AffectedMachines)} affected machines`:row.RunStatus==="Failed"?"Collection failed":"Published CVE/machine counts unavailable";
     let explanation="";
     if(["PartialSuccess","Warning"].includes(row.RunStatus)){
       const issues=state.runs.filter(source=>source.DataOrigin===row.DataOrigin&&(row.CollectionRunId?source.CollectionRunId===row.CollectionRunId:(source.SnapshotTimeUtc||source.RunTimeUtc)===row.SnapshotTimeUtc)&&source.RunStatus!=="Success");
@@ -143,7 +152,7 @@ function applyPresentationConfig(){
   document.documentElement.dataset.density=["compact","comfortable"].includes(theme.density)?theme.density:"comfortable";
   const nav=$("primaryNavigation"),buttons=[...document.querySelectorAll(".story-nav button[data-view]")],hidden=new Set(navigation.hidden||[]);
   (navigation.order||[]).forEach(view=>{const button=buttons.find(item=>item.dataset.view===view);if(button)nav.appendChild(button);});
-  buttons.forEach(button=>button.hidden=hidden.has(button.dataset.view));
+  buttons.forEach(button=>{button.hidden=hidden.has(button.dataset.view);button.setAttribute("aria-label",PRIMARY_VIEWS[button.dataset.view]);});
   const firstVisible=buttons.find(button=>!button.hidden),active=buttons.find(button=>button.classList.contains("active")&&!button.hidden);
   if(!active&&firstVisible){buttons.forEach(button=>button.classList.remove("active"));firstVisible.classList.add("active");state.activeView=firstVisible.dataset.view;document.querySelectorAll(".story").forEach(section=>section.classList.toggle("active",section.id===state.activeView));}
   $("severityFilter").value=state.severity;
@@ -168,9 +177,21 @@ function loadDashboardDatasets(){
 }
 
 function initialize(){
+  $("reportingActivitySlot").appendChild($("newActivityBar"));
+  $("returnToPrimary").addEventListener("click",()=>activateView(primaryView));
+  $("dashboardHelp").addEventListener("click",()=>activateView("help"));
+  $("printReporting").addEventListener("click",()=>{
+    if(state.activeView!=="trend"||!dashboardQuery.reportReady){dashboardStatus("Reporting must finish loading successfully before printing.",true);return;}
+    document.body.classList.add("reporting-print");
+    window.addEventListener("afterprint",()=>document.body.classList.remove("reporting-print"),{once:true});
+    window.print();
+  });
+  $("exportReportCsv").addEventListener("click",()=>{void exportDashboardCsv("trend","trendManagementComparisonTable");});
+  $("recommendationCatalogStatus").value=state.recommendationCatalogStatus;
+  $("recommendationCatalogSort").value=state.recommendationCatalogSort;
   for(const key of ["recommendationCatalogStatus","recommendationCatalogSort"])$(key).addEventListener("change",event=>{state[key]=event.target.value;clearSelectedWorkItem();render();});
   $("recommendationWorkspaceFilters").addEventListener("click",event=>{event.stopPropagation();setFilterExpanded(true,true);});
-  $("resetRecommendationCatalog").addEventListener("click",()=>{state.recommendationCatalogStatus="All";state.recommendationCatalogSort="name";$("recommendationCatalogStatus").value="All";$("recommendationCatalogSort").value="name";clearSelectedWorkItem();render();});
+  $("resetRecommendationCatalog").addEventListener("click",()=>{state.recommendationCatalogStatus="Unresolved exposure";state.recommendationCatalogSort="priority";$("recommendationCatalogStatus").value=state.recommendationCatalogStatus;$("recommendationCatalogSort").value=state.recommendationCatalogSort;clearSelectedWorkItem();render();});
   [["severityFilter","severity"],["assetClassFilter","assetClass"],["osTypeFilter","osType"],["subscriptionFilter","subscription"],["teamFilter","team"]].forEach(([id,key])=>$(id).addEventListener("change",event=>{state[key]=event.target.value;render();}));
   $("exposureStatusFilter").addEventListener("change",event=>{state.exposureStatus=event.target.value;render();});
   $("pendingOnlyFilter").addEventListener("click",()=>{state.exposureStatus=state.exposureStatus==="PendingOnly"?"DetectedAndPending":"PendingOnly";$("exposureStatusFilter").value=state.exposureStatus;render();});
@@ -270,8 +291,11 @@ function syncPivotFilterControls(){
 }
 
 function activateView(view,pivotFilters=null){
+  if(view==="sla")view="slaDashboard";
   if(view==="priority"){view="recommendations";state.recommendationCatalogSort="priority";$("recommendationCatalogSort").value="priority";}
-  const button=document.querySelector(`.story-nav button[data-view="${view}"]`),section=$(view);if(!button||!section)return;
+  const section=$(view);if(!section)return;
+  if(PRIMARY_VIEWS[view])primaryView=view;
+  const button=document.querySelector(`.story-nav button[data-view="${primaryView}"]`);
   const viewChanged=state.activeView!==view;
   if(viewChanged||pivotFilters){
     clearSelectedWorkItem();
@@ -283,7 +307,12 @@ function activateView(view,pivotFilters=null){
     }
   }
   document.querySelectorAll(".story-nav button,.story").forEach(node=>node.classList.remove("active"));
-  button.classList.add("active");section.classList.add("active");state.activeView=view;render();
+  button?.classList.add("active");section.classList.add("active");state.activeView=view;
+  $("contextualViewBar").hidden=Boolean(PRIMARY_VIEWS[view]);
+  $("returnToPrimary").textContent=`Back to ${PRIMARY_VIEWS[primaryView]}`;
+  $("contextualViewTitle").textContent={overview:"Vulnerabilities",workstations:"Machines",help:"Dashboard help",executiveSnapshot:"Report preview"}[view]||"";
+  $("newActivityBar").hidden=view!=="trend";
+  render();
   requestAnimationFrame(()=>window.scrollTo(0,0));
 }
 
@@ -354,7 +383,7 @@ function removeWorkspaceFilter(label){
   }
   render();
 }
-function renderScope(){const classLabels={All:"All asset classifications",AzureCloud:"Azure / Cloud",TraditionalIT:"Traditional IT",Unknown:"Unknown classification"},subscriptionScope=state.subscription==="All"?"All subscriptions":state.subscription==="NoSubscription"?"No subscription":`Subscription ${subscriptionLabel(state.subscription)}`,activeButton=document.querySelector(".story-nav button.active"),activeView=activeButton?.dataset.view||state.activeView,typeScope=state.recommendationTypes.size===2?"All recommendation types":[...state.recommendationTypes].join(" + ")||"No recommendation types",domainScope=state.domains.size===5?"All asset domains":[...state.domains].join(" + ")||"No asset domains",parts=[state.severity==="All"?"All severities":state.severity,classLabels[state.assetClass],subscriptionScope],chips=activeFilterItems(classLabels,subscriptionScope,typeScope,domainScope);state.activeView=activeView;if(state.hideNonReporting)parts.push(`Reported within ${state.reportingDays} days`);if(state.team!=="All")parts.push(state.team);if(state.search)parts.push(`Search: “${state.search}”`);$("scopeSummary").textContent=parts.join(" · ");$("severityFilter").value=state.severity;$("activeFilterChips").innerHTML=chips.length?chips.map(([label,value])=>`<button type="button" data-remove-filter="${esc(label)}" aria-label="Remove ${esc(label)} filter: ${esc(value)}"><b>${esc(label)}</b>${esc(value)} <i aria-hidden="true">&times;</i></button>`).join(""):`<span class="empty"><b>Filters</b>None applied</span>`;$("activeFilterChips").querySelectorAll("[data-remove-filter]").forEach(button=>button.addEventListener("click",()=>removeWorkspaceFilter(button.dataset.removeFilter)));const bar=$("scopeBar");bar.classList.remove("scope-updated");requestAnimationFrame(()=>bar.classList.add("scope-updated"));}
+function renderScope(){const classLabels={All:"All asset classifications",AzureCloud:"Azure / Cloud",TraditionalIT:"Traditional IT",Unknown:"Unknown classification"},subscriptionScope=state.subscription==="All"?"All subscriptions":state.subscription==="NoSubscription"?"No subscription":`Subscription ${subscriptionLabel(state.subscription)}`,typeScope=state.recommendationTypes.size===2?"All recommendation types":[...state.recommendationTypes].join(" + ")||"No recommendation types",domainScope=state.domains.size===5?"All asset domains":[...state.domains].join(" + ")||"No asset domains",parts=[state.severity==="All"?"All severities":state.severity,classLabels[state.assetClass],subscriptionScope],chips=activeFilterItems(classLabels,subscriptionScope,typeScope,domainScope);if(state.hideNonReporting)parts.push(`Reported within ${state.reportingDays} days`);if(state.team!=="All")parts.push(state.team);if(state.search)parts.push(`Search: “${state.search}”`);$("scopeSummary").textContent=parts.join(" · ");$("severityFilter").value=state.severity;$("activeFilterChips").innerHTML=chips.length?chips.map(([label,value])=>`<button type="button" data-remove-filter="${esc(label)}" aria-label="Remove ${esc(label)} filter: ${esc(value)}"><b>${esc(label)}</b>${esc(value)} <i aria-hidden="true">&times;</i></button>`).join(""):`<span class="empty"><b>Filters</b>None applied</span>`;$("activeFilterChips").querySelectorAll("[data-remove-filter]").forEach(button=>button.addEventListener("click",()=>removeWorkspaceFilter(button.dataset.removeFilter)));const bar=$("scopeBar");bar.classList.remove("scope-updated");requestAnimationFrame(()=>bar.classList.add("scope-updated"));}
 
 const METRIC_HELP=new Map(Object.entries({
   "Machine vulnerability history":"Dated additions, confirmed clearance, and reopened CVEs on the selected machine. Added means first observed by the collector, not CVE publication. A CVE is confirmed fixed only after all of its in-scope software evidence on that machine is confirmed cleared. Pending evidence is not fixed. Dates use UTC and observed clearance, not exact patch-installation times. History before retained evidence is unavailable.",
@@ -367,8 +396,8 @@ const METRIC_HELP=new Map(Object.entries({
   "Related recommendations":"Distinct recommendations linked to this item's vulnerability evidence in the current filters. One machine can have several recommendations, and one recommendation can address many CVEs on many machines. Select a related recommendation row to open its details.",
   "Machines with detections":"Distinct devices with at least one active exposure in the current filters. Pending-only devices are excluded.",
   "Total observed machine/CVE fixes":"Confirmed fixes plus fixes awaiting confirmation in the selected reporting period. Each CVE counts once per machine, after it has stopped appearing in all affected software on that machine. Pending fixes still count as open risk and are not confirmed SLA completions. A returned detection removes the provisional fix from this total.",
-  "Machine/CVE fixes observed — awaiting confirmation":"Vulnerabilities that stopped appearing on a machine during the selected dates and need another collection to confirm the fix. Each vulnerability counts once per machine, and it must be gone from all affected software on that machine. These fixes are not yet included in completed SLA results. If the vulnerability returns, the fix is no longer counted as waiting for confirmation.",
-  "Confirmed machine/CVE fixes":"Vulnerabilities confirmed gone from all affected software on a machine. Each vulnerability counts once per machine. Normally, two complete collections must show it missing while the machine is still actively reporting. The fix is dated to the first time it was missing, not the later confirmation. Other vulnerabilities may still remain on the machine.",
+  "Machine/CVE fixes observed — awaiting confirmation":"Vulnerabilities awaiting another qualified absence under an older retained or explicitly configured multi-collection rule. The default counts the first qualified absence immediately as fixed. Each vulnerability counts once per machine, and it must be gone from all affected software on that machine. Retained pending evidence remains open and excluded from completed SLA results.",
+  "Confirmed machine/CVE fixes":"Vulnerabilities no longer detected through any affected software on a machine. Each CVE counts once per machine. The default counts the first complete absent collection immediately while inventory is complete and the machine remains active and fresh. No extra collection is required. Other CVEs may still remain on the machine.",
   "Summary":"A snapshot of unresolved CVEs and affected machines in the selected workspace scope. CVEs and machines are counted separately, once each. Open risk is assessed at the snapshot time; clearance and improvement refer to the displayed reporting period. Filters can change all these totals. Dashboard work status does not prove remediation.",
   "Recommendations":"Distinct remediation-action IDs in the filtered catalog, counted once each. One recommendation can address several CVEs on many machines. Its dashboard work status is a manually selected coordination state; exposure, progress, and SLA risk are calculated from collection evidence. Marking an action In progress or Fixed does not itself clear any vulnerability.",
   "Active":"Recommendations whose retained Defender catalog status is Active. This is not a count of active machines, a dashboard In progress marker, a confirmed fix, or an SLA compliance assessment.",
@@ -383,7 +412,7 @@ const METRIC_HELP=new Map(Object.entries({
   "Fully cleared":"A distinct CVE or machine was confirmed completely cleared during the displayed period. A CVE has no remaining affected in-scope machine; a machine has no remaining in-scope CVE. Partial progress and pending confirmation are not full clearance. This is the entity-level equivalent of Fully resolved.",
   "Partially remediated":"Some exposure evidence was confirmed removed during the period, but this recommendation still has unresolved exposure. This is partial progress, not full resolution or proof that every associated CVE has been cleared.",
   "Fully remediated":"Confirmed remediation occurred during the reporting period and this recommendation has no remaining unresolved exposure in the selected scope. Other recommendations or vulnerabilities can still affect the same machines.",
-  "Fix observed — awaiting confirmation":"The vulnerability was absent from a qualified collection and needs a consecutive qualified collection to confirm the fix while the machine remains active and fresh. It is still unresolved and excluded from confirmed SLA completions. A returned detection cancels the provisional fix.",
+  "Fix observed — awaiting confirmation":"An older retained or explicitly configured multi-collection rule still requires another qualified absence. It remains unresolved and excluded from completed SLA. The default now counts the first qualified absence immediately; immutable snapshots keep their original interpretation.",
   "SLA risk status":"Deadline risk calculated from the selected snapshot, independently of dashboard work status. Any overdue unresolved exposure makes the item Overdue. Otherwise missing deadline evidence produces Unknown SLA; known open risk can show No overdue evidence. No remaining risk means no unresolved exposure in the selected scope, not necessarily throughout the tenant.",
   "Current SLA status":"Distinct CVEs and machines assessed separately. Unresolved equals Not yet due plus Overdue plus Deadline unknown. Fully cleared counts confirmed complete clearances in the displayed reporting period. Improved and awaiting-confirmation subsets remain unresolved and can overlap; they are not additional totals.",
   "Unresolved":"Distinct CVEs or machines with any unresolved exposure in the selected scope, including pending confirmation and verification. Each entity is counted once. This equals Not yet due plus Overdue plus Deadline unknown; improved items remain included.",
@@ -490,7 +519,8 @@ function explainedCell(column,value,row){
 }
 function table(id,columns,rows,onClick=false){
   const element=$(id),help=column=>{const description=metricHelp(headerLabel(column));return description?` title="${esc(description)}"`:"";};
-  element.innerHTML=`<thead><tr>${columns.map(column=>`<th${help(column)}>${metricLabel(headerLabel(column))}</th>`).join("")}</tr></thead><tbody>${rows.map((row,index)=>`<tr data-index="${index}">${columns.map(column=>`<td${help(column)}>${explainedCell(column,displayDateTime(column,row[column]),row)}</td>`).join("")}</tr>`).join("")}</tbody>`;
+  const labels={RecommendationSeverity:"Criticality",OverdueCves:"Overdue CVEs",CVEsOverdue:"Overdue CVEs",CveCount:"Distinct CVEs"};
+  element.innerHTML=`<thead><tr>${columns.map(column=>`<th${help(column)}>${metricLabel(labels[column]||headerLabel(column),headerLabel(column))}</th>`).join("")}</tr></thead><tbody>${rows.map((row,index)=>`<tr data-index="${index}">${columns.map(column=>`<td${help(column)}>${explainedCell(column,displayDateTime(column,row[column]),row)}</td>`).join("")}</tr>`).join("")}</tbody>`;
   element.querySelectorAll("a").forEach(link=>link.addEventListener("click",event=>{event.stopPropagation();if(link.classList.contains("recommendation-handoff")){const recommendation=rows[Number(link.closest("tr").dataset.index)];navigator.clipboard?.writeText(`${recommendation.RecommendationName}\nRecommendation ID: ${recommendation.RecommendationId}`).catch(()=>{dashboardStatus(`Copy unavailable. Search Defender for recommendation ${recommendation.RecommendationId}.`);});}}));
   if(onClick){
     const handler=typeof onClick==="function"?onClick:showDetail;
@@ -532,7 +562,7 @@ function printExecutiveSnapshot(){document.body.classList.add("executive-snapsho
 const dashboardQuery={
   snapshot:null,expired:false,scopeKey:"",lastSearch:state.search,searchTimer:null,
   main:{sequence:0,controller:null},detail:{sequence:0,controller:null},
-  tables:new Map(),detailTables:new Map(),lastResponse:null,exportControllers:new Set(),exportSequence:0,
+  tables:new Map(),detailTables:new Map(),lastResponse:null,reportReady:false,exportControllers:new Set(),exportSequence:0,
   responses:new Map(),responseBytes:0
 };
 const dashboardVisualProgress={timer:null,startedAt:null,checks:0};
@@ -659,6 +689,7 @@ function dashboardRequest(view=state.activeView,tableId=null,page=0){
   if(view==="slaDashboard"&&state.slaSummary.status){
     request.filters.slaSummaryStatus=state.slaSummary.status;
     request.filters.slaSummarySeverity=state.slaSummary.severity;
+    request.filters.slaSummaryEntity=state.slaSummary.entity;
   }
   if(state.managementMetric?.view===view){
     request.filters.managementMetricEntity=state.managementMetric.entity;
@@ -669,6 +700,10 @@ function dashboardRequest(view=state.activeView,tableId=null,page=0){
     request.filters.slaComplianceEnd=state.slaCompliance.end;
   }
   request.filters.managementReporting=true;
+  request.filters.simplifiedDashboard=view==="recommendations";
+  if(view==="trend"||(!PRIMARY_VIEWS[state.activeView]&&primaryView==="trend")){
+    request.filters.newPeriod="reporting";
+  }
   request.filters.includeFindingEvidence=false;
   if(tableId?.includes("Management"))request.limit=10;
   if(tableId)request.table=tableId;
@@ -722,6 +757,7 @@ function dashboardBusy(view,busy){
 }
 
 function clearDashboardResults(view){
+  if(view==="trend"){dashboardQuery.reportReady=false;$("printReporting").disabled=true;}
   const root=$(view);
   root?.querySelectorAll("table,.metric-grid,.executive-kpi-grid,.decision-metrics,.donut-panel,.chart,.weekly-chart,.executive-trend-chart,.executive-severity-chart,.executive-concentration-chart,.secure-score-card,.recommendation-impact-grid,.executive-severity-status-grid,.sla-dashboard-visuals,.sla-leadership-snapshot,.sla-compliance-snapshots").forEach(node=>node.innerHTML="");
   root?.querySelectorAll(".server-pagination").forEach(node=>node.remove());
@@ -760,7 +796,7 @@ async function dashboardResponse(response,isCurrent=()=>true){
 
 function dashboardPreparationText(status){
   const progress=status.progress||{},stage=String(progress.failure?.stage||progress.stage||"waiting-for-data");
-  const views={executive:"Summary",overview:"Vulnerabilities",recommendations:"Recommendations",priority:"Prioritize",workstations:"Endpoint assets",sla:"Remediate",slaDashboard:"SLA",trend:"Trends",executiveSnapshot:"Executive snapshot",detail:"Selected item",help:"Help"};
+  const views={...PRIMARY_VIEWS,priority:"Recommendations",sla:"SLA",detail:"Selected item",help:"Help"};
   const phases={tracking:"recommendation workflow state",header:"activity and filter metadata","scope-counts":"finding counts","recommendation-matching":"recommendation matching","recommendation-impact":"recommendation impact totals","recommendation-ranking":"recommendation ranking","recommendation-details":"recommendation evidence","summary":"summary metrics and run comparison",sla:"SLA metrics","shared-clocks":"finding lifecycle dates (first seen, fixed, reopened and SLA due)","period-summaries":"current and previous reporting periods","daily-clocks":"daily finding and remediation trend","weekly-remediation":"weekly remediation totals","workload-and-charts":"workload breakdown and executive charts",report:"report calculations","detail-workloads":"affected workloads","detail-cves":"related CVEs","detail-recommendations":"related recommendations","detail-evidence":"finding evidence page"};
   let action=stage;
   if(stage.startsWith("load-rows:"))action=`Rebuilding ${stage.split(":")[1]} index`;
@@ -831,11 +867,15 @@ function pollDashboardPreparation(){
       notice.textContent=notice.hidden?"":status.status==="ready"
         ?"A newer complete snapshot is ready. Reload to select it; this page remains pinned to its original snapshot."
         :`${status.readySnapshotId?"Serving the previous complete snapshot. ":""}${dashboardPreparationText(status)}`;
+      if(newer&&status.status==="ready"){
+        notice.insertAdjacentHTML("beforeend",'<button id="loadLatestSnapshot" type="button">Load latest snapshot</button>');
+        $("loadLatestSnapshot").addEventListener("click",()=>void startSnapshotDashboard());
+      }
       if(!notice.hidden&&status.status!=="ready")notice.insertAdjacentHTML("beforeend",dashboardPhasePlanMarkup(status.progress,phasesExpanded)+dashboardIndexPlanMarkup(status.progress,expanded));
     }catch(error){
       if(generation!==dashboardPreparationGeneration)return;
       $("dashboardPreparationStatus").hidden=false;
-      $("dashboardPreparationStatus").textContent=error.message||"Preparation status unavailable; retrying automatically.";
+      $("dashboardPreparationStatus").textContent=`Freshness check failed: ${error.message||"status unavailable"}. Displayed charts remain pinned to ${dashboardQuery.snapshot?.snapshotTimeUtc||"the loaded snapshot"}; retrying automatically.`;
     }finally{
       if(generation===dashboardPreparationGeneration)dashboardPreparationTimer=setTimeout(poll,15000);
     }
@@ -920,7 +960,7 @@ function render(){
   invalidateDashboardChannel(dashboardQuery.main);
   dashboardBusy(state.activeView,true);
   $("filterCount").textContent="Loading matching scope…";
-  for(const id of ["newCveCount","newMachineCount","newRecommendationCount","fixedWindowObservationCount","fixedWindowCveCount","fixedWindowMachineCount","fixedWindowRecommendationCount"])$(id).textContent="…";
+  for(const id of ["newCveCount","newMachineCount","newRecommendationCount","fixedWindowCveCount","fixedWindowMachineCount","fixedWindowRecommendationCount"])$(id).textContent="…";
   $("findingsMode").value=findingsList.mode;
   $("findingsSearch").value=$("searchFilter").value=state.search;
   $("pendingOnlyFilter").setAttribute("aria-pressed",String(state.exposureStatus==="PendingOnly"));
@@ -1087,17 +1127,21 @@ function renderDashboardChart(id,chart){
     const series=[["withoutProgress","No recorded fix progress","var(--blue)"],["confirmedProgress","Confirmed progress, still open","var(--cyan)"],["awaiting","Awaiting confirmation","var(--amber)"]];
     const rows=chart.rows||[];
     const count=value=>Number.isSafeInteger(value)&&value>=0;
+    const scanSeries=[["detected","Still detected","var(--blue)"],["awaitingClearance","No longer detected; legacy confirmation pending","var(--amber)"],["verificationRequired","Absent; evidence insufficient to count fixed","var(--muted)"]];
     for(const row of rows){
       if(!["open","resolved"].every(key=>count(row[key]))||!["new","baseline"].every(key=>row[key]===null||count(row[key]))||!series.every(([key])=>count(row.openBreakdown?.[key])))throw new Error("Vulnerability progress counts are incomplete. Retry the dashboard query.");
       if(series.reduce((sum,[key])=>sum+row.openBreakdown[key],0)!==row.open)throw new Error("Unresolved CVE progress counts do not reconcile. Retry the dashboard query.");
+      if(row.scanBreakdown&&(!scanSeries.every(([key])=>count(row.scanBreakdown[key]))||scanSeries.reduce((sum,[key])=>sum+row.scanBreakdown[key],0)!==row.open))throw new Error("Detected and absent CVE counts do not reconcile. Retry the dashboard query.");
     }
     $(id).innerHTML=rows.length?`${rows.map(row=>`<section class="remediation-chart-period"><h4>${esc(row.label)}</h4><p class="coverage-note">${esc(row.start)} to ${esc(row.end)} UTC · ${esc(row.coverage)}</p>
       <p class="coverage-note">Inventory context for this date range: initial inventory (not new) <strong>${row.baseline===null?"Unavailable":fmt(row.baseline)}</strong> · first seen after baseline <strong>${row.new===null?"Unavailable":fmt(row.new)}</strong>.</p>
       <p><strong>${fmt(row.open)} unresolved CVEs at period end</strong></p>
+      ${row.scanBreakdown?`<h5>Detection status</h5>${scanSeries.map(([key,label,color])=>`<div class="remediation-chart-row"><span>${label}</span><div class="remediation-chart-track" aria-hidden="true"><i style="width:${100*row.scanBreakdown[key]/Math.max(1,row.open)}%;background:${color}"></i></div><strong>${fmt(row.scanBreakdown[key])}</strong></div>`).join("")}
+        <p class="remediation-chart-equation">${fmt(row.open)} = ${scanSeries.map(([key])=>fmt(row.scanBreakdown[key])).join(" + ")}. Absent CVEs pending an older confirmation rule are not currently detected, but remain unresolved in this retained snapshot.</p><h5>Supporting-evidence progress</h5>`:""}
       ${series.map(([key,label,color])=>`<div class="remediation-chart-row"><span>${label}</span><div class="remediation-chart-track" aria-hidden="true"><i style="width:${100*row.openBreakdown[key]/Math.max(1,row.open)}%;background:${color}"></i></div><strong>${fmt(row.openBreakdown[key])}</strong></div>`).join("")}
       <p class="remediation-chart-equation">${fmt(row.open)} = ${series.map(([key])=>fmt(row.openBreakdown[key])).join(" + ")}. Each unresolved CVE appears in exactly one group.</p>
-      <p class="coverage-note">Fully cleared during this period: <strong>${fmt(row.resolved)}</strong> CVEs. Partial progress does not reduce the unresolved total.</p></section>`).join("")}
-      <p class="coverage-note">${chart.baselineTimeUtc?`Initial inventory was recorded ${esc(formatUtc(chart.baselineTimeUtc))}; it is not newly introduced risk. `:"Baseline history is unavailable; new versus initial-inventory counts cannot be assessed. "}A CVE with both confirmed progress and pending evidence appears only under awaiting confirmation.</p>
+      <p class="coverage-note">Fully cleared during this period: <strong>${fmt(row.resolved)}</strong> CVEs. Partial progress does not reduce the unresolved total. A still-detected CVE can have some software evidence awaiting confirmation; that is different from the whole CVE no longer being detected.</p></section>`).join("")}
+      <p class="coverage-note">${esc(fixRecognitionDescription())} ${chart.baselineTimeUtc?`Initial inventory was recorded ${esc(formatUtc(chart.baselineTimeUtc))}; it is not newly introduced risk. `:"Baseline history is unavailable; new versus initial-inventory counts cannot be assessed. "}Any retained pending-confirmation evidence stays separate; a CVE with both confirmed progress and pending evidence appears only under awaiting confirmation.</p>
       <details class="remediation-chart-definitions"><summary>Counting and history definitions</summary><p>The three status groups add up to the unresolved total. Confirmed progress means evidence was confirmed removed during the period, but the CVE remains unresolved in this scope. Awaiting confirmation counts CVEs with pending fix evidence at period end, not the entire open inventory. Full clearance requires no unresolved evidence for that CVE anywhere in scope. Initial inventory and later additions are separate historical context, not additional unresolved categories. First seen after baseline uses the earliest retained collector observation in scope, not the date a vulnerability was introduced. Partial history covers retained evidence only.</p></details>`
       :'<p class="coverage-note">No retained observations cover this reporting period; progress is unavailable, not zero.</p>';
     return;
@@ -1279,7 +1323,7 @@ function slaLeadershipSnapshot(current,periodLabel){
       const values=current[entity];
       return chart(`${unit==="CVEs"?"CVEs":"Machines"} fully cleared`,[values.completedWithin,values.completedLate,values.completedUnknown],["Cleared on time","Cleared late","Clearance deadline unknown"],["#21835b","#bb3e4c","#8694a0"],unit,true);
     }).join("")}</div>
-    <p class="coverage-note">Clearance charts use retained confirmed evidence only, not a count of patches installed. Fully cleared means confirmation is complete; fixes awaiting confirmation are not fully cleared. Unknown deadlines are excluded from the on-time percentage. Backlog and period clearances are different measures, not slices of one combined total.</p>
+    <p class="coverage-note">${esc(fixRecognitionDescription())} Fully cleared means no unresolved CVE evidence remains in scope, not a count of patches installed. Incomplete collections and stale or missing machines do not count as fixes. Unknown deadlines are excluded from the on-time percentage. Backlog and period clearances are different measures, not slices of one combined total.</p>
   </section>`;
 }
 
@@ -1332,7 +1376,7 @@ function renderSimpleSla(summary){
     <div class="panel-title"><h2>SLA by severity — open and fixed</h2><span>Machine/CVE pairs</span></div>
     <p>Open at the current snapshot; confirmed fixes during ${esc(summary.label)} (${esc(summary.start)} to ${esc(summary.end)} UTC).</p>
     <div class="table-wrap"><table><thead><tr><th scope="col">Severity</th><th scope="col">Still open</th><th scope="col">Confirmed fixed</th><th scope="col">Open deadline status (not fixed)</th><th scope="col">Confirmed fixed on-time % (count)</th><th scope="col">Pending confirmation</th><th scope="col">Deadline unknown</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="coverage-note">One CVE on three machines counts as three machine/CVE pairs; software versions do not multiply counts. Pending fixes remain open.
+    <p class="coverage-note">${esc(fixRecognitionDescription())} One CVE on three machines counts as three machine/CVE pairs; software versions do not multiply counts. Pending fixes remain open under an older or explicitly configured confirmation rule.
       Open counts describe remaining risk, never successful remediation. On-time percentages assess confirmed fixes only. Unknown deadlines are excluded, never compliant by default. Click any count or percentage for its evidence.</p>
     ${summary.coverage==="complete"?"":'<p class="coverage-note">Incomplete retained history: current open status is available, but fixes cover retained observations only, not necessarily the entire month.</p>'}
   </article>`;
@@ -1347,64 +1391,57 @@ function renderSimpleSla(summary){
 
 function renderSlaDashboard(report){
   if(report?.unit!=="distinct-entities"||report.periods?.length!==5||report.periods.some(period=>!period.cves||!period.machines))throw new Error("The SLA dashboard response is incomplete. Retry after the Web App update is complete.");
-  const [current,week,previousWeek,month,previousMonth]=report.periods;
-  const currentRange=`${current.start} - ${current.end} UTC`,history=report.history;
-  const entities=[["cves","CVEs","Distinct unresolved CVEs"],["machines","machines","Affected machines"]];
-  $("slaDashboardContext").textContent=`Snapshot: ${formatUtc(report.asOfUtc)}. CVEs and machines are counted separately, once each. Software products and versions are supporting evidence, not additional vulnerabilities.`;
-  const target=Number(state.slaPolicy?.complianceTargetPercent);
-  renderSimpleSla(report.machineCveSummary);
+  const [current,week,previousWeek,month,previousMonth]=report.periods,range=`${current.start} to ${current.end} UTC`;
+  const entities=[["cves","CVEs"],["machines","machines"]];
+  $("slaDashboardContext").textContent=`Snapshot: ${formatUtc(report.asOfUtc)}. Open status is current; full clearances cover ${range}. CVEs and machines are counted separately.`;
+  $("slaDashboardSummary").hidden=true;
+  $("slaSummaryDetails").hidden=!state.slaSummary.status;
+  const link=(entity,status,value)=>`<button type="button" class="sla-summary-link" data-sla-summary-severity="All" data-sla-summary-status="${status}" data-sla-summary-entity="${entity}">${fmt(value)}</button>`;
+  const row=(entity,fixed)=>{
+    const values=current[entity];
+    return `<tr><th scope="row">${entity==="cves"?"Distinct CVEs":"Machines"}</th>
+      ${fixed?`<td>${link(entity,"FixedWithin",values.completedWithin)}</td><td>${link(entity,"FixedLate",values.completedLate)}</td><td>${link(entity,"FixedUnknown",values.completedUnknown)}</td><td>${link(entity,"Fixed",values.confirmedFixes)}</td>`
+        :`<td>${link(entity,"OpenWithin",values.openWithin)}</td><td>${link(entity,"OpenOverdue",values.openOverdue)}</td><td>${link(entity,"OpenUnknown",values.unknownOpen)}</td><td>${link(entity,"Open",values.totalOpen)}</td>`}
+      ${fixed?`<td>${esc(slaCompletionAssessment(values.completionPercent,values.confirmedFixes,entity==="cves"?"CVEs":"machines"))}</td>`:""}</tr>`;
+  };
   $("slaDashboardVisuals").innerHTML=`
+    <article class="panel"><div class="panel-title"><h2>Still open</h2><span>Current snapshot</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Unit</th><th>Not yet due</th><th>Overdue</th><th>Deadline unknown</th><th>Total open</th></tr></thead><tbody>${row("cves",false)}${row("machines",false)}</tbody></table></div>
+      <p class="coverage-note">Not yet due + overdue + deadline unknown = total open. Not yet due is not a fix. Partial progress and retained pending evidence remain open.</p>
+    </article>
+    <article class="panel"><div class="panel-title"><h2>Fully cleared</h2><span>${esc(current.label)}: ${esc(range)}</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Unit</th><th>Within SLA</th><th>Late</th><th>Deadline unknown</th><th>Total cleared</th><th>Completion assessment</th></tr></thead><tbody>${row("cves",true)}${row("machines",true)}</tbody></table></div>
+      <p class="coverage-note">A CVE clears only when no in-scope machine remains vulnerable. A machine clears only when no in-scope CVE remains open. No full clearances means N/A, not 100%. Unknown deadlines are excluded from the on-time rate.</p>
+    </article>
     ${unresolvedSeveritySnapshot(current)}
-    ${slaLeadershipSnapshot(current,`${current.label}: ${currentRange}${current.coverage==="complete"?"":" (partial retained coverage)"}`)}
-    <div class="sla-hero-grid">
-      ${entities.map(([entity,unit,title])=>{const values=current[entity];return `<article class="panel sla-hero-card">
-        <div><h3>${metricLabel(title,"Unresolved")}</h3><p>Current snapshot</p><strong class="sla-hero-count">${fmt(values.totalOpen)} ${unit}</strong>
-          ${slaDashboardStack([values.openWithin,values.openOverdue,values.unknownOpen],["not yet due","overdue","deadline unknown"],["sla-status-within","sla-status-overdue","sla-status-unknown"],`Unresolved ${unit}`)}
-          <p>Not yet due does not mean remediated. Pending fixes remain unresolved.</p>
-          <p>${fmt(values.awaitingConfirmation)} ${unit} with fixes awaiting confirmation; included above.</p></div>
-      </article>`;}).join("")}
-    </div>
-    <div class="sla-headline-grid">
-      ${entities.map(([entity,unit])=>{const values=current[entity];return `
-        <article><strong>${fmt(values.confirmedFixes)}</strong><span>${metricLabel(`${unit} fully cleared this month`)}</span>
-          <small>${esc(currentRange)}</small><p>${fmt(values.completedWithin)} on time · ${fmt(values.completedLate)} late · ${fmt(values.completedUnknown)} deadline unknown</p>
-          <small>${esc(slaCompletionAssessment(values.completionPercent,values.confirmedFixes,unit))}.</small></article>
-        <article><strong>${fmt(values.improved)}</strong><span>${metricLabel(`${unit} improved, still unresolved`)}</span><small>Confirmed partial clearance this month; included in unresolved counts.</small></article>`;}).join("")}
-    </div>
-    ${entities.map(([entity,unit])=>`<article class="panel sla-severity-panel"><div class="panel-title"><h3>${entity==="cves"?"Distinct CVEs":"Affected machines"} by severity</h3><span>Each ${entity==="cves"?"CVE":"machine"} appears once, at its highest unresolved severity</span></div>
-      <div class="sla-severity-visuals">${current[entity].severity.map(row=>`<section class="sla-severity-card severity-${esc(row.label.toLowerCase())}">
-        <div class="sla-severity-heading"><button type="button" class="cve-link" data-vulnerability-severity="${esc(row.label)}">${esc(row.label)}</button><strong>${fmt(row.totalOpen)} ${unit}</strong></div>
-        <small>${esc(slaPolicyTarget(row.label))}</small>
-        ${slaDashboardStack([row.openWithin,row.openOverdue,row.unknownOpen],["not yet due","overdue","deadline unknown"],["sla-status-within","sla-status-overdue","sla-status-unknown"],`${row.label} unresolved ${unit}`)}
-        <p>${fmt(row.confirmedFixes)} ${unit} fully cleared this month · ${fmt(row.completedWithin)} on time · ${fmt(row.completedLate)} late · ${fmt(row.completedUnknown)} deadline unknown</p>
-        <p>${esc(slaCompletionAssessment(row.completionPercent,row.confirmedFixes,unit))}.</p>
-        <small>${fmt(row.improved)} improved but still unresolved; ${fmt(row.awaitingConfirmation)} with fixes awaiting confirmation. These subsets may overlap.</small>
+    ${slaLeadershipSnapshot(current,`${current.label}: ${range}${current.coverage==="complete"?"":" (partial retained coverage)"}`)}
+    ${entities.map(([entity,unit])=>`<article class="panel sla-severity-panel"><div class="panel-title"><h3>${entity==="cves"?"Distinct CVEs":"Affected machines"} by severity</h3><span>Each entity appears once, at its highest unresolved severity</span></div>
+      <div class="sla-severity-visuals">${current[entity].severity.map(value=>`<section class="sla-severity-card severity-${esc(value.label.toLowerCase())}">
+        <div class="sla-severity-heading"><button type="button" class="cve-link" data-vulnerability-severity="${esc(value.label)}">${esc(value.label)}</button><strong>${fmt(value.totalOpen)} ${unit}</strong></div>
+        <small>${esc(slaPolicyTarget(value.label))}</small>
+        ${slaDashboardStack([value.openWithin,value.openOverdue,value.unknownOpen],["not yet due","overdue","deadline unknown"],["sla-status-within","sla-status-overdue","sla-status-unknown"],`${value.label} unresolved ${unit}`)}
+        <p>${fmt(value.confirmedFixes)} ${unit} fully cleared this month · ${fmt(value.completedWithin)} on time · ${fmt(value.completedLate)} late · ${fmt(value.completedUnknown)} deadline unknown</p>
+        <p>${esc(slaCompletionAssessment(value.completionPercent,value.confirmedFixes,unit))}.</p>
+        <small>${fmt(value.improved)} improved but still unresolved; ${fmt(value.awaitingConfirmation)} with fixes awaiting confirmation. These subsets may overlap.</small>
       </section>`).join("")}</div>
     </article>`).join("")}
     <div class="sla-calendar-grid">
       ${slaCalendarComparison("Week over week",week,previousWeek)}
       ${slaCalendarComparison("Month over month",month,previousMonth)}
     </div>
-    <aside class="sla-coverage-note">
-      <strong>${metricLabel("History coverage")}</strong>
-      <p>${history?.startUtc?`Retained history begins ${esc(formatUtc(history.startUtc))}; ${fmt(history.snapshots)} recorded snapshots.`:"Retained run-history coverage is unavailable."}
-        ${current.coverage==="complete"?"The month-to-date period is covered.":"Month-to-date completion counts cover retained observations only, not a complete month."}
-        Calendar comparisons require coverage from the beginning of each full period; otherwise they show Waiting for data, not zero.</p>
-      <p>Weeks run Monday through Sunday in UTC. Months run from the first through the last day. The current partial week and month are not used in calendar comparisons. Earlier status is reconstructed from retained lifecycle timestamps.</p>
-      ${report.coverageGap?"<p>Some evidence has no machine or CVE identifier. Only identifiable entities are counted; incomplete evidence can limit remediation assessment.</p>":""}
-    </aside>
-    <details class="sla-dashboard-definitions"><summary>SLA policy and percentage definitions</summary>
+    <details class="sla-dashboard-definitions"><summary>Criticality, deadlines, fix recognition and coverage</summary>
       <div class="sla-policy-chips">${["Critical","High","Medium","Low"].map(severity=>`<span><b>${severity}</b>${esc(slaPolicyTarget(severity))}</span>`).join("")}</div>
-      <p>Each CVE is counted once across all in-scope machines. Each machine is counted once across all in-scope CVEs. Counts are not multiplied by their relationships or software evidence. Severity uses the highest unresolved severity; fully cleared entities use the highest retained severity.</p>
-      <p>A CVE is fully cleared only when no in-scope machine remains vulnerable to it. A machine is fully cleared only when no in-scope CVE remains unresolved. Partial clearance is improved, not fully cleared. Pending fixes remain unresolved until confirmed.</p>
-      <p>An unresolved CVE or machine is overdue if any of its unresolved vulnerabilities is overdue; otherwise it is deadline unknown if any deadline is missing, or not yet due. These categories are mutually exclusive. Not yet due does not mean remediated.</p>
-      <p>Full clearance is late if any constituent vulnerability was cleared late; otherwise unknown if any deadline or completion time is missing, or on time. On-time assessment excludes unknown deadlines, never counts them as success, and is unavailable without assessed full clearances. Calendar changes are entity counts, not percentage points.</p>
-      ${target>0&&target<=100?`<p>Configured completion target: ${esc(slaDashboardPercent(target))}.</p>`:""}
-      <p>The SLA clock starts at the collector's first observation on the machine, not CVE publication or a task due date. Each machine/CVE uses its earliest applicable recorded deadline. Completion on or before that deadline is on time. Existing deadlines do not restart when policy changes.</p>
-      <p>A first qualified absence is an observed fix; a consecutive qualified collection confirms it. Confirmation is dated to the first qualified absence. Returned detections revoke unconfirmed fixes. Offline or stale devices do not qualify.</p>
-      <p>The shared workspace filters apply. As with other SLA summaries, exposure-state, activity-window, and changed-since-last-run toggles do not hide unresolved risk from the SLA assessment.</p>
+      <p>${esc(fixRecognitionDescription())} Missing or stale machines and incomplete collections do not qualify. Retained snapshots keep their original policy.</p>
+      <p>The earliest applicable machine/CVE deadline is preserved. Any overdue constituent makes an open entity overdue; otherwise any unknown deadline makes it unknown. For full clearances, late takes precedence over unknown, then on time.</p>
+      <p>${current.coverage==="complete"?"The month-to-date period is covered.":"Partial retained coverage: clearances cover retained observations only, not necessarily the entire month."} ${report.history?.startUtc?`History begins ${esc(formatUtc(report.history.startUtc))}.`:"History coverage is unavailable."} Calendar comparisons require coverage from the beginning of each completed UTC period; unavailable periods are not zero.</p>
+      ${report.coverageGap?"<p>Some evidence is missing machine or CVE identifiers and cannot be counted as an identifiable entity.</p>":""}
     </details>`;
   bindSeverityVulnerabilityLinks("slaDashboardVisuals");
+  $("slaDashboardVisuals").querySelectorAll("[data-sla-summary-status]").forEach(button=>button.addEventListener("click",()=>{
+    state.slaSummary={severity:"All",status:button.dataset.slaSummaryStatus,entity:button.dataset.slaSummaryEntity};
+    render();
+  }));
+  $("slaSummaryContext").textContent=state.slaSummary.status?`${state.slaSummary.entity==="cves"?"Distinct CVEs":"Machines"} · ${state.slaSummary.status} · workspace filters and pinned snapshot preserved.`:"";
 }
 
 function renderDashboardResponse(payload,view,tableId){
@@ -1423,9 +1460,12 @@ function renderDashboardResponse(payload,view,tableId){
     $("recommendationCatalogControls").hidden=activityMode;
     $("recommendationCatalogContext").textContent=activityMode
       ?"Recommendations linked to the selected activity evidence. One row per recommendation ID, including retained evidence without a current catalog entry. Open a recommendation for its dated observations."
-      :"One action catalog for search, filters, and priority ranking. Priority sorting puts actions with unresolved exposure first, then orders by severity, Defender score, affected machines, and unique CVEs.";
+      :"Unresolved actions first, ranked by criticality, known exploit, overdue CVEs, affected machines, and distinct CVEs. Work status is coordination, not proof of a fix.";
   }
   if(view==="slaDashboard")renderSlaDashboard(payload.metadata?.slaDashboard);
+  if(view==="jobHistory"){
+    $("jobHistoryRecognition").textContent=fixRecognitionDescription()+" Windows Update status does not establish that third-party software is patched. A machine is fully cleared only when no unresolved CVE remains.";
+  }
   if(["slaDashboard","executiveSnapshot"].includes(view)){
     renderComplianceSnapshots(view,view==="slaDashboard"?payload.metadata?.slaDashboard?.compliancePeriods:payload.metadata?.management?.sla?.compliancePeriods);
   }
@@ -1453,13 +1493,14 @@ function renderDashboardResponse(payload,view,tableId){
       ?`${fmt(slaCurrent.cves.totalOpen)} distinct unresolved CVEs · ${fmt(slaCurrent.machines.totalOpen)} affected machines`
       :management
       ?`${fmt(management.machines.Open)} machines with open risk · ${fmt(management.cves.Open)} unique open CVEs · ${fmt(management.recommendations.Open)} open recommendations`
-      :`${fmt(scope.detectedCves)} detected CVEs · ${fmt(scope.pendingCves)} CVEs awaiting verification · ${fmt(scope.recommendations)} recommendations`;
+      :`${fmt(scope.detectedCves)} detected CVEs · ${fmt(scope.pendingCves)} CVEs with some pending evidence (can overlap detected) · ${fmt(scope.recommendations)} recommendations`;
     // Scope text/chips use only the serialized filters, not the unloaded findings.
     renderScope();
-    const activityIds={newCves:"newCveCount",newMachines:"newMachineCount",newRecommendations:"newRecommendationCount",fixedFindings:"fixedWindowObservationCount",fixedCves:"fixedWindowCveCount",fixedMachines:"fixedWindowMachineCount",fixedRecommendations:"fixedWindowRecommendationCount"};
+    const activityIds={newCves:"newCveCount",newMachines:"newMachineCount",newRecommendations:"newRecommendationCount",fixedCves:"fixedWindowCveCount",fixedMachines:"fixedWindowMachineCount",fixedRecommendations:"fixedWindowRecommendationCount"};
     const comparisonUnavailable=state.newPeriod==="runs"&&!payload.metadata?.activityComparison?.available;
     for(const [key,id] of Object.entries(activityIds))$(id).textContent=comparisonUnavailable?"N/A":fmt(payload.activity?.[key]);
-    const range=newPeriodRange();
+    const reportingWindow=payload.metadata?.activityWindow;
+    const range=reportingWindow?{start:Date.parse(reportingWindow.startUtc),end:Date.parse(reportingWindow.endUtc),label:"Observed activity in the selected reporting period",exclusiveStart:reportingWindow.exclusiveStart}:newPeriodRange();
     $("newActivityTitle").textContent=range?`${state.newPeriodFilter?"Filtering newly observed vulnerabilities · ":state.remediationPeriodFilter?"Filtering remediation observations · ":""}${range.label}`:comparisonUnavailable?"Run comparison unavailable":"Choose a valid custom range";
     $("newActivityContext").textContent=range?`${range.exclusiveStart?"After ":""}${formatUtc(range.start)} through ${formatUtc(range.end)} · counts use first-seen or remediation-observed timestamps inside this UTC window`:comparisonUnavailable?"Two comparable successful or partial runs are required. No daily-window fallback is being shown.":"The custom start date must not be after the end date.";
     $("availabilityItems").innerHTML=`<span class="header-status-item available"><i aria-hidden="true"></i><strong>Pinned snapshot</strong><span>${esc(dashboardQuery.snapshot.runId||dashboardQuery.snapshot.snapshotId)}</span></span>`;
@@ -1471,13 +1512,28 @@ function renderDashboardResponse(payload,view,tableId){
     $("executiveSnapshotGenerated").textContent=`Pinned snapshot: ${formatUtc(dashboardQuery.snapshot.snapshotTimeUtc)}`;
   }
   for(const [id,chart] of Object.entries(payload.charts||{}))renderDashboardChart(id,chart);
+  if(view==="trend"){
+    $("reportingScope").textContent=`Scope: ${$("scopeSummary").textContent} · ${state.origin} origin · OS: ${state.osType} · Domains: ${[...state.domains].join(", ")} · Recommendation types: ${[...state.recommendationTypes].join(", ")}`;
+    dashboardQuery.reportReady=Boolean(payload.tables?.trendManagementComparisonTable);
+    $("printReporting").disabled=!dashboardQuery.reportReady;
+  }
+  const detailPanel=$(view+"ManagementDetail");
+  if(detailPanel){
+    const selected=state.managementMetric?.view===view?state.managementMetric.table:null;
+    detailPanel.hidden=!selected;
+    detailPanel.querySelectorAll("[data-management-table]").forEach(section=>section.hidden=section.dataset.managementTable!==selected);
+  }
   if(!tableId&&state.managementMetric?.view===view)$(state.managementMetric.table)?.scrollIntoView({behavior:"smooth",block:"center"});
+  if(state.managementMetric?.view===view){
+    const details=$(state.managementMetric.table)?.closest("details");
+    if(details)details.open=true;
+  }
   if(!tableId&&view==="slaDashboard"&&state.slaSummary.status)$("slaSummaryDetails").scrollIntoView({behavior:"smooth",block:"center"});
 }
 
 function ensureManagementReport(view){
   const root=$(view+"Management");
-  if(root)root.hidden=view==="overview"&&(state.newPeriodFilter||state.remediationPeriodFilter||state.latestRunChangesOnly);
+  if(root)  root.hidden=view==="overview";
   if(!root||root.dataset.initialized)return;
   root.dataset.initialized="true";
   const prefix=view+"Management";
@@ -1504,10 +1560,9 @@ function ensureManagementReport(view){
       <div id="${prefix}LeadershipSnapshot"></div>
       <p class="coverage-note">Full clearance, partial progress, and pending fixes are separate.
         A CVE is fully cleared only when no in-scope machine remains vulnerable; a machine is fully cleared only when no in-scope CVE remains unresolved.
-        Day-over-day progress appears at the first qualified absence as <strong>Fix observed — awaiting confirmation</strong>.
-        Another consecutive qualified collection confirms the fix; a returned detection revokes it.
-        Offline devices or disappearance of the entire device vulnerability feed do not qualify.
-        Provisional fixes remain in open risk and are excluded from completed SLA outcomes.
+        ${esc(fixRecognitionDescription())}
+        Missing or stale devices and incomplete collections do not qualify.
+        Retained pending evidence remains in open risk and is excluded from completed SLA outcomes.
         Confirmed fixes are attributed to the first qualified absence, not the confirmation date.
         This measures observed clearance, not the exact patch-installation time.</p>
       <div id="${prefix}Severity" class="management-severity"></div>
@@ -1546,6 +1601,10 @@ function ensureManagementReport(view){
         <details class="management-detail"${key==="Recommendation"?" open":""}><summary>${label}: status and progress${metricHelpButton("Status and progress")}</summary>
           <div class="table-wrap"><table id="${prefix}${key}Table"></table></div>
         </details>`).join("")}`}
+      ${view==="executive"?`<section id="${prefix}Detail" class="panel" hidden>
+        <div class="panel-title"><h3>Records behind the selected count</h3></div>
+        ${[["Machine","Machines"],["Cve","CVEs"],["Recommendation","Recommendations"]].map(([key,label])=>`<section data-management-table="${prefix}${key}Table" hidden><h4>${label}</h4><div class="table-wrap"><table id="${prefix}${key}Table"></table></div></section>`).join("")}
+      </section>`:""}
     </section>`;
 }
 
@@ -1575,9 +1634,7 @@ function renderManagementSla(view,sla){
         <span class="sla-outcome-unknown">${fmt(values.completedUnknown)} clearance deadline unknown</span>
       </div><p class="sla-outcome-rate">${esc(slaCompletionAssessment(values.completionPercent,values.confirmedFixes,unit))}.</p></section>`;
     }).join("")}
-    <span>Confirmation requires consecutive qualified collections while the device is active and fresh.
-      Confirmed clearance is dated to the first qualified absence, not the later confirmation cycle.
-      A returned detection cancels an unconfirmed fix. Observation dates are not exact patch-installation timestamps.</span>
+    <span>${esc(fixRecognitionDescription())} Observation dates are not exact patch-installation timestamps.</span>
     <span>Existing recorded deadlines remain in force; this deployment does not restart the SLA clock.
       Tracking updates when a new successful collection supplies evidence. Results are assessed at the pinned snapshot time.</span>
     ${history?.startUtc?`<span>Retained history begins ${esc(formatUtc(history.startUtc))} · ${fmt(history.snapshots)} recorded snapshots. Earlier CVE catalog dates are not machine-observation history.</span>`:"<span>Retained run-history coverage is unavailable; long-term SLA performance cannot be established.</span>"}
@@ -1626,10 +1683,10 @@ function prepareDashboardDetail(payload){
   $("machineRemediation").hidden=!machine;
   if(machine){
     const progress=payload.metadata?.machineRemediation;
-    const breakdown=progress?.openBreakdown;
+    const breakdown=progress?.openBreakdown,scan=progress?.scanBreakdown;
     $("machineCveStatus").value=state.machineCveStatus;
     $("machineRemediationProgress").innerHTML="";
-    $("machineCveCounts").textContent=breakdown?`${fmt(progress.Open)} unresolved total: ${fmt(breakdown.withoutProgress)} with no recorded fix progress · ${fmt(breakdown.confirmedProgress)} with confirmed progress · ${fmt(breakdown.awaiting)} awaiting confirmation. ${fmt(progress.resolved)} fully cleared this period.`:progress?"Unresolved status breakdown unavailable. Reload after the Web App update.":"";
+    $("machineCveCounts").textContent=scan?`${fmt(progress.Open)} unresolved = ${fmt(scan.detected)} still detected + ${fmt(scan.awaitingClearance)} no longer detected, awaiting legacy confirmation + ${fmt(scan.verificationRequired)} requiring verification. ${fmt(progress.resolved)} fully cleared this period.`:breakdown?`${fmt(progress.Open)} unresolved total: ${fmt(breakdown.withoutProgress)} with no recorded fix progress · ${fmt(breakdown.confirmedProgress)} with confirmed progress · ${fmt(breakdown.awaiting)} awaiting confirmation. ${fmt(progress.resolved)} fully cleared this period.`:progress?"Unresolved status breakdown unavailable. Reload after the Web App update.":"";
     $("machineRemediationContext").textContent=progress
       ?`${progress.label}: ${progress.start} to ${progress.end} UTC. The CVE list includes this machine's unresolved exposure even when opened from an activity count; workspace scope is preserved. Confirmed fixes are limited to this reporting period.`
       :"Machine remediation status unavailable. Update the Web App and reload this snapshot.";

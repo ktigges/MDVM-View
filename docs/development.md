@@ -341,21 +341,12 @@ Viewer read-model, filter-rollup, and prepared-response identities are advanced
 when these calculations change; retained collection evidence and published
 query indexes are not rewritten.
 
-Summary contains only current machine/CVE headline totals, their severity
-breakdowns, observed/confirmed fix activity, a new/fixed/open CVE comparison,
-and a compact SLA-by-severity status table. It does not show
-compliance percentages, period comparison tables, or detailed
-remediation tables. Detailed SLA analysis remains in Executive Snapshot,
-Reporting, and Remediate. The compact table separates open-within-deadline,
-open-overdue, completed-on-time, completed-late, and unknown-deadline outcomes.
-These categories are disjoint; known overdue/late evidence takes precedence
-over missing deadlines. Unknown combines open and completed unassessed outcomes;
-verification-pending evidence stays open. Completions use the report period,
-while open status uses its pinned endpoint.
+Summary contains current machine/CVE headline totals, overdue CVEs, period
+full clearances, and severity breakdowns. Exact entity rows are loaded through
+count actions, not repeated as always-open remediation tables. Detailed SLA
+analysis is in SLA; activity and period movement are in Reporting.
 
-The detailed SLA, Executive Snapshot, Vulnerabilities, and Reporting panels
-retain completion percentages and period movement. The
-headline severity panels show machines/workload instances first, then unique
+The Summary severity panels show machines/workload instances first, then unique
 CVEs, each classified once at its highest remaining severity in the selected
 scope: Critical, High, Medium, Low. Unknown severity is separate, never silently
 classified Low. Machine totals are distinct device IDs, not collapsed workload
@@ -363,16 +354,69 @@ groups. SLA outcomes are separate from vulnerability severity; there is no
 red/yellow/green rating or `ExecutiveStatus` field. SLA deadlines do not reset
 on deployment; new collection evidence updates tracking at each pinned snapshot.
 
-The dedicated SLA page starts with a compact machine/CVE-pair severity summary,
-reusing `build_sla` outcomes without recalculating lifecycle or policy decisions.
-Its `machineCveSummary` metadata is independent of calendar-history availability:
-open status is current; month-to-date fixes explicitly report partial coverage.
-Summary drilldowns use the same pair projection and predicates as the counts,
-including open deadline counts, confirmed-fix percentages, and explicit unknown deadlines.
-Open deadline status is labeled not yet due or overdue, not completed SLA.
-With no confirmed fixes with known deadlines, completion is N/A, never 100%.
-CSV exports use those identical predicates. The distinct-entity reports remain
-separate below it.
+Primary navigation includes Summary, Vulnerabilities, Recommendations, Machines,
+SLA, Reporting, Executive View, and Job history. Prioritization has no separate destination;
+priority ranking remains in Recommendations. Help remains contextual with a
+return action to its originating workspace. Contextual navigation never
+overwrites the actual active story with the highlighted parent menu item.
+Temporary pivot filters restore on return; manual workspace filters remain.
+
+Job history checks `opening + added - removed = closing` independently for
+distinct CVEs and affected machines in retained published run summaries. Baselines
+are initial inventory, not new risk. Origins and history-start lineages never mix;
+failed runs do not become opening balances. Missing metrics are unavailable, not
+zero, and nonzero differences are visible mismatches. Historical totals are
+whole-source counts affected only by the origin filter; the separate pinned
+snapshot checks use the workspace scope and validate entity/SLA/detection
+partitions. An unfiltered single-source scope also compares published ending
+totals against the independently queried current CVE and machine totals.
+Both checks and run/endpoint tables have matching paginated CSV exports.
+Removal from a published unresolved set can include scope exits and is not proof
+of a qualified fix. Raw removal activity is labeled accordingly. Unpublished or
+timed-out Durable jobs are not present in this retained snapshot history.
+Endpoint durations are not end-to-end job durations.
+
+Summary contains entity status, remediation progress, severity and SLA charts; Secure Score is
+optional supporting information. Recommendations defaults to unresolved
+actions ordered by criticality, known exploit evidence, distinct overdue CVEs,
+affected machines, and distinct CVEs, with Defender score as a later tie-breaker.
+Its compact columns separate observed exposure from manual work status.
+Risk fields use scoped evidence even when aggregate/cube impact is attached.
+
+SLA contains open and fully-cleared breakdowns, severity and clearance charts,
+compliance-period snapshots, and completed-calendar comparisons. Each has distinct CVE
+and machine rows, never machine/CVE-pair headline totals. Its count links and
+CSV use the exact entity assessment projection used for the displayed totals.
+Open status is current; clearances cover month to date with retained coverage
+explicitly identified. No full clearances means no completion assessment, not
+100%. Unknown deadlines are excluded from the on-time denominator.
+
+Changed evidence IDs do not prove remediation. Management calculations suppress
+fixed/pending progress for an old ID when the same machine/CVE/software/version
+is continuously detected under another ID by the alleged disappearance time.
+Original evidence and SLA deadlines are retained. Different software versions
+and genuine disappearance/reappearance intervals are not suppressed.
+Detection-status charts distinguish still-detected CVEs, fully absent CVEs
+awaiting a retained multi-collection rule, and insufficient verification.
+These exclusive counts reconcile to unresolved risk; pending software evidence
+on a still-detected CVE is not the same as the whole CVE being absent.
+
+Reporting owns period comparisons, the observed-activity tiles, and Print /
+Save PDF plus report CSV. Its single period selector also supplies the activity
+window and contextual activity queries; reporting dates participate in header
+and read-model cache identities. Latest-run comparisons retain an exclusive
+previous boundary. Print uses the successfully loaded Reporting content, not
+an unloaded legacy Executive Snapshot. CSV exports all matching comparison
+rows; entity and activity tables retain their own full-scope CSV actions.
+
+Fix recognition defaults to the first qualified absence (`fixedConfirmationRuns=1`).
+All collection/replay/continuation paths pass endpoint completeness into
+reconciliation: device inventory and full or reconstructed-delta vulnerability
+collection must succeed before absent evidence can become fixed. Fresh active
+machines can have zero remaining detections; that no longer forces an
+additional corroboration run. Missing/stale/offboarded devices remain distinct
+from fixes. Dashboard explanations distinguish the default from the frozen
+multi-collection policy of older snapshots, which are not rewritten.
 
 Management-card actions select the counted entity/status table, not a broader
 list. Activity-window details retain the actual evidence scope rather than
@@ -386,7 +430,7 @@ Machine activity detail additionally includes a separate full-scope CVE status
 list, so activity filtering never conceals that machine's other unresolved CVEs.
 The original activity evidence and exports retain their activity scope.
 
-Summary, SLA, Remediate, Reporting, and Executive Snapshot include an unresolved
+Reporting and machine details include an unresolved
 CVE breakdown for each stated reporting period. Its three groups are mutually
 exclusive: no recorded fix progress, confirmed progress but still unresolved,
 and awaiting confirmation. Pending confirmation takes precedence when a CVE

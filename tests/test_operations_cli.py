@@ -178,7 +178,7 @@ def test_console_watch_telemetry_failure_does_not_override_authoritative_status(
     captured = capsys.readouterr()
     assert "logs unavailable: Telemetry permission denied" in captured.out
     if timed_out:
-        assert "TIMED OUT" in captured.out and "six-hour limit" in captured.err
+        assert "TIMED OUT" in captured.out and "original run deadline" in captured.err
     elif state == "Failed":
         assert "Collection failed" in captured.err
     else:
@@ -341,7 +341,7 @@ def test_console_watch_reports_timeout_as_failure_even_when_durable_is_completed
     assert operations_cli.main(["check-runs", "--watch"]) == 1
     captured = capsys.readouterr()
     assert "TIMED OUT" in captured.out
-    assert "six-hour limit" in captured.err
+    assert "original run deadline" in captured.err
 
 
 def test_console_status_does_not_report_durable_timeout_as_success(monkeypatch):

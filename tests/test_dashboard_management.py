@@ -34,6 +34,90 @@ def request(view="executiveSnapshot", **filters):
     return {"view": view, "filters": {"managementReporting": True, **filters}}
 
 
+def test_job_history_balances_entities_and_isolates_baselines_failures_and_origins():
+    common = {"DataOrigin": "Live", "FindingHistoryStartUtc": "2026-10-20T00:00:00Z", "RunStatus": "Success"}
+    records = [
+        {**common, "ActiveCves": 5, "AffectedMachines": 6, "NewCves": 5, "NewlyAffectedMachines": 6},
+        {**common, "ActiveCves": 6, "NewCves": 2, "ResolvedCves": 1,
+         "AffectedMachines": 5, "NewlyAffectedMachines": 1, "RemediatedMachines": 2},
+        {**common, "RunStatus": "Failed", "ActiveCves": 999, "AffectedMachines": 999},
+        {**common, "ActiveCves": 9, "NewCves": 1, "ResolvedCves": 0, "AffectedMachines": 5},
+        {**common, "DataOrigin": "Synthetic", "ActiveCves": 40, "AffectedMachines": 20},
+        {**common, "FindingHistoryStartUtc": "2026-10-24T00:00:00Z", "ActiveCves": 3, "AffectedMachines": 2},
+        {**common, "FindingHistoryStartUtc": "", "ActiveCves": 3, "AffectedMachines": 2},
+    ]
+    rows = list(dashboard_management.job_history_rows(records))
+    assert rows[0]["CVEsCheck"] == "Baseline"
+    assert rows[0]["AddedCVEs"] is None
+    assert rows[1]["CVEsCheck"] == rows[1]["MachinesCheck"] == "Balances"
+    assert rows[1]["CVEsDifference"] == rows[1]["MachinesDifference"] == 0
+    assert rows[2]["CVEsCheck"] == "Unavailable"
+    assert rows[3]["OpeningCVEs"] == 6
+    assert rows[3]["CVEsCheck"] == "Mismatch"
+    assert rows[3]["CVEsDifference"] == 2
+    assert rows[3]["MachinesCheck"] == "Unavailable"
+    assert rows[3]["MachinesDifference"] is None
+    assert rows[4]["CVEsCheck"] == rows[5]["CVEsCheck"] == "Baseline"
+    assert rows[6]["CVEsCheck"] == "Unavailable"
+
+
+def test_job_history_exports_reconcile_and_published_totals_do_not_follow_workspace_filters(tmp_path):
+    data = management_data()
+    common = {"DataOrigin": "Live", "FindingHistoryStartUtc": "2026-10-20T00:00:00Z", "RunStatus": "Success"}
+    data["run-history"] = [
+        {**common, "CollectionRunId": "first", "SnapshotTimeUtc": "2026-10-20T12:00:00Z",
+         "ActiveCves": 5, "AffectedMachines": 6},
+        {**common, "CollectionRunId": "second", "SnapshotTimeUtc": SNAPSHOT,
+         "ActiveCves": 6, "NewCves": 2, "ResolvedCves": 1,
+         "AffectedMachines": 5, "NewlyAffectedMachines": 1, "RemediatedMachines": 2},
+        {**common, "CollectionRunId": "future", "SnapshotTimeUtc": "2026-10-25T12:00:00Z",
+         "ActiveCves": 900, "AffectedMachines": 900},
+    ]
+    data["collection-runs"] = [{
+        **common, "CollectionRunId": "second", "SnapshotTimeUtc": SNAPSHOT,
+        "Endpoint": "machines", "DurationSeconds": 1.5, "Error": "",
+    }]
+    e = engine(tmp_path, data)
+    payload = request("jobHistory", severity="Critical")
+    result = e.query(payload)
+    runs = result["tables"]["jobHistoryTable"]
+    assert runs["total"] == 2
+    assert runs["items"][0]["ClosingCVEs"] == 6
+    assert runs["items"][0]["CVEsCheck"] == "Balances"
+    checks = result["tables"]["jobHistoryChecksTable"]["items"]
+    assert len(checks) == 7
+    assert all(row["Result"] == "Balances" and row["Difference"] == 0 for row in checks)
+    assert all(row["Actual"] == row["Expected"] for row in checks)
+    endpoints = result["tables"]["jobHistoryEndpointsTable"]["items"]
+    assert endpoints[0]["DurationSeconds"] == 1.5
+    for table in ("jobHistoryTable", "jobHistoryChecksTable", "jobHistoryEndpointsTable"):
+        assert list(e.iter_export({**payload, "table": table})) == result["tables"][table]["items"]
+    assert e.query(payload)["tables"] == result["tables"]
+    assert "timed-out or unpublished jobs are not represented" in result["texts"]["jobHistoryContext"]
+    assert "whole-source" in result["texts"]["jobHistoryContext"]
+
+
+def test_job_history_exposes_published_vs_queried_mismatches_and_matching_totals(tmp_path):
+    data = management_data()
+    data["run-history"] = [{
+        "DataOrigin": "Live", "CollectionRunId": "published", "SnapshotTimeUtc": SNAPSHOT,
+        "RunStatus": "Success", "FindingHistoryStartUtc": "2026-10-17T00:00:00Z",
+        "ActiveCves": 999, "AffectedMachines": 999,
+    }]
+    payload = request("jobHistory")
+    result = engine(tmp_path / "mismatch", data).query(payload)
+    checks = [
+        row for row in result["tables"]["jobHistoryChecksTable"]["items"]
+        if row["Test"] == "Published vs queried unresolved"
+    ]
+    assert len(checks) == 2
+    assert all(row["Result"] == "Mismatch" and row["Difference"] == row["Actual"] - 999 for row in checks)
+    for row in checks:
+        data["run-history"][0]["ActiveCves" if row["Entity"] == "CVEs" else "AffectedMachines"] = row["Actual"]
+    matched = engine(tmp_path / "matched", data).query(payload)["tables"]["jobHistoryChecksTable"]["items"]
+    assert all(row["Result"] == "Balances" and row["Difference"] == 0 for row in matched)
+
+
 @pytest.mark.parametrize(("snapshot", "starts"), [
     ("2026-10-24T12:00:00Z", ["2026-10-19", "2026-10-01", "2026-07-27", "2026-01-01"]),
     ("2026-01-01T00:00:00Z", ["2025-12-29", "2026-01-01", "2025-10-04", "2026-01-01"]),
@@ -474,6 +558,60 @@ def partial_progress_data():
         finding(5, DeviceId="one", CveId="CVE-PARTIAL", FirstObservedUtc="2026-10-23T00:00:00Z"),
     ] * 4
     return data
+
+
+@pytest.mark.parametrize("view", ["executiveSnapshot", "detail"])
+@pytest.mark.parametrize(("status", "version", "observed", "partial", "awaiting"), [
+    ("Fixed", "3.14.7", "2026-10-24T10:00:00Z", 0, 0),
+    ("PendingConfirmation", "3.14.7", "2026-10-24T10:00:00Z", 0, 0),
+    ("Fixed", "3.14.8", "2026-10-24T10:00:00Z", 1, 0),
+    ("Fixed", "3.14.7", "2026-10-24T11:00:00Z", 1, 0),
+])
+def test_identity_changes_are_not_fixes_when_identical_software_remains_detected(
+    tmp_path, view, status, version, observed, partial, awaiting,
+):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, DeviceId="one", CveId="CVE-SAME", SoftwareName="python",
+                SoftwareVersion="3.14.7", FindingStatus=status,
+                FirstObservedUtc="2026-10-17T00:00:00Z",
+                FixedUtc="2026-10-24T10:00:00Z" if status == "Fixed" else "",
+                EffectiveRemediationUtc="2026-10-24T10:00:00Z"),
+        finding(1, DeviceId="one", CveId="CVE-SAME", SoftwareName="python",
+                SoftwareVersion=version, FirstObservedUtc=observed),
+    ]
+    payload = request(view)
+    if view == "detail":
+        payload["selection"] = {"type": "machine", "id": "one"}
+    e = engine(tmp_path, data)
+    result = e.query(payload)
+    chart_id = "machineRemediationProgress" if view == "detail" else "executiveSnapshotManagementRemediationProgress"
+    current = result["charts"][chart_id]["rows"][-1]
+    assert current["open"] == 1
+    assert current["partial"] == partial
+    assert current["awaiting"] == awaiting
+    assert current["resolved"] == 0
+    assert e.query(payload)["charts"][chart_id] == result["charts"][chart_id]
+
+
+def test_scan_breakdown_separates_absent_cves_from_pending_software_on_detected_cves(tmp_path):
+    data = partial_progress_data()
+    data["findings"].append(finding(
+        90, DeviceId="one", CveId="CVE-ABSENT", FindingStatus="PendingConfirmation",
+        FirstObservedUtc="2026-10-01T00:00:00Z", EffectiveRemediationUtc="2026-10-24T10:00:00Z",
+    ))
+    data["findings"].append(finding(
+        91, DeviceId="one", CveId="CVE-UNVERIFIED", FindingStatus="PendingVerification",
+        FirstObservedUtc="2026-10-01T00:00:00Z", EffectiveRemediationUtc="2026-10-24T10:00:00Z",
+    ))
+    e = engine(tmp_path, data)
+    payload = {**request("detail"), "selection": {"type": "machine", "id": "one"}}
+    result = e.query(payload)
+    progress = result["metadata"]["machineRemediation"]
+    assert progress["scanBreakdown"] == {"detected": 3, "awaitingClearance": 1, "verificationRequired": 1}
+    assert sum(progress["scanBreakdown"].values()) == progress["Open"] == 5
+    absent = e.query({**payload, "filters": {**payload["filters"], "machineCveStatus": "Absent"}})
+    assert [row["CveId"] for row in absent["tables"]["pivotSlaCveTable"]["items"]] == ["CVE-ABSENT"]
 
 
 @pytest.mark.parametrize("view", ["executiveSnapshot", "detail"])
@@ -1173,7 +1311,7 @@ def test_confirmed_fix_is_attributed_to_first_absence_not_confirmation(tmp_path)
     assert machine["FixedCVEs"] == 1
 
 
-def test_daily_collection_to_dashboard_confirmation_and_returned_detection(tmp_path):
+def test_daily_collection_to_dashboard_first_absence_fix_and_reopened_detection(tmp_path):
     observed = "2026-10-22T11:00:00Z"
     first_absence = "2026-10-23T11:00:00Z"
     confirmed_at = "2026-10-24T11:00:00Z"
@@ -1191,8 +1329,9 @@ def test_daily_collection_to_dashboard_confirmation_and_returned_detection(tmp_p
     data["findings"] = pending
     result = engine(tmp_path / "pending", data, snapshot_time=first_absence).query(request())
     sla = result["metadata"]["management"]["sla"]["periods"][0]
-    assert sla["outcomes"]["AwaitingConfirmation"] == 1
-    assert sla["outcomes"]["Fixed"] == 0 and sla["CompliancePercent"] is None
+    assert sla["outcomes"]["AwaitingConfirmation"] == 0
+    assert sla["outcomes"]["Fixed"] == sla["outcomes"]["WithinSLA"] == 1
+    assert sla["CompliancePercent"] == 100
 
     devices[0]["LastSeenUtc"] = confirmed_at
     confirmed = reconcile_live_findings(
@@ -1213,7 +1352,68 @@ def test_daily_collection_to_dashboard_confirmation_and_returned_detection(tmp_p
     sla = result["metadata"]["management"]["sla"]["periods"][0]
     assert sla["outcomes"]["AwaitingConfirmation"] == sla["outcomes"]["Fixed"] == 0
     assert sla["CompliancePercent"] is None
-    assert next(row for row in data["findings"] if row["FindingKey"] == previous[0]["FindingKey"])["FindingStatus"] == "DetectionReturned"
+    assert next(row for row in data["findings"] if row["FindingKey"] == previous[0]["FindingKey"])["FindingStatus"] == "Reopened"
+
+
+@pytest.mark.parametrize("view", ["executive", "sla", "trend", "executiveSnapshot", "slaDashboard", "detail"])
+def test_first_absence_math_reconciles_across_dashboard_and_machine_views(tmp_path, view):
+    observed, absent = "2026-10-22T11:00:00Z", "2026-10-24T11:00:00Z"
+    previous = [
+        finding(0, DeviceId="one", CveId="CVE-SHARED"),
+        finding(1, DeviceId="one", CveId="CVE-SHARED"),
+        finding(2, DeviceId="two", CveId="CVE-SHARED"),
+        finding(3, DeviceId="one", CveId="CVE-PARTIAL"),
+        finding(4, DeviceId="one", CveId="CVE-PARTIAL"),
+        finding(5, DeviceId="one", CveId="CVE-CLEARED", SlaDueUtc="2026-10-23T12:00:00Z"),
+        finding(6, DeviceId="three", CveId="CVE-ALL-CLEARED"),
+        finding(7, DeviceId="stale", CveId="CVE-STALE"),
+        finding(8, DeviceId="missing", CveId="CVE-MISSING"),
+    ]
+    previous = [dict(row, FirstObservedUtc=observed, SnapshotTimeUtc=observed, SlaPolicyVersion="retained") for row in previous]
+    devices = [
+        {"DeviceId": machine, "HealthStatus": "Active", "OnboardingStatus": "Onboarded",
+         "LastSeenUtc": absent if machine != "stale" else "2026-10-01T00:00:00Z"}
+        for machine in ("one", "two", "three", "stale")
+    ]
+    data = datasets(0)
+    data["findings"] = reconcile_live_findings(
+        [previous[2], previous[4]], previous, datetime.fromisoformat(absent), "after", devices,
+    )
+    data["devices"] = devices
+    data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": absent, "FindingHistoryStartUtc": observed}]
+    payload = request(view)
+    if view == "detail":
+        payload["selection"] = {"type": "machine", "id": "one"}
+    result = engine(tmp_path, data, snapshot_time=absent).query(payload)
+    chart_id = "machineRemediationProgress" if view == "detail" else (
+        "slaDashboardRemediationProgress" if view == "slaDashboard" else view + "ManagementRemediationProgress"
+    )
+    current = result["charts"][chart_id]["rows"][-1]
+    assert current["awaiting"] == 0
+    assert current["open"] == (1 if view == "detail" else 4)
+    assert current["resolved"] == 2
+    assert current["openBreakdown"] == {
+        "withoutProgress": 0 if view == "detail" else 2,
+        "confirmedProgress": 1 if view == "detail" else 2,
+        "awaiting": 0,
+    }
+    assert sum(current["openBreakdown"].values()) == current["open"]
+    if view == "detail":
+        rows = {row["CveId"]: row for row in result["tables"]["pivotSlaCveTable"]["items"]}
+        assert len(rows) == 3
+        assert rows["CVE-PARTIAL"]["ProgressStatus"] == "Open"
+        assert rows["CVE-SHARED"]["ProgressStatus"] == rows["CVE-CLEARED"]["ProgressStatus"] == "Confirmed fixed"
+        assert result["metadata"]["machineRemediation"]["fixed"] == 2
+    elif view == "slaDashboard":
+        current_sla = result["metadata"]["slaDashboard"]["periods"][0]
+        assert current_sla["cves"]["totalOpen"] == 4
+        assert current_sla["cves"]["confirmedFixes"] == 2
+        assert current_sla["cves"]["completionPercent"] == 50
+        assert current_sla["machines"]["confirmedFixes"] == 1
+        assert current_sla["machines"]["completionPercent"] == 100
+        pairs = result["metadata"]["slaDashboard"]["machineCveSummary"]["severity"]
+        assert sum(row["completedWithin"] + row["completedLate"] + row["completedUnknown"] for row in pairs) == 3
+        assert sum(row["openWithin"] + row["openOverdue"] + row["unknownOpen"] for row in pairs) == 4
 
 
 def test_unqualified_or_undated_absence_never_becomes_observed_fix(tmp_path):
@@ -1518,6 +1718,78 @@ def test_recommendation_catalog_filters_sorts_and_exports_independently_of_prior
     assert {row["RecommendationId"] for row in priority["tables"]["priorityTable"]["items"]} == {"rec-1", "rec-2"}
     with pytest.raises(ValueError, match="Invalid recommendation catalog"):
         e.query(request("recommendations", recommendationCatalogSort="invalid"))
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_compact_recommendations_rank_scoped_risk_and_export_exact_columns(tmp_path, prepared):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, RecommendationId="rec-0", KnownExploit=False, SlaDueUtc="2026-10-20T00:00:00Z"),
+        finding(1, RecommendationId="rec-1", VerifiedExploitAvailable=True),
+        finding(2, RecommendationId="rec-2", KnownExploit=False),
+        finding(3, RecommendationId="rec-0", CveId="CVE-2026-0000", KnownExploit=False,
+                SlaDueUtc="2026-10-20T00:00:00Z"),
+    ]
+    e = engine(tmp_path, data)
+    if prepared:
+        e.read_model.prepare({})
+    payload = request("recommendations", simplifiedDashboard=True,
+                      recommendationCatalogStatus="Unresolved exposure", recommendationCatalogSort="priority")
+    result = e.query(payload)["tables"]["recommendationTable"]
+    assert [row["RecommendationId"] for row in result["items"]] == ["rec-1", "rec-0", "rec-2"]
+    assert result["items"][0]["KnownExploit"] is True
+    assert result["items"][1]["OverdueCves"] == 1
+    assert result["items"][1]["KnownExploit"] is None
+    assert result["columns"] == [
+        "RecommendationName", "RecommendationSeverity", "KnownExploit", "OverdueCves",
+        "AffectedMachines", "CveCount", "ExposureStatus", "TrackingStatus",
+    ]
+    exported = list(e.iter_export({**payload, "table": "recommendationTable"}))
+    assert [row["RecommendationId"] for row in exported] == ["rec-1", "rec-0", "rec-2"]
+    assert exported[1]["OverdueCves"] == 1
+    scoped = e.query({**payload, "filters": {**payload["filters"], "search": "endpoint-0"}})
+    assert [row["RecommendationId"] for row in scoped["tables"]["recommendationTable"]["items"]] == ["rec-0"]
+
+
+def test_distinct_sla_breakdown_counts_lists_and_exports_are_identical(tmp_path):
+    e = engine(tmp_path, management_data())
+    current = e.query(request("slaDashboard"))["metadata"]["slaDashboard"]["periods"][0]
+    statuses = {
+        "Open": "totalOpen", "OpenWithin": "openWithin", "OpenOverdue": "openOverdue",
+        "OpenUnknown": "unknownOpen", "Fixed": "confirmedFixes", "FixedWithin": "completedWithin",
+        "FixedLate": "completedLate", "FixedUnknown": "completedUnknown",
+    }
+    for entity, identifier in (("cves", "CveId"), ("machines", "DeviceId")):
+        for status, count in statuses.items():
+            payload = request("slaDashboard", simplifiedDashboard=True,
+                              slaSummaryEntity=entity, slaSummaryStatus=status)
+            table = e.query(payload)["tables"]["slaSummaryTable"]
+            exported = list(e.iter_export({**payload, "table": "slaSummaryTable"}))
+            assert table["total"] == len(exported) == current[entity][count], (entity, status)
+            assert len({row[identifier] for row in exported}) == len(exported)
+            assert table["action"] == ("cve" if entity == "cves" else "machine")
+    with pytest.raises(ValueError, match="distinct-entity SLA"):
+        e.query(request("slaDashboard", slaSummaryEntity="findings", slaSummaryStatus="Open"))
+
+
+def test_reporting_activity_window_uses_the_only_reporting_selector_and_cache_scope(tmp_path):
+    e = engine(tmp_path, management_data())
+    weekly = e.query(request("trend", simplifiedDashboard=True, newPeriod="reporting", statisticsPeriod="week"))
+    assert weekly["metadata"]["activityWindow"]["startUtc"].startswith("2026-10-19T00:00:00")
+    custom = request("trend", simplifiedDashboard=True, newPeriod="reporting", statisticsPeriod="custom",
+                     statisticsStartDate="2026-10-23", statisticsEndDate="2026-10-24")
+    result = e.query(custom)
+    assert result["metadata"]["activityWindow"]["startUtc"].startswith("2026-10-23T00:00:00")
+    assert result["activity"]["fixedCves"] == 0
+    assert weekly["activity"]["fixedCves"] > 0
+    assert e.query(custom)["metadata"]["activityWindow"] == result["metadata"]["activityWindow"]
+    assert "CVEsOpen" in result["tables"]["trendManagementComparisonTable"]["columns"]
+    assert not any("MachineCve" in key for key in result["tables"]["trendManagementComparisonTable"]["columns"])
+    assert len(result["cards"]["trendManagementCards"]) == 4
+    assert "trendManagementProgress" not in result["cards"]
+    run = e.query(request("trend", simplifiedDashboard=True, newPeriod="reporting", statisticsPeriod="run"))
+    assert run["metadata"]["activityWindow"]["exclusiveStart"] is True
+    assert run["metadata"]["activityWindow"]["startUtc"].startswith("2026-10-23T12:00:00")
 
 
 def test_management_machine_and_cve_severity_totals_are_independent_deduplicated_buckets(tmp_path):

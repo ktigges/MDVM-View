@@ -291,7 +291,7 @@ File: `config/sla-policies.json`
 | `schemaVersion` | Policy document schema |
 | `policyVersion` | Version copied into findings and retained run metadata |
 | `complianceTargetPercent` | Optional approved Executive Snapshot compliance target; use `null` to report actual performance without a target, or a number greater than 0 through 100 |
-| `lifecycle.fixedConfirmationRuns` | Consecutive absent runs required before a finding becomes fixed |
+| `lifecycle.fixedConfirmationRuns` | Qualified absent collections required before evidence becomes fixed; default `1` counts the first absence immediately. Values greater than `1` explicitly enable pending confirmation |
 | `lifecycle.deviceFreshnessHours` | Device freshness window used when interpreting absence |
 | `policies[].policyName` | Stable policy label |
 | `policies[].severity` | Finding severity matched by the policy |

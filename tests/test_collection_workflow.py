@@ -159,11 +159,11 @@ def test_expired_run_never_launches_another_worker(monkeypatch):
     assert result["timedOut"] is True
 
 
-def test_legacy_activity_uses_original_run_identity_not_a_new_six_hour_budget(monkeypatch):
+def test_legacy_activity_uses_original_run_identity_not_a_new_eight_hour_budget(monkeypatch):
     monkeypatch.setattr(collection_workflow.subprocess, "Popen", lambda *args, **kwargs: pytest.fail("No expired worker"))
     result = collection_workflow.execute_worker({"stage": "collect", "runId": "live-20261023T000000Z"})
     assert result["timedOut"] is True
-    assert result["deadlineUtc"] == "2026-10-23T06:00:00+00:00"
+    assert result["deadlineUtc"] == "2026-10-23T08:00:00+00:00"
 
 
 def test_worker_finishing_before_run_deadline_keeps_normal_result(monkeypatch):
@@ -422,7 +422,7 @@ def test_first_start_records_only_small_run_options():
     assert args[2]["pageSize"] == 2500
     assert datetime.fromisoformat(args[2]["snapshotUtc"]).tzinfo == UTC
     assert "findings" not in args[2]
-    assert datetime.fromisoformat(args[2]["deadlineUtc"]) - datetime.fromisoformat(args[2]["snapshotUtc"]) == timedelta(hours=6)
+    assert datetime.fromisoformat(args[2]["deadlineUtc"]) - datetime.fromisoformat(args[2]["snapshotUtc"]) == timedelta(hours=8)
 
 
 @pytest.mark.parametrize("legacy", [False, True])
@@ -455,7 +455,7 @@ def test_next_trigger_starts_fresh_after_timed_out_execution_completed():
     asyncio.run(start_collection(client, {}))
     client.start_new.assert_awaited_once()
     request = client.start_new.call_args.args[2]
-    assert datetime.fromisoformat(request["deadlineUtc"]) - datetime.fromisoformat(request["snapshotUtc"]) == timedelta(hours=6)
+    assert datetime.fromisoformat(request["deadlineUtc"]) - datetime.fromisoformat(request["snapshotUtc"]) == timedelta(hours=8)
 
 
 @pytest.mark.parametrize("legacy", [False, True])
@@ -469,7 +469,7 @@ def test_expired_active_run_requests_termination_without_starting_overlapping_wo
         )), start_new=AsyncMock(), terminate=AsyncMock(),
     )
     asyncio.run(start_collection(client, {}))
-    client.terminate.assert_awaited_once_with(INSTANCE_ID, "Six-hour collection deadline exceeded")
+    client.terminate.assert_awaited_once_with(INSTANCE_ID, "Collection run deadline exceeded")
     client.start_new.assert_not_called()
 
 
@@ -631,7 +631,7 @@ def test_orchestrator_uses_durable_cooldown_and_separate_file_verification():
     context = OrchestrationContext()
     workflow = orchestrate(context)
     assert next(workflow)[0] == "dataprep_prepare"
-    deadline = "2026-10-23T06:00:00+00:00"
+    deadline = "2026-10-23T08:00:00+00:00"
     assert context.statuses == [{"phase": "prepare", "runId": context.options["runId"], "deadlineUtc": deadline}]
     reference = {"runId": context.options["runId"], "planPath": "runs/plan.json", "deadlineUtc": deadline}
     assert workflow.send(reference)[0] == "dataprep_collect_batch"
@@ -798,7 +798,7 @@ def test_orchestration_history_is_bounded_without_changing_frozen_run():
         else:
             with pytest.raises(StopIteration):
                 workflow.send(None)
-    assert context.continued == {**context.options, "_failures": 0, "deadlineUtc": "2026-10-23T06:00:00+00:00"}
+    assert context.continued == {**context.options, "_failures": 0, "deadlineUtc": "2026-10-23T08:00:00+00:00"}
 
 
 def test_repeated_failures_stop_explicitly_without_advancing_to_processing():
@@ -821,7 +821,7 @@ def test_cooldown_is_clamped_to_original_deadline_and_does_not_schedule_more_wor
     next(workflow)
     workflow.send({"runId": context.options["runId"], "planPath": "runs/plan.json"})
     timer = workflow.send({"done": False, "newRequests": 1, "retryAfter": 86400})
-    assert timer == ("timer", datetime(2026, 10, 23, 6, tzinfo=UTC))
+    assert timer == ("timer", datetime(2026, 10, 23, 8, tzinfo=UTC))
     context.current_utc_datetime = timer[1]
     with pytest.raises(StopIteration) as stopped:
         workflow.send(None)
@@ -862,11 +862,11 @@ def test_continued_execution_does_not_reset_deadline():
     assert context.statuses[-1]["phase"] == "timed_out"
 
 
-def test_requested_deadline_cannot_extend_six_hour_original_run_limit():
+def test_requested_deadline_cannot_extend_eight_hour_original_run_limit():
     context = OrchestrationContext()
     context.options["deadlineUtc"] = "2026-10-24T00:00:00+00:00"
     request = next(orchestrate(context))[1]
-    assert request["deadlineUtc"] == "2026-10-23T06:00:00+00:00"
+    assert request["deadlineUtc"] == "2026-10-23T08:00:00+00:00"
 
 
 @pytest.mark.parametrize("replaying", [False, True])

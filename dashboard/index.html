@@ -10,7 +10,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Microsoft Vulnerability Management</title>
   <link rel="icon" type="image/png" href="favicon.png?v=20261009-2216">
-  <link rel="stylesheet" href="styles.css?v=2026.11.10.7">
+  <link rel="stylesheet" href="styles.css?v=2026.11.14.2">
 </head>
 <body>
   <header class="topbar">
@@ -65,13 +65,12 @@
     </div>
     <button class="active" data-view="executive"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg></span><span class="nav-label">Summary</span></button>
     <button data-view="overview"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4zm0 4v10m-4-5h8"/></svg></span><span class="nav-label">Vulnerabilities</span></button>
-    <button data-view="workstations"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></span><span class="nav-label">Endpoint assets</span></button>
     <button data-view="recommendations"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4h6l1 2h3v15H5V6h3l1-2zm0 7h6m-6 4h6"/></svg></span><span class="nav-label">Recommendations</span></button>
+    <button data-view="workstations"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></span><span class="nav-label">Machines</span></button>
     <button data-view="slaDashboard"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6 6M4 20h16"/></svg></span><span class="nav-label">SLA</span></button>
-    <button data-view="sla"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><span class="nav-label">Remediate</span></button>
     <button data-view="trend"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2"/></svg></span><span class="nav-label">Reporting</span></button>
-    <button data-view="executiveSnapshot"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5zM9 16v-4m4 4V8m4 8v-6"/></svg></span><span class="nav-label">Executive Snapshot</span></button>
-    <button data-view="help"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.4 2.4 0 114.5 1.2c-.8 1.1-2.3 1.3-2.3 3.1M12 17h.01"/></svg></span><span class="nav-label">How to use</span></button>
+    <button data-view="executiveSnapshot"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5zM9 16v-4m4 4V8m4 8v-6"/></svg></span><span class="nav-label">Executive View</span></button>
+    <button data-view="jobHistory"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3h14v18H5zM8 7h8M8 12h8M8 17h8"/></svg></span><span class="nav-label">Job history</span></button>
   </nav>
   <div class="workspace">
   <div class="workspace-controls">
@@ -99,7 +98,8 @@
       <div id="activeFilterChips" class="active-filter-chips"></div>
     </div>
     <div class="scope-actions">
-      <button id="pendingOnlyFilter" class="pending-filter-shortcut" type="button" aria-pressed="false" title="Show only pending confirmation and pending verification evidence">Pending only</button>
+      <button id="dashboardHelp" type="button">Help</button>
+      <button id="pendingOnlyFilter" class="pending-filter-shortcut" type="button" aria-pressed="false" title="Show only pending confirmation and pending verification evidence" hidden>Pending only</button>
       <button id="filterToggle" class="filter-toggle" type="button" aria-controls="filterBar" aria-expanded="false" aria-label="Show filters" title="Show filters">Filters</button>
       <button id="resetFilters" type="button" title="Clear workspace filters and restore configured defaults">Clear all</button>
     </div>
@@ -123,10 +123,10 @@
   </section>
   </div>
 
-  <section id="newActivityBar" class="new-activity-bar" aria-labelledby="newActivityTitle">
+  <section id="newActivityBar" class="new-activity-bar" aria-labelledby="newActivityTitle" hidden>
     <div class="new-activity-heading">
       <strong id="newActivityTitle">Vulnerability activity in the 24 hours ending at latest collection</strong>
-      <label class="new-activity-period">Date window<select id="newPeriod"><option value="day">Latest 24 hours ending at collection</option><option value="runs">Since previous comparable run</option><option value="week">Latest 7 days ending at collection</option><option value="month">Latest 30 days ending at collection</option><option value="custom">Custom date range</option></select></label>
+      <label class="new-activity-period" hidden>Date window<select id="newPeriod"><option value="day">Latest 24 hours ending at collection</option><option value="runs">Since previous comparable run</option><option value="week">Latest 7 days ending at collection</option><option value="month">Latest 30 days ending at collection</option><option value="custom">Custom date range</option></select></label>
       <fieldset id="newPeriodCustom" class="new-period-custom" hidden><legend>Custom activity dates</legend><label>From<input id="newPeriodStart" type="date"></label><label>Through<input id="newPeriodEnd" type="date"></label></fieldset>
       <small id="newActivityContext">Distinct CVE and machine counts use first-observed or remediation-observed timestamps inside this UTC window; it is not necessarily the interval since the previous collection</small>
     </div>
@@ -141,13 +141,12 @@
         </div>
       </section>
       <section class="new-activity-metric-group corrected" aria-labelledby="correctedMetricLabel">
-        <strong id="correctedMetricLabel">Remediation observed in the same window</strong>
+        <strong id="correctedMetricLabel">Recorded removals in the same window — not confirmed fixes</strong>
         <div class="new-activity-metrics corrected-metrics">
 
-          <button type="button" class="window-metric" data-fixed-view="overview" data-findings-mode="findings" aria-describedby="fixedObservationHelp"><span>remediation observations</span><strong id="fixedWindowObservationCount">0</strong><small id="fixedObservationHelp" class="activity-metric-help" role="tooltip">Software/version evidence rows with remediation first observed during the selected dates. Multiple rows can describe the same CVE on the same machine. Includes confirmed fixes, fixes awaiting confirmation, and previously fixed findings that reopened. This is observed progress, not the number of CVEs fully cleared. The count uses the loaded collection and your filters, except the detected/fixed filter. Click for the dated evidence, preserving your scope and activity window.</small></button>
-          <button type="button" class="window-metric" data-fixed-view="overview" data-findings-mode="cves" aria-describedby="fixedCveHelp"><span>distinct CVEs with fixes</span><strong id="fixedWindowCveCount">0</strong><small id="fixedCveHelp" class="activity-metric-help" role="tooltip">Different vulnerabilities with at least one fix first noticed during the selected dates. Each CVE counts once, even if fixes were seen on many machines. Some fixes are still awaiting confirmation. The vulnerability may remain on other machines or software versions, or return later. The count uses the loaded collection and your filters, except the detected/fixed filter. Click to see these vulnerabilities.</small></button>
-          <button type="button" class="window-metric" data-fixed-view="workstations" aria-describedby="fixedMachineHelp"><span>machines with fixes</span><strong id="fixedWindowMachineCount">0</strong><small id="fixedMachineHelp" class="activity-metric-help" role="tooltip">Machines with at least one fix first noticed during the selected dates. Each machine counts once, even if several detections disappeared. Some fixes are still awaiting confirmation, and other vulnerabilities may remain on the same machine. This does not mean the machine is fully fixed. The count uses the loaded collection and your filters, except the detected/fixed filter. Click to see the machines.</small></button>
-          <button type="button" class="window-metric" data-fixed-view="recommendations" aria-describedby="fixedRecommendationHelp"><span>recommendations with observed progress</span><strong id="fixedWindowRecommendationCount">0</strong><small id="fixedRecommendationHelp" class="activity-metric-help" role="tooltip">A recommendation counts once when at least one linked remediation observation falls within the selected dates, even if it covers hundreds of machines. Software and version records are supporting evidence, not additional vulnerabilities to count. Some observations are still awaiting confirmation; this is not the same as confirmed Improved or Fully resolved progress. The same CVE may remain on the machine or other machines. This does not mean the recommendation is finished. The count uses the loaded collection and your filters, except the detected/fixed filter. Click to see the recommendations.</small></button>
+          <button type="button" class="window-metric" data-fixed-view="overview" data-findings-mode="cves" aria-describedby="fixedCveHelp"><span>CVEs with recorded removals</span><strong id="fixedWindowCveCount">0</strong><small id="fixedCveHelp" class="activity-metric-help" role="tooltip">Different CVEs with recorded evidence removals during these dates. Raw history can include changed evidence IDs and legacy pending confirmation. These observations are not proof of remediation; the assessed clearance and detection charts reconcile actual status.</small></button>
+          <button type="button" class="window-metric" data-fixed-view="workstations" aria-describedby="fixedMachineHelp"><span>machines with recorded removals</span><strong id="fixedWindowMachineCount">0</strong><small id="fixedMachineHelp" class="activity-metric-help" role="tooltip">Distinct machines with recorded evidence removals during the selected dates. These are historical observations, not proof of fixes or full machine clearance. Evidence-ID changes and pending confirmation can contribute. Assessed machine CVE status is shown in machine details.</small></button>
+          <button type="button" class="window-metric" data-fixed-view="recommendations" aria-describedby="fixedRecommendationHelp"><span>recommendations with recorded removals</span><strong id="fixedWindowRecommendationCount">0</strong><small id="fixedRecommendationHelp" class="activity-metric-help" role="tooltip">Distinct recommendations linked to recorded evidence removals during the selected dates. Raw observations can include changed IDs and pending confirmation. They do not prove improvement or completion.</small></button>
         </div>
       </section>
     </div>
@@ -155,6 +154,7 @@
   </section>
 
   <main>
+    <section id="contextualViewBar" class="contextual-view-bar" hidden><button id="returnToPrimary" type="button">Back to Summary</button><strong id="contextualViewTitle"></strong></section>
     <section id="pivotPanel" class="pivot-panel" role="dialog" aria-labelledby="pivotTitle" hidden aria-live="polite">
       <div class="pivot-detail-nav">
         <div id="pivotRecommendationNav">
@@ -183,7 +183,7 @@
         <p id="machineRemediationContext" class="coverage-note"></p>
         <div id="machineRemediationProgress"></div>
         <div class="findings-list-controls">
-          <label>Show CVEs<select id="machineCveStatus"><option value="All">Fixed and still open</option><option value="Open">All unresolved (including pending)</option><option value="Fixed">CVEs fully cleared in period</option><option value="Partial">Confirmed partial fixes (not awaiting)</option><option value="Awaiting">Fixes awaiting confirmation</option></select></label>
+          <label>Show CVEs<select id="machineCveStatus"><option value="All">Fixed and still open</option><option value="Open">All unresolved (including pending)</option><option value="Fixed">CVEs fully cleared in period</option><option value="Partial">Confirmed partial fixes (not awaiting)</option><option value="Awaiting">Any software evidence awaiting confirmation</option><option value="Absent">No longer detected, awaiting legacy confirmation</option></select></label>
           <span id="machineCveCounts" role="status"></span>
         </div>
       </section>
@@ -203,12 +203,12 @@
     </section>
     <section id="executive" class="story active">
     <div id="executiveManagement"></div>
-    <article id="secureScoreCard" class="secure-score-card supporting-score"></article>
+    <details class="supporting-information"><summary>Supporting information: Microsoft Secure Score</summary><article id="secureScoreCard" class="secure-score-card supporting-score"></article></details>
 
     </section>
     <section id="executiveSnapshot" class="story executive-snapshot">
       <div class="executive-snapshot-header">
-        <div><span>MANAGEMENT REPORT</span><h2>Executive SLA Snapshot</h2><p id="executiveSnapshotContext">Select a reporting timeframe to summarize remediation performance and remaining risk.</p></div>
+        <div><span>MANAGEMENT REPORT</span><h2>Executive View</h2><p id="executiveSnapshotContext">Select a reporting timeframe to summarize remediation performance and remaining risk.</p></div>
         <div class="executive-snapshot-actions">
           <label>Subscription<select id="executiveSnapshotSubscription"><option value="All">All subscriptions</option><option value="NoSubscription">No subscription</option></select></label>
           <label>Operating owner<select id="executiveSnapshotOwner"><option value="All">All operating teams</option></select></label>
@@ -272,8 +272,8 @@
     <section id="recommendations" class="story">
       <div class="section-heading"><div><h2>Recommendations <button type="button" class="metric-help-button" data-help-key="Recommendations" aria-label="Explain recommendations and work status" aria-haspopup="dialog">?</button></h2></div><p id="recommendationCatalogContext">One action catalog for search, filters, and priority ranking. Priority sorting puts actions with unresolved exposure first, then orders by severity, Defender score, affected machines, and unique CVEs.</p></div>
       <div id="recommendationCatalogControls" class="recommendation-catalog-controls">
-        <label>Exposure status<select id="recommendationCatalogStatus"><option value="All">All actions</option><option value="Unresolved exposure">Unresolved exposure (detected or pending)</option><option value="Detected">Detected exposure</option><option value="Pending verification">Awaiting verification</option><option value="No current exposure">No current exposure</option></select></label>
-        <label>Sort recommendations<select id="recommendationCatalogSort"><option value="name">Action name</option><option value="priority">Priority</option><option value="machines">Affected machines</option><option value="cves">Unique CVEs</option></select></label>
+        <label>Exposure status<select id="recommendationCatalogStatus"><option value="Unresolved exposure" selected>Unresolved exposure</option><option value="All">All actions</option><option value="Detected">Detected exposure</option><option value="Pending verification">Awaiting verification</option><option value="No current exposure">No current exposure</option></select></label>
+        <label>Sort recommendations<select id="recommendationCatalogSort"><option value="priority" selected>Priority</option><option value="name">Action name</option><option value="machines">Affected machines</option><option value="cves">Unique CVEs</option></select></label>
         <button id="recommendationWorkspaceFilters" type="button">Workspace filters: search, OS, severity, team</button>
         <button id="resetRecommendationCatalog" type="button">Reset catalog options</button>
       </div>
@@ -282,7 +282,7 @@
     </section>
 
     <section id="slaDashboard" class="story">
-      <div class="section-heading"><div><span>REMEDIATION AND DEADLINES</span><h2>SLA remediation status <button type="button" class="metric-help-button" data-help-key="Current SLA status" aria-label="Explain SLA remediation status" aria-haspopup="dialog">?</button></h2></div><p>Confirmed fixes and open exposure are reported separately by severity. Distinct CVE and machine summaries remain below. Not yet due does not mean remediated.</p></div>
+      <div class="section-heading"><div><span>REMEDIATION AND DEADLINES</span><h2>SLA remediation status <button type="button" class="metric-help-button" data-help-key="Current SLA status" aria-label="Explain SLA remediation status" aria-haspopup="dialog">?</button></h2></div><p>Open risk and full clearances are separate. Each breakdown counts distinct CVEs and machines. Not yet due is not a fix.</p></div>
       <p id="slaDashboardContext" class="coverage-note"></p>
       <div id="slaDashboardSummary"></div>
       <article class="panel">
@@ -317,7 +317,7 @@
     </section>
 
     <section id="trend" class="story">
-      <div class="section-heading"><div><span>REPORTING</span><h2>Vulnerability reporting and change over time</h2></div><div class="reporting-intro-actions"><p>Compare unique machines, vulnerabilities, recommendations, and confirmed progress across date ranges.</p><button id="openWorkflowHelp" type="button">How to use this dashboard</button></div></div>
+      <div class="section-heading"><div><span>REPORTING</span><h2>Vulnerability reporting and change over time</h2></div><div class="reporting-intro-actions"><button id="printReporting" type="button">Print / Save PDF</button><button id="exportReportCsv" type="button">Export report CSV</button><button id="openWorkflowHelp" type="button">Help</button></div></div>
       <section class="statistics-period-panel" aria-labelledby="statisticsPeriodTitle">
         <div>
           <span>COMPARISON WINDOW</span>
@@ -339,9 +339,12 @@
           <button id="applyStatisticsPeriod" type="button">Apply range</button>
         </div>
       </section>
+      <p id="reportingScope" class="coverage-note"></p>
+      <div id="reportingActivitySlot"></div>
       <div id="trendManagement"></div>
 
-      <section class="panel lifecycle-reporting" aria-labelledby="lifecycleReportingTitle">
+      <details class="panel lifecycle-reporting" aria-labelledby="lifecycleReportingTitle">
+        <summary>Observed change details and exports</summary>
         <div class="panel-title"><div><h3 id="lifecycleReportingTitle">Change activity by entity</h3><span>Observed changes are distinct from full resolution in the summary above</span></div><div class="reporting-actions"><label>Entity<select id="reportingEntity"><option value="machines">Machines</option><option value="cves">Vulnerabilities (CVEs)</option><option value="recommendations">Recommendations</option></select></label><label>Breakdown<select id="reportingBreakdown"><option value="All">All</option><option value="osType">OS Type</option><option value="osVersion">OS Type + Version</option></select></label><label>Change<select id="reportingChange"><option value="Fixed" selected>Confirmed fixed</option><option value="PendingConfirmation">Pending confirmation</option><option value="PendingVerification">Pending verification</option><option value="DetectionReturned">Detection returned</option><option value="New">New</option><option value="Reopened">Reopened after confirmation</option><option value="All">All changes</option></select></label><button id="exportReportingCsv" type="button">Export activity CSV</button></div></div>
         <p id="lifecycleCoverage" class="coverage-note"></p>
         <div id="lifecycleCards" class="metric-grid statistics-period-cards"></div>
@@ -351,25 +354,52 @@
         </div>
         <div class="panel-title lifecycle-detail-title"><div><h3 id="lifecycleDetailTitle">Observed change detail</h3><span id="lifecycleDetailContext">A fix event can represent partial progress while the same machine or CVE remains open</span></div></div>
         <div class="table-wrap lifecycle-detail-wrap"><table id="lifecycleDetailTable"></table></div>
-        <div class="table-wrap"><table id="lifecycleHistoryTable"></table></div>
-      </section>
+        <details><summary>Additional retained event history</summary><div class="table-wrap"><table id="lifecycleHistoryTable"></table></div></details>
+      </details>
 
+    </section>
+
+    <section id="jobHistory" class="story">
+      <div class="section-heading"><div><span>RECONCILIATION</span><h2>Job history</h2></div><p>Published runs, distinct-entity balances and current-snapshot checks.</p></div>
+      <p id="jobHistoryContext" class="coverage-note"></p>
+      <p id="jobHistoryRecognition" class="coverage-note"></p>
+      <article class="panel">
+        <div class="panel-title"><h3>Pinned snapshot — current workspace scope</h3></div>
+        <div id="jobHistoryManagementCards" class="metric-grid"></div>
+        <div id="jobHistoryManagementFixActivity" class="metric-grid"></div>
+        <p id="jobHistoryManagementContext" class="coverage-note"></p>
+        <div id="jobHistoryManagementRemediationProgress"></div>
+        <div class="table-wrap"><table id="jobHistoryChecksTable"></table></div>
+        <details><summary>Matching machines</summary><div class="table-wrap"><table id="jobHistoryManagementMachineTable"></table></div></details>
+        <details><summary>Matching CVEs</summary><div class="table-wrap"><table id="jobHistoryManagementCveTable"></table></div></details>
+        <details><summary>Matching recommendations</summary><div class="table-wrap"><table id="jobHistoryManagementRecommendationTable"></table></div></details>
+      </article>
+      <article class="panel">
+        <div class="panel-title"><h3>Published run balances — whole source</h3></div>
+        <p class="coverage-note">Opening + added - removed = closing. Baselines and missing values have no change calculation. These are CVE and machine counts, never CVE × machine totals. Removed is not synonymous with fixed. An arithmetic match does not prove complete collection or remediation.</p>
+        <div class="table-wrap"><table id="jobHistoryTable"></table></div>
+      </article>
+      <article class="panel">
+        <div class="panel-title"><h3>Retained endpoint collection results</h3></div>
+        <p class="coverage-note">Endpoint durations are not total job duration; normalization and publication are separate work. Unpublished job failures are not available in this snapshot.</p>
+        <div class="table-wrap"><table id="jobHistoryEndpointsTable"></table></div>
+      </article>
     </section>
 
     <section id="help" class="story workflow-help-story">
       <div class="section-heading"><div><span>CUSTOMER WORKFLOW</span><h2>How to use Vulnerability View</h2></div><p>A practical daily workflow for choosing, tracking, and validating vulnerability remediation.</p></div>
       <div class="workflow-help-body">
         <section><h3>Contextual explanations</h3><p>Question-mark buttons beside metrics, table headings, progress values, workflow badges, and SLA charts open an explanation. They work with a mouse, touch, or keyboard. Each explanation describes the unit, reporting scope, and whether a value represents open risk, confirmed progress, or manual coordination.</p><dl class="metric-glossary"><div><dt>Still open</dt><dd>Unresolved exposure remains, without confirmed clearance in the displayed reporting period. Work can still be marked In progress.</dd></div><div><dt>Improved</dt><dd>Some exposure was confirmed cleared during the period, but risk remains. Improved items are already included in open totals.</dd></div><div><dt>Fully resolved / fully cleared</dt><dd>Confirmed clearance occurred during the period and no unresolved exposure remains for that entity in the selected scope.</dd></div><div><dt>Overdue / deadline unknown</dt><dd>At least one unresolved vulnerability is past its recorded deadline, or deadline evidence is missing. Neither status is counted as a successful completion.</dd></div><div><dt>Dashboard work status</dt><dd>Manual coordination only. In progress and Fixed, awaiting collection do not patch machines, update Defender, pause SLA clocks, or prove remediation.</dd></div></dl></section>
-        <section><h3>Dedicated SLA dashboard</h3><p>The simple severity summary counts <strong>machine/CVE pairs</strong>: one CVE fixed on three machines counts as three fixes. Software/version rows do not multiply these counts. Open includes pending fixes; confirmed fixed requires all in-scope software evidence for that CVE on that machine to be cleared. Click counts or percentages for the matching machines, CVEs, dates, and deadlines. Open counts separate not yet due from overdue; only confirmed fixes receive an on-time completion percentage. Unknown deadlines never count as success; no denominator is N/A, not zero or 100%.</p><p>The detailed summaries below still count distinct CVEs and distinct machines separately. A CVE is fully cleared only when no in-scope machine remains vulnerable to it; a machine is fully cleared only when no in-scope CVE remains unresolved. Partial clearance is improved, not fully cleared. Unresolved charts have three exclusive groups: no recorded fix progress, confirmed progress but still open, and awaiting confirmation. These add up exactly to the unresolved total. Pending confirmation takes precedence over confirmed progress; initial inventory, later additions, and full clearances appear separately as context. Machine detail lists confirmed-fixed and still-open CVEs separately from activity evidence, with status filters and matching exports.</p><p>Week over week compares the last completed Monday–Sunday UTC week with the week before. Month over month compares the last completed calendar month with the month before. Periods without full retained history show <strong>Waiting for data</strong>, not zero. The current snapshot summary remains available; month-to-date fixes cover retained observations only when history is partial. Each severity shows its retained policy targets.</p></section>
+        <section><h3>Views and related details</h3><p><strong>Summary</strong> presents current status, severity and progress. <strong>Vulnerabilities</strong> lists distinct CVEs. <strong>Recommendations</strong> prioritizes unresolved actions by criticality, known exploit, overdue CVEs, affected machines, and distinct CVEs; there is no separate Prioritization page. Work status is coordination, not proof of a fix. <strong>Machines</strong> provides inventory, fixed/open CVEs and dated history.</p><p><strong>SLA</strong> includes open and fully-cleared breakdowns, severity and clearance charts, compliance snapshots and calendar comparisons. Not yet due + overdue + deadline unknown = total open. Within SLA + late + deadline unknown = total cleared in the stated period. CVEs and machines are separate totals. Count links retain matching records and CSV. A CVE clears only when no in-scope machine remains vulnerable; a machine clears only when no in-scope CVE remains open. Unknown deadlines are excluded from the on-time rate. No full clearances means N/A, never 100%.</p><p><strong>Reporting</strong> contains period comparisons, observed activity, Print / Save PDF and CSV. <strong>Executive View</strong> retains period and owner controls, severity, clearance and compliance charts, entity details, and exports. Initial inventory is not newly introduced risk. Detection charts distinguish still-detected CVEs from CVEs no longer detected but awaiting an older confirmation rule. Pending software evidence on a still-detected CVE is not full-CVE clearance. Changed software evidence IDs do not prove a fix. Retained-history gaps are unavailable, not zero. A page remains pinned until a newer snapshot is explicitly loaded.</p></section>
         <section><h3>Management totals and progress</h3><p>Management summaries count unique machines, unique vulnerabilities (CVEs), and recommendations. A CVE on 500 machines is one vulnerability, not 500 vulnerabilities. Software and version evidence does not multiply the headline totals.</p><p><strong>Improved</strong> means confirmed exposure was removed during the period but risk remains. <strong>Fully resolved</strong> means confirmed remediation occurred during the period and no unresolved exposure remains for that entity in the selected scope. Pending verification remains open. Overdue risk means at least one unresolved exposure is past its policy deadline; unknown deadlines are not compliant results.</p><p>Finding-instance views and counts are not displayed. Underlying collection evidence is retained. Each entity table provides status, drill-down, and an export of all matching entity rows. Activity tables show observed changes, not proof of full resolution.</p></section>
-        <section class="workflow-help-start"><h3>Daily workflow</h3><ol><li><strong>Confirm freshness.</strong> Check Data refreshed and recent collection runs. Do not make decisions from a failed or unexpectedly old collection.</li><li><strong>Understand movement.</strong> Review First seen and Remediation observed in the selected UTC window. Use changes since the previous run when you specifically need run-to-run movement.</li><li><strong>Choose work.</strong> Filter by severity, subscription, asset class, or domain. Use Exposure status → Pending evidence only, or the Pending only shortcut, to isolate findings awaiting confirmation or corroboration.</li><li><strong>Coordinate remediation.</strong> Open a recommendation to identify machines and CVEs. Set the dashboard status to In progress when tracking is enabled; perform the actual change through approved management tools.</li><li><strong>Validate after collection.</strong> Amber Pending confirmation means the finding had one qualified absence. Amber Pending verification means the device-level disappearance still needs corroboration. Confirmed fixed remains separate.</li><li><strong>Report and escalate.</strong> Use Reporting for lifecycle, SLA, and period comparisons. Escalate critical or outside-SLA work that remains blocked.</li></ol></section>
+        <section class="workflow-help-start"><h3>Daily workflow</h3><ol><li><strong>Confirm freshness.</strong> Check Data refreshed and recent collection runs. Do not make decisions from a failed or unexpectedly old collection.</li><li><strong>Understand movement.</strong> Review First seen and Remediation observed in the selected UTC window. Use changes since the previous run when you specifically need run-to-run movement.</li><li><strong>Choose work.</strong> Filter by severity, subscription, asset class, or domain. Use Exposure status → Pending evidence only, or the Pending only shortcut, to isolate retained pending evidence.</li><li><strong>Coordinate remediation.</strong> Open a recommendation to identify machines and CVEs. Set the dashboard status to In progress when tracking is enabled; perform the actual change through approved management tools.</li><li><strong>Fix recognition.</strong> The default counts a fix at the first complete collection showing it absent on an active, fresh machine. No extra collection is required. An empty vulnerability list can mean the machine is fully cleared. Pending confirmation belongs to an older or explicitly configured multi-collection rule; Pending verification means collection or machine evidence is insufficient.</li><li><strong>Report and escalate.</strong> Use Reporting for lifecycle, SLA, and period comparisons. Escalate critical or outside-SLA work that remains blocked.</li></ol></section>
         <section><h3>Common customer scenarios</h3><div class="workflow-scenarios">
-          <article><strong>Daily triage</strong><p>Select the latest 24-hour window. Review First seen, then open high-impact recommendations to identify affected machines and CVEs.</p></article>
+          <article><strong>Daily triage</strong><p>Recommendations defaults to unresolved actions ranked by criticality and risk. Each action links to its affected machines and CVEs.</p></article>
           <article><strong>Validate yesterday's remediation</strong><p>Review Fixed in the same window and changes since the previous run. A machine with a fix may still contain other open findings.</p></article>
           <article><strong>Work an overdue backlog</strong><p>Filter to Critical or High and review open findings outside SLA. Prioritize recommendations that remove the largest current exposure.</p></article>
           <article><strong>Investigate work that did not clear</strong><p>Find recommendations marked fixed awaiting collection but still detected after the latest successful run, then inspect the remaining machines.</p></article>
         </div></section>
-        <section class="workflow-help-definitions"><h3>Read the numbers correctly</h3><dl><div><dt>Vulnerability</dt><dd>A machine is vulnerable to a CVE once, regardless of affected software products or versions. Dashboard totals count distinct CVEs and distinct machines separately. Software records support the assessment and do not multiply either count.</dd></div><div><dt>Machine count</dt><dd>Distinct endpoint devices with matching vulnerability evidence. Cloud-only resources may not appear in endpoint inventory.</dd></div><div><dt>First seen window</dt><dd>Vulnerability observations first recorded inside the displayed UTC range anchored to the latest collection.</dd></div><div><dt>Remediation observed</dt><dd>The first qualified absence used for SLA timing. Evidence can remain pending until a later snapshot confirms the absence.</dd></div><div><dt>Pending confirmation</dt><dd>Previously detected evidence is absent from one qualified complete snapshot and needs the configured confirming run.</dd></div><div><dt>Pending verification</dt><dd>The device or all device evidence disappeared, so remediation is not yet credited without corroboration.</dd></div><div><dt>Previous-run changes</dt><dd>New, reopened, pending, returned, or confirmed vulnerability evidence between comparable collections.</dd></div><div><dt>Dashboard status</dt><dd>Shared coordination state attached to a recommendation ID. It does not update Defender or perform remediation.</dd></div></dl></section>
+        <section class="workflow-help-definitions"><h3>Read the numbers correctly</h3><dl><div><dt>Vulnerability</dt><dd>A machine is vulnerable to a CVE once, regardless of affected software products or versions. Dashboard totals count distinct CVEs and distinct machines separately. Software records support the assessment and do not multiply either count.</dd></div><div><dt>Machine count</dt><dd>Distinct endpoint devices with matching vulnerability evidence. Cloud-only resources may not appear in endpoint inventory.</dd></div><div><dt>First seen window</dt><dd>Vulnerability observations first recorded inside the displayed UTC range anchored to the latest collection.</dd></div><div><dt>Remediation observed</dt><dd>The first qualified absence used for SLA timing. The default counts evidence fixed immediately; all evidence for the machine/CVE must be gone for full clearance.</dd></div><div><dt>Pending confirmation</dt><dd>An older retained or explicitly configured multi-collection rule still requires another qualified absence. The default no longer requires that wait.</dd></div><div><dt>Pending verification</dt><dd>Collection or machine evidence is insufficient; no fix is credited. A complete empty vulnerability list on a fresh, active machine does count as clearance.</dd></div><div><dt>Previous-run changes</dt><dd>New, reopened, pending, returned, or fixed vulnerability evidence between comparable collections.</dd></div><div><dt>Dashboard status</dt><dd>Shared coordination state attached to a recommendation ID. It does not update Defender or perform remediation.</dd></div></dl></section>
       </div>
     </section>
 
@@ -386,7 +416,7 @@
     <p id="metricHelpText"></p>
     <button id="closeMetricHelp" type="button">Close explanation</button>
   </dialog>
-  <script src="config.js?v=2026.11.10.7"></script>
-  <script src="app.js?v=2026.11.10.7"></script>
+  <script src="config.js?v=2026.11.14.2"></script>
+  <script src="app.js?v=2026.11.14.2"></script>
 </body>
 </html>

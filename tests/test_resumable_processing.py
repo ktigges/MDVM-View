@@ -13,6 +13,58 @@ from vulnerability_view.resumable_processing import STAGES
 from vulnerability_view.storage_writer import DATASET_FILES, _sha256, archive_raw_rows, verify_run_bundle
 
 
+@pytest.mark.parametrize("combined", [False, True])
+def test_processing_freezes_only_required_baselines_without_losing_combined_history(work, combined):
+    from vulnerability_view.resumable_processing import Artifacts
+
+    raw, policy = setup_run(work)
+    needed = {"findings", "recommendations", "findingEvents", "recommendationEvents", "runHistory"}
+
+    def unused():
+        pytest.fail("Live-only processing must not scan unused baseline datasets")
+        yield
+
+    baseline = {
+        key: [] if combined or key in needed else unused()
+        for key in DATASET_FILES
+    }
+    if combined:
+        baseline["subscriptions"] = [{"DataOrigin": "Synthetic", "SubscriptionId": "prior-subscription"}]
+    worker = work / "worker"
+    state = advance_archived_run(
+        raw, Settings(app_mode="combined" if combined else "live"), baseline, policy, worker,
+        snapshot=SNAPSHOT, run_id=RUN_ID,
+    )
+    artifacts = Artifacts(worker / "processing-artifacts")
+    metadata = json.loads(artifacts.get(state["checkpoint"]).read_text())
+    assert set(metadata["baseline"]) == (set(DATASET_FILES) if combined else needed)
+    if combined:
+        assert list(artifacts.rows(metadata["baseline"]["subscriptions"])) == baseline["subscriptions"]
+
+
+@pytest.mark.parametrize("corrupt_cache", [False, True])
+def test_cached_artifacts_hash_once_and_repair_corruption(work, monkeypatch, corrupt_cache):
+    from vulnerability_view import resumable_processing
+
+    durable = DurableArtifacts(work / "durable")
+    artifacts = resumable_processing.Artifacts(work / "cache", durable.save, durable.load)
+    source = work / "dataset.gz"
+    source.write_bytes(b"retained-evidence")
+    descriptor = artifacts.put(source, "dataset")
+    cached = artifacts.get(descriptor)
+    if corrupt_cache:
+        cached.write_bytes(b"corrupt-evidence!")
+    scanned = []
+
+    def observe(path):
+        scanned.append(path.stat().st_size)
+        return _sha256(path)
+
+    monkeypatch.setattr(resumable_processing, "_sha256", observe)
+    assert artifacts.get(descriptor).read_bytes() == source.read_bytes()
+    assert sum(scanned) == source.stat().st_size * (2 if corrupt_cache else 1)
+
+
 class DurableArtifacts:
     def __init__(self, root):
         self.root = root

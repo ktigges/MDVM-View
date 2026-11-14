@@ -189,36 +189,33 @@ The collector compares current finding keys with the prior live state.
 |---|---|
 | Present in both snapshots | Preserve first observation and remain open |
 | Previously fixed key appears again | `Reopened`; set `ReopenedUtc` |
-| First qualified partial absence | `PendingConfirmation`; set `FirstAbsentUtc` |
-| Second qualified partial absence | `Fixed`; use first absence as `FixedUtc` and current snapshot as `FixedConfirmedUtc` |
+| First qualified absence | `Fixed`; set `FirstAbsentUtc`, `EffectiveRemediationUtc`, `FixedUtc`, and `FixedConfirmedUtc` in that collection |
 | Pending finding appears again | `DetectionReturned`; revoke provisional remediation and restore the current open SLA result |
-| All findings disappear for an active, fresh device | `PendingVerification`; never infer a fix without corroborating evidence |
+| All findings disappear for an active, fresh device and the vulnerability collection is complete | `Fixed`; an empty vulnerability list can represent a fully remediated machine |
+| Inventory or vulnerability collection is incomplete | `PendingVerification`; no fix credit for newly absent evidence |
 | Device is stale or not fresh | `StaleDevice`, not fixed |
 | Device is offboarded or unsupported | `OutOfScope`, not fixed |
 | Device is missing from inventory | `Unknown`, not fixed |
 
-An absence is qualified only when the device remains active and its last-seen
-time is within the configured 48-hour freshness window. The required number of
-qualified absences is configured as two runs. If every finding for an active,
-fresh device disappears from the API together, the collector treats the
-device-level result as potentially incomplete. Those findings remain
-unresolved as `PendingVerification`, including previously inferred fixes from
-the same wholesale-disappearance pattern, until corroborating evidence is
-available or individual findings reappear.
+An absence is qualified only when inventory and vulnerability collection both
+succeeded, the device remains active, and its last-seen time is within the
+configured 48-hour freshness window. The default required absence count is one:
+there is no extra confirmation run. A Defender task being completed does not
+by itself mark evidence fixed. The timestamp establishes clearance observed
+between collections, not an exact patch-installation time.
 
-Therefore, **fixed** means the exact finding key was absent from two consecutive
-complete snapshots while other vulnerability evidence for that active, fresh
-device remained available. A Defender task being completed does not by itself
-mark findings fixed.
+A machine/CVE is fixed only when all its software evidence is gone. A CVE still
+detected through another product/version on the same machine remains open.
+Across the dashboard, a distinct CVE is fully cleared only when no machine
+in scope remains vulnerable. Software evidence removals do not multiply either
+the distinct-CVE or distinct-machine totals.
 
-The first qualified absence also sets `EffectiveRemediationUtc`. SLA outcome is
-calculated immediately from that time and is labeled with
-`SlaEvidenceStatus=PendingConfirmation` until confirmation. The confirming run
-does not move the effective remediation time. If the finding returns before
-confirmation, `EffectiveRemediationUtc` is cleared, `VerificationFailedUtc` is
-set, and the SLA returns to its current open state. Wholesale device-level
-disappearance does not set an effective remediation time because independent
-corroboration is unavailable.
+An explicitly configured `fixedConfirmationRuns` greater than one still uses
+`PendingConfirmation` until that many consecutive qualified absences. These
+rows stay unresolved, even with an effective absence timestamp. Retained
+snapshots keep their original policy and are not rewritten. Existing pending
+rows are reassessed on the next new collection under the new default; missing,
+stale, or incomplete evidence never becomes a fix merely through that change.
 
 ## 7. Remediation outcome
 

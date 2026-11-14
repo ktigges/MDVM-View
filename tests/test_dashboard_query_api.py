@@ -114,14 +114,15 @@ def app(monkeypatch, tmp_path):
     application.state.dashboard_snapshots.close()
 
 
-def test_dedicated_sla_view_is_accepted_by_the_query_api(app):
+@pytest.mark.parametrize("view", ["slaDashboard", "jobHistory"])
+def test_dedicated_views_are_accepted_by_the_query_api(app, view):
     snapshot = select_snapshot(app)
     status, _, body = request(app, "/api/dashboard/query", method="POST", payload={
-        "snapshotId": snapshot["snapshotId"], "view": "slaDashboard",
+        "snapshotId": snapshot["snapshotId"], "view": view,
     })
     assert status == 200
     assert json.loads(body)["snapshotId"] == snapshot["snapshotId"]
-    assert Engine.calls[-1]["view"] == "slaDashboard"
+    assert Engine.calls[-1]["view"] == view
 
 
 def test_cached_results_bypass_occupied_workers(app, monkeypatch):

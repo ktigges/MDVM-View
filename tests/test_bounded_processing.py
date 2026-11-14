@@ -521,6 +521,28 @@ def test_processing_api_uses_frozen_policy_clock_and_explicit_paths(work):
     assert not list((work / "processing").glob("*.sqlite"))
 
 
+def test_processing_persists_first_absence_clearance_for_fully_patched_machine(work):
+    raw = work / "raw" / RUN_ID
+    for endpoint in ENDPOINTS:
+        archive_raw_rows(endpoint.name, payloads(0).get(endpoint.name, []), RUN_ID, raw.parent)
+    previous_time = SNAPSHOT - timedelta(days=1)
+    previous = normalize_live(payloads(1), previous_time, "previous")["findings"]
+    policy_path = work / "sla-policies.json"
+    policy_path.write_bytes(Path("config/sla-policies.json").read_bytes())
+    bundle = process_archived_run(
+        raw, Settings(), {"findings": previous}, policy_path, work / "prepared",
+        snapshot=SNAPSHOT, run_id=RUN_ID,
+    )
+    rows = list(iter_json_rows(bundle / "curated/findings.json.gz"))
+    assert len(rows) == 1
+    assert rows[0]["FindingStatus"] == "Fixed"
+    assert rows[0]["FixedUtc"] == rows[0]["FixedConfirmedUtc"] == iso_utc(SNAPSHOT)
+    assert rows[0]["ConfirmationRunsRequired"] == rows[0]["ConfirmationRunsCompleted"] == 1
+    events = list(iter_json_rows(bundle / "curated/finding-events.json.gz"))
+    assert [row["EventType"] for row in events if row["CollectionRunId"] == RUN_ID] == ["Fixed"]
+    assert verify_run_bundle(bundle, raw) == []
+
+
 def test_finalized_bundle_matches_legacy_pipeline_with_frozen_baseline(work):
     raw = work / "raw" / RUN_ID
     raw.mkdir(parents=True)

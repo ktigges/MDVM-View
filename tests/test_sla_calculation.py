@@ -44,7 +44,7 @@ def test_policy_config_is_versioned_and_returns_sla_start():
 
     assert config["schemaVersion"] == 1
     assert "complianceTargetPercent" in config
-    assert config["lifecycle"]["fixedConfirmationRuns"] == 2
+    assert config["lifecycle"]["fixedConfirmationRuns"] == 1
     assert result["SlaPolicyVersion"] == config["policyVersion"]
     assert result["SlaStartUtc"] == "2026-01-01T00:00:00Z"
 

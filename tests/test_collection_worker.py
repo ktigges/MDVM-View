@@ -173,7 +173,7 @@ def test_processing_heartbeat_reports_shared_run_deadline_and_stops(monkeypatch,
                 run()
         else:
             run()
-    assert "executionDeadline=original-run-six-hours" in caplog.text
+    assert "executionDeadline=original-run-deadline" in caplog.text
     assert "heartbeat runId=live-20261023T160000Z" in caplog.text
     assert "cpuSeconds=" in caplog.text
     assert "lastProgressAgeSeconds=" in caplog.text
@@ -234,6 +234,8 @@ def test_machine_progress_survives_generic_completion_and_next_start(monkeypatch
     ("[vulnerabilities] CVE metadata batches processed: 1/1; 3 CVEs unavailable", False, logging.INFO),
     ("[optional] optional endpoint unavailable: HTTP 404", False, logging.WARNING),
     ("[optional] optional endpoint unavailable: HTTP 404", True, logging.WARNING),
+    ("[secure_scores] starting optional Microsoft Graph lookup", True, logging.INFO),
+    ("[azure_subscriptions] starting optional Azure subscription lookup", True, logging.INFO),
     ("[recommendation_machines] recommendation-one unavailable: HTTP 403", False, logging.WARNING),
     ("[machines] failed: HTTP 403", True, logging.ERROR),
     ("[machines] failed: while requesting page 2", False, logging.ERROR),
@@ -253,6 +255,7 @@ def test_progress_severity_distinguishes_counts_optional_issues_and_failures(
     with caplog.at_level(logging.INFO):
         result = collection_worker.collect_batch(plan(), WorkerStore(), tmp_path / "cache")
     assert result["done"] is False and result["retry"] is False
+    assert result["lastProgress"] == message
     matching = [record for record in caplog.records if record.getMessage() == message]
     assert len(matching) == 1
     assert matching[0].levelno == severity
@@ -446,6 +449,39 @@ def test_baseline_is_streamed_and_local_cache_integrity_is_verified(tmp_path):
         collection_worker.baseline_rows(frozen, store, tmp_path)
 
 
+@pytest.mark.parametrize("combined", [False, True])
+def test_processing_does_not_download_unused_live_baselines(monkeypatch, tmp_path, combined):
+    from vulnerability_view.storage_writer import DATASET_FILES
+
+    monkeypatch.chdir(tmp_path)
+    frozen = plan()
+    frozen["settings"]["app_mode"] = "combined" if combined else "live"
+    frozen["reuseBaseline"] = True
+    needed = {"findings", "recommendations", "findingEvents", "recommendationEvents", "runHistory"}
+    expected = set(DATASET_FILES) if combined else needed
+    content = gzip.compress(b"[]")
+    frozen["baseline"] = {"sourceTenantId": TENANT, "files": [
+        {"kind": "curated", "dataset": key, "path": f"curated/{key}.json.gz",
+         "rowCount": 0, "sizeBytes": len(content), "sha256": hashlib.sha256(content).hexdigest()}
+        for key in DATASET_FILES
+    ]}
+    store = WorkerStore()
+    for key in expected:
+        store.files[f"curated/{key}.json.gz"] = content
+    prefix = f"runs/2026/10/23/{frozen['runId']}"
+    store.append_json(f"{prefix}/collected.json", {
+        "sourceTenantId": TENANT, "rawFiles": [], "endpointStatuses": [{"SourceTenantId": TENANT}],
+    })
+
+    def advance(raw, settings, baseline, *args, **kwargs):
+        assert set(baseline) == expected
+        return {"done": False, "nextStage": "reconcile"}
+
+    monkeypatch.setattr(collection_worker, "advance_archived_run", advance)
+    assert collection_worker.process_batch(frozen, store, tmp_path / "cache")["done"] is False
+    assert store.downloads == len(expected)
+
+
 @pytest.mark.parametrize("source", [None, OTHER])
 def test_rejected_baseline_never_reaches_processing_or_history_restore(monkeypatch, tmp_path, source):
     monkeypatch.chdir(tmp_path)
@@ -517,17 +553,30 @@ def test_interrupted_local_cache_append_does_not_poison_saved_remote_page(monkey
     assert cache.read("raw/run/page.json.gz") == b"complete saved checkpoint"
 
 
-@pytest.mark.parametrize("metadata", ["available", "missing", "recovered_missing", "http_error"])
+@pytest.mark.parametrize("metadata", ["available", "missing", "recovered_missing", "http_error", "secure_score_504"])
 @pytest.mark.parametrize("workflow_version", [1, 2, 3])
 def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(monkeypatch, tmp_path, caplog, metadata, workflow_version):
     monkeypatch.chdir(tmp_path)
     credential = tenant_credential(TENANT)
     monkeypatch.setattr(collection_worker, "create_credential", lambda *args: credential)
     monkeypatch.setattr(collection_worker, "_resolve_enrichment_mode", lambda *args: "targeted")
-    monkeypatch.setattr(
-        "vulnerability_view.live_collector.collect_secure_scores",
-        lambda *args, **kwargs: ([], {"Endpoint": "secure_scores", "Status": "Success", "DurationSeconds": 0}),
-    )
+    secure_score_requests = []
+    if metadata == "secure_score_504":
+        caplog.set_level(logging.INFO)
+
+        def secure_score_error(url, **kwargs):
+            secure_score_requests.append(url)
+            response = requests.Response()
+            response.status_code = 504
+            response._content = b"Gateway timeout"
+            return response
+
+        monkeypatch.setattr(requests, "get", secure_score_error)
+    else:
+        monkeypatch.setattr(
+            "vulnerability_view.live_collector.collect_secure_scores",
+            lambda *args, **kwargs: ([], {"Endpoint": "secure_scores", "Status": "Success", "DurationSeconds": 0}),
+        )
     monkeypatch.setattr(
         "vulnerability_view.live_collector.collect_azure_subscriptions",
         lambda *args, **kwargs: ([], {"Endpoint": "azure_subscriptions", "Status": "Success", "DurationSeconds": 0}),
@@ -538,7 +587,7 @@ def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(mon
             "id": "finding-1", "machineId": "device-1", "cveId": "CVE-2026-0001",
             "severity": "High", "productName": "Product",
         }],
-        "/api/vulnerabilities": [{"id": "CVE-2026-0001", "severity": "High"}] if metadata == "available" else [],
+        "/api/vulnerabilities": [{"id": "CVE-2026-0001", "severity": "High"}] if metadata in {"available", "secure_score_504"} else [],
     }
     requests_sent = []
 
@@ -631,7 +680,15 @@ def test_complete_worker_flow_preserves_tables_and_persists_retryable_bundle(mon
     assert findings["rowCount"] == len(rows) == 1
     assert rows[0]["CveId"] == "CVE-2026-0001"
     assert {"FindingKey", "SlaStatus", "LifecycleReason"} <= rows[0].keys()
-    if metadata != "available":
+    if metadata == "secure_score_504":
+        secure_score_status = next(row for row in manifest["endpointStatuses"] if row["Endpoint"] == "secure_scores")
+        assert secure_score_status["Status"] == "OptionalUnavailable"
+        assert secure_score_status["Error"] == "HTTP 504"
+        assert manifest["complete"] is True
+        assert len(secure_score_requests) == 1
+        assert "continuing without Secure Score" in caplog.text
+        assert "[secure_scores] starting optional Microsoft Graph lookup" in caplog.text
+    elif metadata != "available":
         assert rows[0]["CveMetadataStatus"] == "Unavailable"
         assert rows[0]["CvssScore"] is None
         assert rows[0]["FindingStatus"] == "Open"

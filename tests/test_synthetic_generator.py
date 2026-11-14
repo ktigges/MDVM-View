@@ -25,14 +25,18 @@ def test_synthetic_integrity():
     assert {record["DataOrigin"] for record in records} == {"Synthetic"}
     assert all(record["DeviceName"].startswith("SAMPLE-") for record in records)
     assert any(record["FindingStatus"] == "Reopened" for record in records)
-    assert {"Open", "Fixed", "Reopened", "PendingConfirmation", "StaleDevice", "OutOfScope", "Unknown"} <= {
+    assert {"Open", "Fixed", "Reopened", "StaleDevice", "OutOfScope", "Unknown"} <= {
         record["FindingStatus"] for record in records
     }
+    assert not any(record["FindingStatus"] == "PendingConfirmation" for record in records)
+    assert all(record["FixedUtc"] == record["FirstAbsentUtc"] == record["FixedConfirmedUtc"]
+               for record in records if record["FindingStatus"] == "Fixed")
     assert any(not record["AssignedEngineer"] for record in records)
     assert any(not record["ExternalTicketId"] for record in records)
-    assert {"New", "PendingConfirmation", "Fixed", "Reopened", "StaleDevice", "OutOfScope", "Unknown"} <= {
+    assert {"New", "Fixed", "Reopened", "StaleDevice", "OutOfScope", "Unknown"} <= {
         event["EventType"] for event in data["findingEvents"]
     }
+    assert not any(event["EventType"] == "PendingConfirmation" for event in data["findingEvents"])
 
 
 def test_remediation_progress_covers_boundaries():

@@ -324,7 +324,7 @@ failure-related restarts. Billing is continuous rather than per execution.
 The schedule and append-only publication contract are unchanged. Collection
 uses checkpointed Durable activities rather than one invocation carrying the
 whole run. The packaged host uses `functionTimeout: "-1"`; isolated activity
-workers instead enforce one six-hour deadline from the original run timestamp.
+workers instead enforce one eight-hour deadline from the original run timestamp.
 Preparation, collection, waits, retries, processing, verification, and publication
 share that budget. There is no separate 20-minute processing limit. Console
 warnings begin at two hours. Individual API request timeouts, retry budgets, and
@@ -379,7 +379,7 @@ reports resolved-between-runs evidence, not intermediate events or exact patch
 times. No customer device-group changes are required.
 
 There is one collection instance, `vulnerability-collection`. A normal, full,
-or scheduled trigger retains an active run within its six-hour budget. For a
+or scheduled trigger retains an active run within its original deadline. For a
 failed run still within that budget, it submits a new
 Durable execution under the same instance ID with the original run input and
 a reset consecutive-failure counter. The failed runtime execution/history is

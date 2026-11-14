@@ -189,7 +189,7 @@ quota waits, retries, and checkpointed processing can span activities and worker
 restarts. Frozen run settings, policy, baseline, and retained work keep a
 continuation consistent.
 
-The activity supervisors enforce a six-hour limit from the original run time;
+The activity supervisors enforce an eight-hour limit from the original run time;
 retries and quota waits do not restart that clock. Failed or expired evidence
 is retained. A successful trigger request is not proof of completed publication.
 The operations status and completed manifest are authoritative.

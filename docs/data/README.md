@@ -212,7 +212,7 @@ Unknown metadata is not evidence of no exploit or a zero CVSS score.
 | `FirstAbsentUtc`, `ConsecutiveAbsentCount` | Qualified absence evidence |
 | `EffectiveRemediationUtc` | First qualified absence used for SLA; blank when insufficient or revoked |
 | `ConfirmationRunsCompleted`, `ConfirmationRunsRequired` | Confirmation progress |
-| `FixedUtc`, `FixedConfirmedUtc` | Effective remediation time and later confirmation time |
+| `FixedUtc`, `FixedConfirmedUtc` | Effective remediation and recognition times; equal on the first qualified absence under the default one-collection rule |
 | `VerificationFailedUtc` | Return before confirmation |
 | `SlaEvidenceStatus` | Evidence qualifier for the reported SLA result |
 | `ReopenedUtc` | Latest reappearance after confirmed fixed |
@@ -232,8 +232,11 @@ Unknown metadata is not evidence of no exploit or a zero CVSS score.
 `PendingConfirmation` means a fix was observed at its first qualified absence,
 not that remediation is confirmed. Its `EffectiveRemediationUtc` supports daily
 progress, while `SlaStatus` remains open and the row is excluded from completed
-SLA outcomes. A second consecutive qualified absence confirms it by default;
-the first absence remains the effective clearance date. An interruption in
+SLA outcomes. This state applies to older retained snapshots or explicitly
+configured multi-collection policies. The default now counts the first
+qualified absence immediately as `Fixed`; no second collection is required.
+Under an explicit multi-collection rule the first absence remains the
+effective clearance date. An interruption in
 qualified observations restarts the absence sequence. Older retained rows with
 provisional fixed-SLA labels are not treated as completed merely because of
 that label.
@@ -367,19 +370,22 @@ duplicate finding.
 
 ## Lifecycle state determination
 
-Current detection, qualified absence, whole-device disappearance, stale/missing
-inventory, return before confirmation, and reopening are different states.
-A missing finding alone does not establish a fix.
+Current detection, qualified absence, incomplete collection, stale/missing
+inventory, legacy return-before-confirmation, and reopening are different states.
+A missing finding establishes a fix at the first complete collection only when
+the device remains active and fresh. An entirely empty vulnerability list is
+valid clearance if inventory and the vulnerability feed both completed.
 
 [LOGIC.md](../../LOGIC.md#6-finding-completion-and-reopening) contains the rules,
 and the [daily workflow examples](../daily-vulnerability-remediation-workflow.md#simple-sla-lifecycle-examples)
-show how effective time and later confirmation differ.
+show immediate recognition and retained-policy behavior.
 
 ## SLA tracking
 
 The policy retained with a run defines that run's targets. The collector-owned
 `FirstObservedUtc` supplies the normal live SLA start. First qualified absence
-can establish an effective outcome while confirmation remains pending.
+is the default effective and recognized clearance time. Legacy or explicit
+multi-collection policies can retain pending confirmation without completion credit.
 
 Current finding rows retain latest timestamps; event history preserves repeated
 transitions. Historical reports use the available evidence, not an assertion
