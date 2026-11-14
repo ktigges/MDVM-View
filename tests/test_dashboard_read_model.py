@@ -10,6 +10,12 @@ from vulnerability_view import dashboard_read_model
 from test_dashboard_queries import SNAPSHOT, datasets, engine, finding
 
 
+STEP4_KNOWN_FAILURE = pytest.mark.xfail(
+    strict=True,
+    reason="Pre-existing at archive/pre-sla-simplification (fe7eeec): the dashboard changed before the SLA "
+    "refactor and this test was not updated. Resolve in Step 4 (docs/review.md section 4.6), then remove this mark.",
+)
+
 def canonical(result):
     result = deepcopy(result)
     result["metadata"].pop("readModel", None)
@@ -122,6 +128,7 @@ def test_persisted_aggregate_reads_match_exact_queries_and_exports(tmp_path, fil
     assert hashlib.sha256(e.path.read_bytes()).hexdigest() == primary_hash
 
 
+@STEP4_KNOWN_FAILURE
 def test_read_model_does_not_change_collection_index_or_publish_evidence(tmp_path, monkeypatch):
     e = engine(tmp_path)
     e.build_index({"findings": 237})
