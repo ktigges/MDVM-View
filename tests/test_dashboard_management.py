@@ -1352,7 +1352,10 @@ def test_daily_collection_to_dashboard_first_absence_fix_and_reopened_detection(
     sla = result["metadata"]["management"]["sla"]["periods"][0]
     assert sla["outcomes"]["AwaitingConfirmation"] == sla["outcomes"]["Fixed"] == 0
     assert sla["CompliancePercent"] is None
-    assert next(row for row in data["findings"] if row["FindingKey"] == previous[0]["FindingKey"])["FindingStatus"] == "Reopened"
+    # The return starts a new episode: the fixed episode is retained and a new open row has its own clock.
+    by_key = {row["FindingKey"]: row for row in data["findings"]}
+    assert by_key[previous[0]["FindingKey"]]["FindingStatus"] == "Fixed"
+    assert by_key[previous[0]["FindingKey"] + "#e2"]["FindingStatus"] == "Open"
 
 
 @pytest.mark.parametrize("view", ["executive", "sla", "trend", "executiveSnapshot", "slaDashboard", "detail"])
@@ -1369,7 +1372,12 @@ def test_first_absence_math_reconciles_across_dashboard_and_machine_views(tmp_pa
         finding(7, DeviceId="stale", CveId="CVE-STALE"),
         finding(8, DeviceId="missing", CveId="CVE-MISSING"),
     ]
-    previous = [dict(row, FirstObservedUtc=observed, SnapshotTimeUtc=observed, SlaPolicyVersion="retained") for row in previous]
+    # Each row is a separate software item, so rows sharing a machine and CVE are distinct identities.
+    previous = [
+        dict(row, FirstObservedUtc=observed, SnapshotTimeUtc=observed, SlaPolicyVersion="retained",
+             SoftwareName=f"product-{index}", SoftwareVersion="1")
+        for index, row in enumerate(previous)
+    ]
     devices = [
         {"DeviceId": machine, "HealthStatus": "Active", "OnboardingStatus": "Onboarded",
          "LastSeenUtc": absent if machine != "stale" else "2026-10-01T00:00:00Z"}

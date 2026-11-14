@@ -205,6 +205,7 @@ The **Disposition** column is relative to your four states (OW = Open–within, 
    - The dashboard's `_continuous_evidence_aliases` partly hides this in the SLA page only.
 2. **Status/SLA disagreement.** 44 rows are `PendingConfirmation` with `SlaStatus=Fixed*`.
 3. **Delta reconstruction drops non-active rows. [code, suspected — needs a unit test]** `apply_vulnerability_delta` only carries forward `Open/Reopened/DetectionReturned` ([live_collector.py:282](../src/vulnerability_view/live_collector.py#L282)). A `StaleDevice` or `PendingVerification` row is missing from the next "current" set. When its device becomes fresh it looks absent and is marked **Fixed** at that snapshot, even though Defender never sent a `Fixed` event.
+   - **Correction (Step 2, measured):** this was not a bug. Those rows were already absent from Defender's data; Defender sends a delta `Fixed` event only once. Carrying them forward kept 2,193 legitimate fixes open in a replay of the 2026-11-09 run. Step 2 keeps the original intent with an explicit rule: carry only rows detected in the previous run (`LastObservedUtc == SnapshotTimeUtc`). The replay then has the same 2,188 fixed device+CVE pairs as before.
 4. **Findings file grows without bound.** Fixed and unresolved rows are carried forward in every run. On 2026-11-04 the baseline was 1.84M rows against 685k current rows **[data]**. This is what drives the reconcile disk-full failure (Part 3).
 
 ### 2.4 What's missing, and the smallest change
@@ -522,3 +523,19 @@ Step 0 comes first. Steps 1 and 2 are the urgent ones: Step 1 fixes the failing 
 3. **Datasets.** Settled: the screens stay, so all 14 datasets keep being written with their current content.
 4. **Existing open clocks.** When Step 2 first sees Defender's `firstSeenTimestamp` for a pair that is already open, should the start move to Defender's date? Default: **yes**. It's the date you asked for, though some pairs will jump to "past SLA" on the first run after the change.
 5. **Known-exploit rule.** It stays because it's in the policy file (Critical 2 days vs known-exploit 4 days). Edit the file if the 4 days isn't intended.
+
+## Progress log
+
+| Step | Status (2026-11-14) | Notes |
+|---|---|---|
+| 0 — branches | Done | `archive/pre-sla-simplification` (read-only) and `refactor/sla-simplification` (all work). `main`/`latest` unchanged at `033d569`. |
+| Tooling | Done | GitHub menu options 5 (push work branch) and 6 (fast-forward main); deploy menus show the source branch and refuse `archive/*`. |
+| 1 — processing speed / disk | Done, deployed (Function `2026.11.14.3`) | Customer replay byte-identical; reconcile peak disk 15.2 GB → 5.1 GB. |
+| 2 — lifecycle and SLA dates | Done, committed; **not yet deployed** (Function `2026.11.14.4`) | Identity matching, Defender first-seen/fixed dates, 7-day inactive, reopen episodes, Open/Fixed only, optional sources no longer cause PartialSuccess. |
+| 3 — collector API speed | Next | Delta with Scale Set exclusion; per-recommendation calls; referenced-CVE lookup (12,410 missing at the customer); full-run first-seen source. |
+| 4 — dashboard four-state model | Pending | Also resolves the 7 strict-xfail dashboard tests (`STEP4_KNOWN_FAILURE`). |
+| 5 — remove unused internals | Pending | |
+
+**Open question before the customer gets Step 2:** the customer's deployed policy uses `fixedConfirmationRuns: 2` and 48-hour freshness. The release ships the repo policy (1 run, 7 days), which on the customer replay closes 332,856 pending rows (dated at their first absence) and makes 15,411 rows on devices seen 2–7 days ago fixable. Confirm whether the customer keeps 2 confirmation runs.
+
+**To resume:** deploy Step 2 with deployment menu option 3 (Function only, no collection running), run one collection (option 5 → C), confirm status `Success`, then start Step 3.

@@ -593,14 +593,26 @@ def test_retried_publication_is_idempotent():
     store.pointer.upload_blob.assert_not_called()
 
 
-def test_optional_endpoint_issue_is_reported_as_partial_success(caplog):
+def test_unavailable_optional_endpoint_is_a_note_not_partial_success(caplog):
     store = PublicationStore()
     store.manifest["endpointStatuses"].append({"Status": "OptionalUnavailable"})
     store.save_manifest()
     verify_file({**store.reference, "fileIndex": 0}, store)
     with caplog.at_level("INFO"):
         publish_run(store.reference, store)
+    assert "status=Success" in caplog.text
+    assert "reportedIssues=0 optionalNotes=1" in caplog.text
+
+
+def test_incomplete_endpoint_data_is_reported_as_partial_success(caplog):
+    store = PublicationStore()
+    store.manifest["endpointStatuses"].append({"Status": "PartialSuccess"})
+    store.save_manifest()
+    verify_file({**store.reference, "fileIndex": 0}, store)
+    with caplog.at_level("INFO"):
+        publish_run(store.reference, store)
     assert "status=PartialSuccess" in caplog.text
+    assert "reportedIssues=1" in caplog.text
 
 
 class OrchestrationContext:

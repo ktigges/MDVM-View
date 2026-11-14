@@ -443,7 +443,25 @@ def test_current_run_status_summarizes_manifest(monkeypatch):
         "findings": 19638,
         "publishedFiles": 2,
         "reportedIssues": 1,
+        "optionalNotes": [],
     }
+
+
+def test_current_run_status_reports_optional_sources_as_notes_not_issues(monkeypatch):
+    monkeypatch.setattr(function_app.Settings, "load", lambda: function_app.Settings(storage_account_name="history-account"))
+    monkeypatch.setattr(function_app, "create_credential", lambda *args: "credential")
+    monkeypatch.setattr(function_app, "download_current_manifest", lambda *args: {
+        "runId": "live-20261114T152237Z", "snapshotTimeUtc": "2026-11-14T15:22:37Z",
+        "endpointStatuses": [
+            {"Endpoint": "machines", "Status": "Success"},
+            {"Endpoint": "secure_scores", "Status": "OptionalUnavailable", "Error": "HTTP 504"},
+        ],
+        "files": [{"dataset": "findings", "rowCount": 30986}],
+    })
+    status = function_app._current_run_status()
+    assert status["status"] == "Success"
+    assert status["reportedIssues"] == 0
+    assert status["optionalNotes"] == ["secure_scores: HTTP 504"]
 
 
 def test_status_endpoint_returns_not_found_before_first_publication(monkeypatch, durable_client):

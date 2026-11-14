@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "policyVersion": "vulnerability-view-2026-11-13",
+  "policyVersion": "vulnerability-view-2026-11-14",
   "complianceTargetPercent": 85,
   "lifecycle": {
     "fixedConfirmationRuns": 1,
-    "deviceFreshnessHours": 48
+    "deviceFreshnessHours": 168
   },
   "policies": [
     {"policyName":"CriticalKnownExploit","severity":"Critical","knownExploitRequired":true,"slaDays":4},

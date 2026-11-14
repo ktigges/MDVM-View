@@ -324,13 +324,16 @@ def test_backfill_history_replays_runs_in_order(monkeypatch, tmp_path: Path):
     assert uploaded == 0
     with gzip.open(tmp_path / "output/history/live-20260920T000000Z/curated/findings.json.gz", "rt") as handle:
         findings = json.load(handle)
-    assert findings[0]["FindingStatus"] == "PendingVerification"
+    # Historical replay lacks inventory evidence, so absences never earn fix credit: the finding stays Open.
+    assert findings[0]["FindingStatus"] == "Open"
+    assert "incomplete collection" in findings[0]["LifecycleReason"]
     with gzip.open(tmp_path / "output/history/live-20260921T000000Z/curated/findings.json.gz", "rt") as handle:
         findings = json.load(handle)
-    assert findings[0]["FindingStatus"] == "PendingVerification"
+    assert findings[0]["FindingStatus"] == "Open"
+    assert findings[0]["FixedUtc"] == ""
     with gzip.open(tmp_path / "output/history/live-20260922T000000Z/curated/finding-events.json.gz", "rt") as handle:
         events = json.load(handle)
-    assert [event["EventType"] for event in events] == ["New", "PendingVerification", "DetectionReturned"]
+    assert [event["EventType"] for event in events] == ["New"]
 
 
 def test_seed_synthetic_history_builds_six_month_labeled_bundle(monkeypatch, tmp_path: Path):

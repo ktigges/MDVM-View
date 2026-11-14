@@ -1457,6 +1457,17 @@ def test_local_history_is_reused_only_for_the_verified_source_tenant(source, ret
         assert bool(result[key]) is retained
 
 
+def test_vulnerability_delta_carries_only_rows_detected_in_the_previous_run():
+    seen = "2026-11-08T12:30:01Z"
+    previous = [
+        {"FindingKey": "detected", "DeviceId": "d1", "CveId": "CVE-1", "SoftwareName": "App", "SoftwareVersion": "1",
+         "FindingStatus": "Open", "DataOrigin": "Live", "LastObservedUtc": seen, "SnapshotTimeUtc": seen},
+        {"FindingKey": "absent-no-credit", "DeviceId": "d2", "CveId": "CVE-2", "SoftwareName": "App", "SoftwareVersion": "1",
+         "FindingStatus": "Open", "DataOrigin": "Live", "LastObservedUtc": "2026-11-07T12:30:01Z", "SnapshotTimeUtc": seen},
+    ]
+    assert [row["id"] for row in apply_vulnerability_delta(previous, [])] == ["detected"]
+
+
 def test_previous_findings_do_not_reintroduce_an_unselected_raw_archive(monkeypatch, tmp_path):
     from vulnerability_view import dataprep_cli
 
@@ -1478,6 +1489,7 @@ def test_vulnerability_delta_reconstructs_current_detected_snapshot():
 
     reconstructed = apply_vulnerability_delta(previous, changes)
 
+    # Only rows still detected in the previous run are carried; a recorded absence is not re-asserted.
     assert [row["id"] for row in reconstructed] == ["new"]
 
 
@@ -1657,10 +1669,10 @@ def test_live_normalization_uses_collector_first_observation_for_sla():
     result = normalize_live(payloads, datetime(2026, 9, 16, tzinfo=timezone.utc), "live-run")
     row = result["findings"][0]
     assert row["DataOrigin"] == "Live"
-    assert row["FirstSeenUtc"] == ""
+    assert row["FirstSeenUtc"] == "2026-09-16T00:00:00Z"
     assert row["FirstObservedUtc"] == "2026-09-16T00:00:00Z"
     assert row["SlaStartUtc"] == "2026-09-16T00:00:00Z"
-    assert row["SlaPolicyVersion"] == "vulnerability-view-2026-11-13"
+    assert row["SlaPolicyVersion"] == "vulnerability-view-2026-11-14"
     assert row["SlaStatus"] == "OpenWithinSla"
     assert row["AssignedEngineer"] == ""
 
@@ -1796,13 +1808,14 @@ def test_live_reconciliation_counts_first_absence_by_default_and_supports_explic
     )
     by_key = {row["FindingKey"]: row for row in first_reconciliation}
 
-    assert by_key["fixed-key"]["FindingStatus"] == ("Fixed" if required_runs == 1 else "PendingConfirmation")
+    # Only Open and Fixed are written; an absence still counting toward confirmation stays Open.
+    assert by_key["fixed-key"]["FindingStatus"] == ("Fixed" if required_runs == 1 else "Open")
     assert by_key["fixed-key"]["FirstAbsentUtc"] == "2026-09-17T17:05:09Z"
-    assert by_key["fixed-key"]["EffectiveRemediationUtc"] == "2026-09-17T17:05:09Z"
+    assert by_key["fixed-key"]["EffectiveRemediationUtc"] == ("2026-09-17T17:05:09Z" if required_runs == 1 else "")
     assert by_key["fixed-key"]["ConsecutiveAbsentCount"] == 1
     assert by_key["fixed-key"]["ConfirmationRunsCompleted"] == 1
     assert by_key["fixed-key"]["ConfirmationRunsRequired"] == required_runs
-    assert by_key["fixed-key"]["SlaEvidenceStatus"] == ("Confirmed" if required_runs == 1 else "PendingConfirmation")
+    assert by_key["fixed-key"]["SlaEvidenceStatus"] == ("Confirmed" if required_runs == 1 else "InsufficientEvidence")
     assert by_key["fixed-key"]["SlaStatus"] == ("FixedWithinSla" if required_runs == 1 else "OpenWithinSla")
     assert by_key["open-key"]["FindingStatus"] == "Open"
 
@@ -1819,7 +1832,7 @@ def test_live_reconciliation_counts_first_absence_by_default_and_supports_explic
     assert fixed["FixedConfirmedUtc"] == ("2026-09-17T17:05:09Z" if required_runs == 1 else "2026-09-18T17:05:09Z")
     assert fixed["ConsecutiveAbsentCount"] == required_runs
     assert fixed["SlaEvidenceStatus"] == "Confirmed"
-    assert "resolved between runs" in fixed["LifecycleReason"]
+    assert "fixed between collections" in fixed["LifecycleReason"]
 
 
 def test_live_reconciliation_fixes_entire_machine_when_fresh_inventory_and_complete_feed_remain():
@@ -1881,10 +1894,12 @@ def test_first_absence_never_closes_unqualified_device_evidence(device_state):
     result = reconcile_live_findings(
         [], previous, snapshot, "current", devices, collection_complete=device_state != "incomplete",
     )[0]
-    assert result["FindingStatus"] == {
-        "missing": "Unknown", "stale": "StaleDevice", "offboarded": "OutOfScope",
-        "incomplete": "PendingVerification",
-    }[device_state]
+    # Unqualified absences keep the vulnerability open; the reason records why.
+    assert result["FindingStatus"] == "Open"
+    assert {
+        "missing": "no longer in inventory", "stale": "device is inactive", "offboarded": "Offboarded",
+        "incomplete": "incomplete collection",
+    }[device_state] in result["LifecycleReason"]
     assert not result.get("EffectiveRemediationUtc")
     assert not result.get("FixedUtc")
     assert not result.get("FixedConfirmedUtc")
@@ -1903,7 +1918,8 @@ def test_live_reconciliation_does_not_fix_stale_device():
 
     reconciled = reconcile_live_findings([], previous, snapshot, "live-20260920T000000Z", devices)
 
-    assert reconciled[0]["FindingStatus"] == "StaleDevice"
+    assert reconciled[0]["FindingStatus"] == "Open"
+    assert "inactive" in reconciled[0]["LifecycleReason"]
     assert reconciled[0]["FixedUtc"] == ""
     assert reconciled[0]["ConsecutiveAbsentCount"] == 0
 
@@ -1921,9 +1937,14 @@ def test_live_reconciliation_reopens_confirmed_finding():
 
     reconciled = reconcile_live_findings(current, previous, snapshot, "live-20260920T000000Z")
 
-    assert reconciled[0]["FindingStatus"] == "Reopened"
-    assert reconciled[0]["ReopenedUtc"] == "2026-09-20T00:00:00Z"
-    assert reconciled[0]["ConsecutiveAbsentCount"] == 0
+    # A return after a confirmed fix keeps the fixed episode and starts a new one with a new clock.
+    fixed, reopened = reconciled
+    assert (fixed["FindingKey"], fixed["FindingStatus"], fixed["FixedUtc"]) == ("finding-1", "Fixed", "2026-09-18T00:00:00Z")
+    assert reopened["FindingKey"] == "finding-1#e2"
+    assert reopened["FindingStatus"] == "Open"
+    assert reopened["ReopenedUtc"] == "2026-09-20T00:00:00Z"
+    assert reopened["FirstObservedUtc"] == reopened["SlaStartUtc"] == "2026-09-20T00:00:00Z"
+    assert reopened["ConsecutiveAbsentCount"] == 0
 
 
 def test_live_reconciliation_uses_first_qualified_absence_for_sla_without_waiting():
@@ -1939,7 +1960,7 @@ def test_live_reconciliation_uses_first_qualified_absence_for_sla_without_waitin
         "CollectionRunId": "previous",
     }]
     devices = [{"DeviceId": "device-1", "LastSeenUtc": "2026-09-20T22:30:00Z", "HealthStatus": "Active", "OnboardingStatus": "Onboarded"}]
-    other_finding = dict(previous[0], FindingKey="finding-2", SnapshotTimeUtc="2026-09-20T23:00:00Z")
+    other_finding = dict(previous[0], FindingKey="finding-2", CveId="CVE-OTHER", SnapshotTimeUtc="2026-09-20T23:00:00Z")
 
     pending_rows = reconcile_live_findings([other_finding], previous + [other_finding], first_absence, "first-absence", devices)
     pending = {row["FindingKey"]: row for row in pending_rows}["finding-1"]
@@ -1967,7 +1988,7 @@ def test_live_reconciliation_restarts_qualified_absence_after_stale_collection()
         "EffectiveRemediationUtc": "2026-09-20T00:00:00Z",
         "ConsecutiveAbsentCount": 1, "FixedUtc": "",
     }]
-    present = dict(previous[0], FindingKey="present", FindingStatus="Open",
+    present = dict(previous[0], FindingKey="present", CveId="CVE-OTHER", FindingStatus="Open",
                    FirstAbsentUtc="", EffectiveRemediationUtc="", ConsecutiveAbsentCount=0)
     devices = [{"DeviceId": "device-1", "LastSeenUtc": "2026-09-19T00:00:00Z",
                 "HealthStatus": "Inactive", "OnboardingStatus": "Onboarded"}]
@@ -2001,11 +2022,13 @@ def test_live_reconciliation_marks_detection_returned_and_revokes_provisional_sl
 
     returned = reconcile_live_findings(current, previous, snapshot, "returned")[0]
 
-    assert returned["FindingStatus"] == "DetectionReturned"
+    # A legacy pending absence that is detected again is simply still open on its original clock.
+    assert returned["FindingStatus"] == "Open"
     assert returned["EffectiveRemediationUtc"] == ""
-    assert returned["VerificationFailedUtc"] == "2026-09-21T12:00:00Z"
+    assert returned["FirstAbsentUtc"] == ""
+    assert returned["SlaStartUtc"] == "2026-09-14T00:00:00Z"
     assert returned["SlaStatus"] == "OpenOutsideSla"
-    assert returned["SlaEvidenceStatus"] == "DetectionReturned"
+    assert returned["SlaEvidenceStatus"] == "Detected"
 
 
 def test_live_reconciliation_preserves_assigned_sla_policy_version():

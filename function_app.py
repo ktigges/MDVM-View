@@ -21,6 +21,7 @@ from vulnerability_view.credentials import create_credential
 from vulnerability_view.dataprep_cli import main
 from vulnerability_view.defender_client import COLLECTION_PAGE_SIZE, MACHINE_FINDINGS_PAGE_SIZE, DefenderApiError, collection_page_size, probe_defender_page
 from vulnerability_view.storage_writer import download_current_manifest
+from vulnerability_view.run_status import endpoint_issues, endpoint_notes
 from vulnerability_view.collection_workflow import (
     INSTANCE_ID, execute_worker, orchestrate, start_collection,
 )
@@ -72,10 +73,8 @@ def _current_run_status() -> dict:
         settings.storage_current_container_name,
         create_credential(settings.auth_mode, settings.client_id),
     )
-    failures = [
-        row for row in manifest.get("endpointStatuses", [])
-        if row.get("Status") != "Success"
-    ]
+    failures = endpoint_issues(manifest.get("endpointStatuses", []))
+    notes = endpoint_notes(manifest.get("endpointStatuses", []))
     findings = next(
         (
             row.get("rowCount", 0)
@@ -92,6 +91,7 @@ def _current_run_status() -> dict:
         "findings": findings,
         "publishedFiles": len(manifest.get("files", [])),
         "reportedIssues": len(failures),
+        "optionalNotes": [f"{row.get('Endpoint')}: {row.get('Error') or row.get('Status')}" for row in notes],
     }
 
 

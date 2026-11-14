@@ -158,16 +158,22 @@ An exploit-specific match takes precedence over general severity policies.
 Within the selected group, the shortest matching SLA is used. These are sample
 configuration values until adopted as operating policy.
 
-For live data, the SLA starts when this collector first observes the exact
-finding:
+For live data, the SLA starts when Defender first saw the vulnerability on the
+device. When Defender supplies its per-device `firstSeenTimestamp` (delta change
+rows), that time is the start; otherwise the start is the first collection that
+observed the finding:
 
 ```text
-SlaDueUtc = FirstObservedUtc + SlaDays
+SlaStartUtc = Defender firstSeenTimestamp, else FirstObservedUtc
+SlaDueUtc   = SlaStartUtc + SlaDays
+FirstSeenUtc = SlaStartUtc   (a device-level time, not the CVE's tenant-wide first detection)
 ```
 
-This is a calculated SLA target, not a manually assigned remediation-task due
-date. Existing findings preserve their policy name, policy version, duration,
-start, and target across later runs.
+Defender timestamps without an offset are UTC. This is a calculated SLA target,
+not a manually assigned remediation-task due date. Existing findings preserve
+their policy name, policy version, and duration across later runs. When
+Defender later supplies a first-seen time for an open finding, its start moves
+to that time and its target is recalculated with the retained duration.
 
 Possible finding SLA states are:
 
@@ -183,26 +189,39 @@ only in task-specific due-date reporting.
 
 ## 6. Finding completion and reopening
 
-The collector compares current finding keys with the prior live state.
+The collector matches current and prior findings by identity — device, CVE,
+software, and software version — not by the API row ID, which differs between
+full and delta collections. A matched finding keeps its existing `FindingKey`.
+Every finding row is either `Open` or `Fixed`.
 
 | Observation | Result |
 |---|---|
-| Present in both snapshots | Preserve first observation and remain open |
-| Previously fixed key appears again | `Reopened`; set `ReopenedUtc` |
-| First qualified absence | `Fixed`; set `FirstAbsentUtc`, `EffectiveRemediationUtc`, `FixedUtc`, and `FixedConfirmedUtc` in that collection |
-| Pending finding appears again | `DetectionReturned`; revoke provisional remediation and restore the current open SLA result |
-| All findings disappear for an active, fresh device and the vulnerability collection is complete | `Fixed`; an empty vulnerability list can represent a fully remediated machine |
-| Inventory or vulnerability collection is incomplete | `PendingVerification`; no fix credit for newly absent evidence |
-| Device is stale or not fresh | `StaleDevice`, not fixed |
-| Device is offboarded or unsupported | `OutOfScope`, not fixed |
-| Device is missing from inventory | `Unknown`, not fixed |
+| Present in both snapshots | `Open`; keep the first observation and SLA clock |
+| Previously fixed finding appears again | A new episode: the fixed row is retained, and a new `Open` row (key suffix `#e2`, `#e3`, …) starts a new SLA clock and sets `ReopenedUtc` |
+| Defender delta reports the finding `Fixed` | `Fixed`; `FixedUtc` is Defender's `eventTimestamp` (accurate to about six hours), even if the device has since gone inactive |
+| First qualified absence | `Fixed`; `FixedUtc` is that collection's snapshot time |
+| Inventory or vulnerability collection is incomplete | `Open`; no fix credit for newly absent evidence |
+| Device inactive (not active, or not seen within 7 days), offboarded, unsupported, or missing from inventory | `Open` with a lifecycle reason; no fix credit. The dashboard flags the device as inactive |
 
 An absence is qualified only when inventory and vulnerability collection both
 succeeded, the device remains active, and its last-seen time is within the
-configured 48-hour freshness window. The default required absence count is one:
-there is no extra confirmation run. A Defender task being completed does not
-by itself mark evidence fixed. The timestamp establishes clearance observed
-between collections, not an exact patch-installation time.
+configured freshness window (`deviceFreshnessHours`, 168 hours = 7 days). The
+default required absence count is one: there is no extra confirmation run. A
+Defender task being completed does not by itself mark evidence fixed. Without a
+Defender fix event, the timestamp establishes clearance observed between
+collections, not an exact patch-installation time.
+
+In delta collections, only findings Defender still reported in the previous run
+are carried forward; a finding whose absence was already recorded is not
+re-asserted as detected, because Defender sends its Fixed event only once.
+
+Rows written by earlier versions are read with these rules: `Reopened`,
+`DetectionReturned`, `PendingConfirmation`, `PendingVerification`,
+`StaleDevice`, `OutOfScope`, and `Unknown` are all unresolved. Duplicate
+unresolved rows for one identity (left by earlier key changes) merge into the
+earliest, and a `Fixed` row whose fix time equals another row's first
+observation — a key change, not a real fix — merges back so the original SLA
+clock is kept. Retained historical runs are never rewritten.
 
 A machine/CVE is fixed only when all its software evidence is gone. A CVE still
 detected through another product/version on the same machine remains open.
@@ -210,12 +229,16 @@ Across the dashboard, a distinct CVE is fully cleared only when no machine
 in scope remains vulnerable. Software evidence removals do not multiply either
 the distinct-CVE or distinct-machine totals.
 
-An explicitly configured `fixedConfirmationRuns` greater than one still uses
-`PendingConfirmation` until that many consecutive qualified absences. These
-rows stay unresolved, even with an effective absence timestamp. Retained
-snapshots keep their original policy and are not rewritten. Existing pending
-rows are reassessed on the next new collection under the new default; missing,
-stale, or incomplete evidence never becomes a fix merely through that change.
+An explicitly configured `fixedConfirmationRuns` greater than one keeps the
+finding `Open` until that many consecutive qualified absences, then records it
+`Fixed` at the first absence. Retained snapshots keep their original policy and
+are not rewritten; missing, inactive, or incomplete evidence never becomes a
+fix merely through a configuration change.
+
+A run is `PartialSuccess` only when a required source failed or a source
+returned incomplete data. An unavailable optional source (Secure Score, Azure
+subscription inventory) is reported as an optional note and leaves the run
+`Success`.
 
 ## 7. Remediation outcome
 
