@@ -687,3 +687,57 @@ print(json.dumps({"rss":rss if sys.platform == "darwin" else rss*1024,"counts":c
     small, large = measure(1000), measure(100000)
     print(f"full finalization native peak RSS: 1,000={small:,}; 100,000={large:,} bytes")
     assert large < small + 24 * 1024 * 1024
+
+
+def _metadata_client(fail):
+    """Fake client: ``fail(call_number, ids)`` decides whether a lookup request fails with HTTP 500."""
+    import re
+    from vulnerability_view.defender_client import DefenderHttpError
+
+    calls = []
+
+    class Client:
+        def collect(self, endpoint, query, **kwargs):
+            ids = re.findall("id eq '([^']+)'", query["$filter"])
+            calls.append(ids)
+            if fail(len(calls), ids):
+                raise DefenderHttpError("HTTP 500")
+            return [{"id": value} for value in ids], {"PageCount": 1}
+
+    return Client(), calls
+
+
+def _referenced(work, count):
+    archive_raw_rows("machine_vulnerabilities", ({"cveId": f"CVE-2026-{i:06d}"} for i in range(count)), RUN_ID, work)
+    return work / RUN_ID, next(endpoint for endpoint in ENDPOINTS if endpoint.name == "vulnerabilities")
+
+
+def test_one_failed_cve_batch_does_not_stop_later_batches(work):
+    raw, endpoint = _referenced(work, 50)
+    client, calls = _metadata_client(lambda number, ids: number == 2)
+    _, status = live_collector._collect_referenced_catalog(client, endpoint, raw, cve_batch_size=10)
+    assert len(calls) == 5  # every batch requested once; no in-run retry (checkpoints keep successes only)
+    assert status["Status"] == "PartialSuccess"
+    assert status["MissingCveIds"] == [f"CVE-2026-{i:06d}" for i in range(10, 20)]
+    assert status["RowCount"] == 40
+    assert status["FailedRequestCount"] == 1
+
+
+def test_persistently_failing_cve_batch_marks_only_its_own_cves_missing(work):
+    raw, endpoint = _referenced(work, 50)
+    failing = {f"CVE-2026-{i:06d}" for i in range(10, 20)}
+    client, _ = _metadata_client(lambda number, ids: bool(failing & set(ids)))
+    _, status = live_collector._collect_referenced_catalog(client, endpoint, raw, cve_batch_size=10)
+    assert status["Status"] == "PartialSuccess"
+    assert set(status["MissingCveIds"]) == failing
+    assert status["RowCount"] == 40
+    assert "Metadata unavailable for 10 referenced CVEs" in status["Error"] and "HTTP 500" in status["Error"]
+
+
+def test_cve_lookup_stops_after_consecutive_failures(work):
+    raw, endpoint = _referenced(work, 100)
+    client, calls = _metadata_client(lambda number, ids: True)
+    _, status = live_collector._collect_referenced_catalog(client, endpoint, raw, cve_batch_size=10)
+    assert len(calls) == live_collector.CVE_METADATA_MAX_CONSECUTIVE_FAILURES
+    assert status["MissingCveCount"] == 100
+    assert "stopped after 5 consecutive failed batches" in status["Error"]

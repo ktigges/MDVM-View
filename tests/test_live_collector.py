@@ -1181,11 +1181,14 @@ def test_scale_set_detection_uses_metadata_not_device_names(field):
     assert not live_collector.is_scale_set_device({"vmMetadata": None})
 
 
-def test_delta_request_with_scale_set_exclusion_uses_scoped_snapshot_instead(device_scoped_run):
+def test_delta_with_scale_set_exclusion_uses_the_change_feed_for_included_devices_only(device_scoped_run):
     payloads, _, calls, failures = device_scoped_run
     failures["device-2"] = requests.ReadTimeout("Scale-set findings must never be requested")
     payloads["vulnerability_changes"] = [
-        {"machineId": "device-2", "cveId": "CVE-2026-0001", "productName": "Product", "status": "New"},
+        {"machineId": "device-2", "cveId": "CVE-2026-0001", "productName": "Product", "status": "New",
+         "eventTimestamp": "2026-10-17T12:00:00Z"},
+        {"machineId": "device-3", "cveId": "CVE-2026-0003", "productName": "Product", "status": "New",
+         "eventTimestamp": "2026-10-17T12:00:00Z"},
     ]
     previous = [
         {"FindingKey": device_id, "DeviceId": device_id, "CveId": "CVE-2026-0001", "SoftwareName": "Product", "FindingStatus": "Open", "DataOrigin": "Live"}
@@ -1197,10 +1200,13 @@ def test_delta_request_with_scale_set_exclusion_uses_scoped_snapshot_instead(dev
         previous_findings=previous, previous_snapshot=datetime(2026, 10, 18, tzinfo=timezone.utc),
         exclude_scale_sets=True,
     )
-    assert {row["DeviceId"] for row in actual["findings"]} == {"device-1"}
+    # The scale-set device's prior row and its delta change are both dropped; included devices keep theirs.
+    assert {(row["DeviceId"], row["CveId"]) for row in actual["findings"]} == {
+        ("device-1", "CVE-2026-0001"), ("device-3", "CVE-2026-0003"),
+    }
     assert {row["DeviceId"] for row in actual["devices"]} == {"device-1", "device-3"}
-    assert all("/SoftwareVulnerabilityChangesByMachine" not in url for url in calls)
-    assert all(row["VulnerabilityCollectionMode"] == "full" for row in statuses)
+    assert any("/SoftwareVulnerabilityChangesByMachine" in url for url in calls)
+    assert all(row["VulnerabilityCollectionMode"] == "delta" for row in statuses)
     assert all("device-2" not in url for url in calls)
 
 

@@ -531,8 +531,9 @@ Step 0 comes first. Steps 1 and 2 are the urgent ones: Step 1 fixes the failing 
 | 0 — branches | Done | `archive/pre-sla-simplification` (read-only) and `refactor/sla-simplification` (all work). `main`/`latest` unchanged at `033d569`. |
 | Tooling | Done | GitHub menu options 5 (push work branch) and 6 (fast-forward main); deploy menus show the source branch and refuse `archive/*`. |
 | 1 — processing speed / disk | Done, deployed (Function `2026.11.14.3`) | Customer replay byte-identical; reconcile peak disk 15.2 GB → 5.1 GB. |
-| 2 — lifecycle and SLA dates | Done, committed; **not yet deployed** (Function `2026.11.14.4`) | Identity matching, Defender first-seen/fixed dates, 7-day inactive, reopen episodes, Open/Fixed only, optional sources no longer cause PartialSuccess. |
-| 3 — collector API speed | Next | Delta with Scale Set exclusion; per-recommendation calls; referenced-CVE lookup (12,410 missing at the customer); full-run first-seen source. |
+| 2 — lifecycle and SLA dates | Done, deployed (Function `2026.11.14.4`); validated 2026-11-15 on a full and a delta run | Identity matching, Defender first-seen/fixed dates, 7-day inactive, reopen episodes, Open/Fixed only, optional sources no longer cause PartialSuccess. Follow-up fix (`2026.11.15.1`): kept-open rows use the SLA start as `FirstSeenUtc`. |
+| Console | Done (tooling only) | Deployment menu 7 → 1 and 7 → 15 show one status line plus warnings/errors with HTTP codes; 7 → 16 keeps the raw view. |
+| 3 — collector API speed | Done, **not yet deployed** (Function `2026.11.15.2`) | Delta runs now work with Scale Set exclusion (allow-list of included devices, filtered while streaming). A failed CVE-detail batch no longer stops the lookup (the customer lost 12,410 CVEs to one HTTP 500). New debug probe: menu 5 → D → E tests the full-export endpoint for Defender first-seen dates. |
 | 4 — dashboard four-state model | Pending | Also resolves the 7 strict-xfail dashboard tests (`STEP4_KNOWN_FAILURE`). |
 | 5 — remove unused internals | Pending | |
 

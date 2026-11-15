@@ -197,7 +197,7 @@ function Invoke-LiveCollection {
     $debugEndpoint = "machine_vulnerabilities"
     if ($debugOnly) {
         while ($true) {
-            $endpoint = (Read-Host "M) Machine vulnerability findings; V) Vulnerability catalog [M]").Trim()
+            $endpoint = (Read-Host "M) Machine vulnerability findings; V) Vulnerability catalog; E) Software vulnerabilities export (checks Defender first-seen dates) [M]").Trim()
             if (-not $endpoint -or $endpoint -match "^[Mm]$") {
                 break
             }
@@ -206,7 +206,12 @@ function Invoke-LiveCollection {
                 $pageDefault = "1000"
                 break
             }
-            Write-Host "Select M for machine findings or V for the vulnerability catalog."
+            if ($endpoint -match "^[Ee]$") {
+                $debugEndpoint = "software_vulnerabilities"
+                $pageDefault = "1000"
+                break
+            }
+            Write-Host "Select M for machine findings, V for the vulnerability catalog, or E for the software vulnerabilities export."
         }
     }
     Write-Host "Page size controls each request, not the total records collected."

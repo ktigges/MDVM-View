@@ -315,10 +315,12 @@ def test_delta_worker_restarts_directly_and_commits_the_same_immutable_raw_pages
         assert item["sha256"] == hashlib.sha256(store.read(item["path"])).hexdigest()
 
 
-def test_scoped_worker_selects_snapshot_without_loading_previous_findings(monkeypatch, tmp_path):
+def test_scale_set_exclusion_uses_the_normal_delta_policy_with_a_baseline(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(collection_worker, "baseline_rows",
-                        lambda *args, **kwargs: pytest.fail("Scoped collection does not need baseline rows"))
+    loaded = []
+    monkeypatch.setattr(collection_worker, "baseline_rows", lambda *args, **kwargs: loaded.append(True) or {})
+    previous = datetime(2026, 10, 22, tzinfo=UTC)
+    monkeypatch.setattr(collection_worker, "_resolve_collection_mode", lambda *args: ("delta", previous))
     run = plan()
     run["settings"]["exclude_scale_sets"] = True
     run["collection"] = "auto"
@@ -330,22 +332,30 @@ def test_scoped_worker_selects_snapshot_without_loading_previous_findings(monkey
 
     monkeypatch.setattr(collection_worker, "collect_live", collect)
     result = collection_worker.collect_batch(run, WorkerStore(), tmp_path / "cache")
-    assert result["collectionMode"] == received["vulnerability_collection_mode"] == "full"
+    assert loaded
+    assert result["collectionMode"] == received["vulnerability_collection_mode"] == "delta"
     assert received["exclude_scale_sets"] is True
-    assert result["sinceTime"] is None
+    assert result["sinceTime"] == previous.isoformat()
 
 
-def test_old_frozen_delta_is_not_silently_reinterpreted_as_a_scoped_snapshot(monkeypatch, tmp_path):
+def test_frozen_delta_with_scale_set_exclusion_runs_as_delta(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(collection_worker, "baseline_rows", lambda *args, **kwargs: {})
     run = plan()
     run["settings"]["exclude_scale_sets"] = True
     store = WorkerStore()
     path = f"runs/2026/10/23/{run['runId']}/collection-inputs.json"
     store.append_json(path, {"mode": "delta", "previousSnapshot": "2026-10-22T00:00:00+00:00"})
-    frozen = dict(store.files)
-    monkeypatch.setattr(collection_worker, "collect_live", lambda *args, **kwargs: pytest.fail("Must fail before HTTP"))
-    with pytest.raises(ValueError, match="Stop the old run"):
-        collection_worker.collect_batch(run, store, tmp_path / "cache")
-    assert store.files == frozen
+    received = {}
+
+    def collect(*args, **kwargs):
+        received.update(kwargs)
+        raise CheckpointYield()
+
+    monkeypatch.setattr(collection_worker, "collect_live", collect)
+    collection_worker.collect_batch(run, store, tmp_path / "cache")
+    assert received["vulnerability_collection_mode"] == "delta"
+    assert received["exclude_scale_sets"] is True
 
 
 def test_collection_logs_only_throttled_endpoint_counts_and_errors(monkeypatch, tmp_path, caplog):

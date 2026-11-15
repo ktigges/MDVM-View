@@ -161,16 +161,18 @@ def test_collection_mode_rejects_forced_delta_outside_defender_window():
         raise AssertionError("stale forced delta should fail")
 
 
-@pytest.mark.parametrize("requested", [None, "auto", "full", "delta"])
-def test_scale_set_exclusion_always_uses_scoped_snapshot_without_loading_baseline(requested):
-    class UnreadableFindings:
-        def __iter__(self):
-            pytest.fail("Scoped snapshot selection must not scan the baseline")
-
-    settings = Settings(exclude_scale_sets=True)
-    assert _resolve_collection_mode(
-        settings, {"findings": UnreadableFindings()}, requested,
-    ) == ("full", None)
+@pytest.mark.parametrize("requested,expected", [(None, "delta"), ("auto", "delta"), ("delta", "delta"), ("full", "full")])
+def test_scale_set_exclusion_no_longer_forces_full_collection(requested, expected):
+    previous = datetime(2026, 10, 20, 12, tzinfo=UTC)
+    existing = {
+        "findings": [{"DataOrigin": "Live", "SnapshotTimeUtc": "2026-10-20T12:00:00Z"}],
+        "vulnerabilities": [{"CveId": "CVE-2026-0001"}],
+    }
+    mode, since = _resolve_collection_mode(
+        Settings(exclude_scale_sets=True, full_collection_weekday=6), existing, requested, previous + timedelta(days=1),
+    )
+    assert mode == expected
+    assert since == previous
 
 
 def test_synthetic_device_count_can_be_configured(monkeypatch, tmp_path: Path):

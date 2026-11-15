@@ -19,7 +19,7 @@ from azure.core.exceptions import AzureError, ResourceNotFoundError
 from vulnerability_view.config import Settings, load_function_version
 from vulnerability_view.credentials import create_credential
 from vulnerability_view.dataprep_cli import main
-from vulnerability_view.defender_client import COLLECTION_PAGE_SIZE, MACHINE_FINDINGS_PAGE_SIZE, DefenderApiError, collection_page_size, probe_defender_page
+from vulnerability_view.defender_client import COLLECTION_PAGE_SIZE, DEBUG_ENDPOINTS, MACHINE_FINDINGS_PAGE_SIZE, DefenderApiError, collection_page_size, probe_defender_page
 from vulnerability_view.storage_writer import download_current_manifest
 from vulnerability_view.run_status import endpoint_issues, endpoint_notes
 from vulnerability_view.collection_workflow import (
@@ -151,9 +151,9 @@ def dataprep_debug_http(req: func.HttpRequest) -> func.HttpResponse:
         if not isinstance(options, dict):
             raise ValueError("Debug request must be a JSON object")
         endpoint = options.get("endpoint", "machine_vulnerabilities")
-        if endpoint not in ("machine_vulnerabilities", "vulnerabilities"):
-            raise ValueError("Debug endpoint must be machine_vulnerabilities or vulnerabilities")
-        page_size = collection_page_size(options.get("pageSize", COLLECTION_PAGE_SIZE if endpoint == "vulnerabilities" else 1), maximum=COLLECTION_PAGE_SIZE)
+        if endpoint not in DEBUG_ENDPOINTS:
+            raise ValueError("Debug endpoint must be machine_vulnerabilities, vulnerabilities, or software_vulnerabilities")
+        page_size = collection_page_size(options.get("pageSize", 1 if endpoint == "machine_vulnerabilities" else COLLECTION_PAGE_SIZE), maximum=COLLECTION_PAGE_SIZE)
     except ValueError as error:
         logging.warning("[debug] FAILED: Invalid debug request: %s", error)
         return func.HttpResponse(
@@ -205,9 +205,9 @@ def _manual_page_size(input: str, default: int = MACHINE_FINDINGS_PAGE_SIZE) -> 
 def dataprep_debug_page(input: str) -> None:
     """Probe one Defender page without changing any published data."""
     endpoint = _manual_options(input).get("endpoint", "machine_vulnerabilities")
-    if endpoint not in ("machine_vulnerabilities", "vulnerabilities"):
-        raise ValueError("Debug endpoint must be machine_vulnerabilities or vulnerabilities.")
-    page_size = collection_page_size(_manual_options(input).get("pageSize", COLLECTION_PAGE_SIZE if endpoint == "vulnerabilities" else 1), maximum=COLLECTION_PAGE_SIZE)
+    if endpoint not in DEBUG_ENDPOINTS:
+        raise ValueError("Debug endpoint must be machine_vulnerabilities, vulnerabilities, or software_vulnerabilities.")
+    page_size = collection_page_size(_manual_options(input).get("pageSize", 1 if endpoint == "machine_vulnerabilities" else COLLECTION_PAGE_SIZE), maximum=COLLECTION_PAGE_SIZE)
     logging.info("Starting Defender page debug version %s; endpoint %s; page size %s; no publication", COLLECTOR_VERSION, endpoint, page_size)
     exit_code = _run_dataprep(page_size=page_size, debug=True, debug_endpoint=endpoint)
     if exit_code:

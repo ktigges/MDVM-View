@@ -428,13 +428,14 @@ deadline; Durable activities retain response and processing checkpoints across
 worker interruptions. Recovery preserves the active run's original settings
 instead of silently starting a replacement.
 
-When `EXCLUDE_SCALE_SETS=true`, complete/manual/scheduled collection uses
-device-scoped snapshots even if `auto` or `delta` was requested. Recognized
-scale sets are skipped before findings requests; the tenant-wide delta feed is
-not downloaded. Completed device/page checkpoints are reused on retries.
-Run-to-run changes retain existing confirmation and stale/missing-device rules;
-confirmed absence means **resolved between runs**, not an exact patch time.
-With the flag off, the existing automatic full/delta policy remains unchanged.
+When `EXCLUDE_SCALE_SETS=true`, the normal `auto` full/delta policy still
+applies. Full runs skip recognized scale sets before findings requests and page
+findings per included device. Delta runs download the tenant-wide change feed
+and keep only changes for this run's included (non-scale-set) devices, dropping
+scale-set rows while streaming, before the delta is applied. Completed
+device/page checkpoints are reused on retries. Defender `Fixed` events carry
+their fix time; otherwise a confirmed absence means **resolved between runs**,
+not an exact patch time.
 
 Equivalent cross-platform commands:
 

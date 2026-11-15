@@ -90,12 +90,13 @@ invoke_collection() {
   if [[ "$confirmation" == "DEBUG" ]]; then
     page_max=1000
     while true; do
-      printf 'M) Machine vulnerability findings\nV) Vulnerability catalog\nDebug endpoint [M]: '
+      printf 'M) Machine vulnerability findings\nV) Vulnerability catalog\nE) Software vulnerabilities export (checks Defender first-seen dates)\nDebug endpoint [M]: '
       read -r choice
       case "${choice:-M}" in
         M|m) break ;;
         V|v) debug_endpoint=vulnerabilities; page_default=1000; break ;;
-        *) printf 'Select M for machine findings or V for the vulnerability catalog.\n' ;;
+        E|e) debug_endpoint=software_vulnerabilities; page_default=1000; break ;;
+        *) printf 'Select M for machine findings, V for the vulnerability catalog, or E for the software vulnerabilities export.\n' ;;
       esac
     done
     args+=(--endpoint "$debug_endpoint")
