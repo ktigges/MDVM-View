@@ -241,10 +241,17 @@ def test_generated_bundle_prepares_all_real_dashboard_views(generated, tmp_path)
         lambda name: iter_json_rows(bundle / "curated" / f"{name}.json.gz"),
     )
     filters = initial_filters(tool.ROOT / "dashboard/config.js")
+    # Default scope: unresolved findings on active devices. Legacy PendingVerification rows are
+    # absences without fix credit, so they count as inactive and are left out by default.
+    rows = list(iter_json_rows(bundle / "curated" / "findings.json.gz"))
+    expected = sum(row["FindingStatus"] in {"Open", "Reopened"} for row in rows)
+    assert expected == 5
     for view in PREPARED_VIEWS:
         payload = {"view": view, "filters": filters, "mode": "findings", "limit": 100}
         engine.prepare(payload)
-        assert engine.query(payload)["scope"]["findings"] == 7
+        assert engine.query(payload)["scope"]["findings"] == expected
+        included = {**payload, "filters": {**filters, "includeInactive": True}}
+        assert engine.query(included)["scope"]["findings"] == 7
 
 
 @pytest.mark.parametrize("change", ["hash", "size", "rows"])

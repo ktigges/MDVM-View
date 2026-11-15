@@ -56,7 +56,8 @@ def generate_data(
         if not mixed_lifecycle:
             return {}
         first = snapshot - timedelta(days=5 + index % 90)
-        status = ("Fixed", "PendingVerification", "Reopened", "Open")[index % 4]
+        # Current collector output: only Open and Fixed (one in four fixed).
+        status = ("Fixed", "Open", "Open", "Open")[index % 4]
         absence = snapshot
         due = first + timedelta(days=30)
         fixed = absence if status == "Fixed" else snapshot - timedelta(days=3) if status == "Reopened" else None

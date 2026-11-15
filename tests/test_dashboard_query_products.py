@@ -41,7 +41,7 @@ def test_restored_summary_refreshes_wording_without_rebuilding_read_model(tmp_pa
     assert result["cards"]["executiveWorkload"][0] == [
         20, "Active exposure instances", "20 distinct active CVEs across 12 affected devices",
     ]
-    assert result["cards"]["executiveWorkload"][1][1] == "Pending exposure instances"
+    assert result["cards"]["executiveWorkload"][1][1] == "Open on inactive devices"
 
 
 def test_plan_probe_requires_existing_exact_aggregate_and_never_ingests(tmp_path):

@@ -424,15 +424,17 @@ def test_machine_active_totals_exclude_pending_but_keep_all_evidence_and_distinc
     query_engine = engine(tmp_path, data)
     request = {
         "view": "detail", "selection": {"type": "machine", "id": device},
-        "filters": {"exposureStatus": "DetectedAndPending"}, "limit": 200,
+        "filters": {"exposureStatus": "DetectedAndPending", "includeInactive": True}, "limit": 200,
     }
     result = query_engine.query(request)
+    # Inactive is decided per machine/CVE pair: 65 legacy pending rows share a CVE with detected rows
+    # on this machine, so those pairs are open; the remaining 85 are on inactive pairs.
     assert result["detail"]["counts"] == {
-        "activeCves": 165, "activeFindings": 185, "pendingFindings": 150,
-        "pendingCves": 150, "evidenceRows": 335,
+        "activeCves": 165, "activeFindings": 250, "pendingFindings": 85,
+        "pendingCves": 85, "evidenceRows": 335,
     }
     assert result["cards"]["pivotCards"][0] == [165, "Distinct active CVEs"]
-    assert result["cards"]["pivotCards"][1] == [185, "Active exposure instances"]
+    assert result["cards"]["pivotCards"][1] == [250, "Active exposure instances"]
     assert "excluded from active totals" in result["texts"]["pivotSummary"]
     assert result["tables"]["pivotFindingTable"]["total"] == 335
     assert result["tables"]["pivotFindingTable"]["rowLabel"] == "evidence rows"
@@ -440,13 +442,14 @@ def test_machine_active_totals_exclude_pending_but_keep_all_evidence_and_distinc
     assert len(last["tables"]["pivotFindingTable"]["items"]) == 135
     machine = result["tables"]["pivotTable"]["items"][0]
     assert machine["DetectedCVEs"] == 165
-    assert machine["PendingCVEs"] == 150
+    assert machine["PendingCVEs"] == 85
     cve_rows = result["tables"]["pivotCveTable"]["items"]
     pending_only = next(row for row in cve_rows if row["CveId"] == "CVE-2026-0165")
     assert pending_only["DetectedMachines"] == pending_only["OpenFindings"] == 0
     assert pending_only["PendingFindings"] == pending_only["EvidenceRows"] == 1
     shared = next(row for row in cve_rows if row["CveId"] == "CVE-2026-0100")
-    assert shared["OpenFindings"] == shared["PendingFindings"] == 1
+    # Detected and absent software rows for the same machine/CVE form one open pair.
+    assert (shared["OpenFindings"], shared["PendingFindings"]) == (2, 0)
     assert shared["DetectedMachines"] == 1
     exported = list(query_engine.iter_export({**request, "table": "pivotFindingTable"}))
     assert len(exported) == 335
@@ -454,18 +457,22 @@ def test_machine_active_totals_exclude_pending_but_keep_all_evidence_and_distinc
     grouped_export = list(query_engine.iter_export({**request, "table": "pivotCveTable"}))
     assert "EvidenceRows" in grouped_export[0]
     assert "FindingInstances" not in grouped_export[0]
-    overview = query_engine.query({"view": "overview", "filters": {"search": device}})
+    # Default scope leaves inactive pairs out entirely.
+    default = query_engine.query({"view": "overview", "filters": {"search": device}})
+    assert (default["scope"]["pending"], default["tables"]["findingsTable"]["total"]) == (0, 250)
+    included = {"includeInactive": True}
+    overview = query_engine.query({"view": "overview", "filters": {"search": device, **included}})
     assert overview["scope"]["detectedCves"] == 165
-    assert overview["scope"]["pending"] == 150
+    assert overview["scope"]["pending"] == 85
     assert overview["tables"]["findingsTable"]["total"] == 335
     assert "165 distinct active CVEs" in overview["texts"]["findingsListContext"]
-    overview_cves = query_engine.query({"view": "overview", "mode": "cves"})
+    overview_cves = query_engine.query({"view": "overview", "mode": "cves", "filters": included})
     assert overview_cves["tables"]["findingsTable"]["total"] == 250
     assert overview_cves["tables"]["findingsTable"]["rowLabel"] == "CVEs with evidence"
-    overview_export = list(query_engine.iter_export({"view": "overview", "mode": "cves"}))
+    overview_export = list(query_engine.iter_export({"view": "overview", "mode": "cves", "filters": included}))
     assert len(overview_export) == 250
-    assert sum(row["OpenFindings"] for row in overview_export) == 185
-    assert sum(row["PendingFindings"] for row in overview_export) == 150
+    assert sum(row["OpenFindings"] for row in overview_export) == 250
+    assert sum(row["PendingFindings"] for row in overview_export) == 85
     assert sum(row["EvidenceRows"] for row in overview_export) == 335
 
 
@@ -512,7 +519,7 @@ def test_machine_related_recommendations_preserve_scope_counts_and_navigation(tm
     e = engine(tmp_path, data)
     request = {
         "view": "detail", "selection": {"type": "machine", "id": "device-0"},
-        "filters": {"exposureStatus": "DetectedAndPending"}, "limit": 1,
+        "filters": {"exposureStatus": "DetectedAndPending", "includeInactive": True}, "limit": 1,
     }
     result = e.query(request)
     assert [2, "Related recommendations"] in result["cards"]["pivotCards"]
@@ -540,7 +547,7 @@ def test_pending_only_device_has_no_active_vulnerability_or_severity_totals(tmp_
     data = datasets(0)
     data["findings"] = [finding(0, FindingStatus="PendingVerification", Severity="Critical")]
     query_engine = engine(tmp_path, data)
-    result = query_engine.query({"view": "workstations"})
+    result = query_engine.query({"view": "workstations", "filters": {"includeInactive": True}})
     device = next(row for row in result["tables"]["workstationTable"]["items"] if row["DeviceId"] == "device-0")
     assert device["OpenFindings"] == 0
     assert device["PendingFindings"] == 1
@@ -833,7 +840,7 @@ def test_sla_fixed_device_pairs_preserve_unresolved_and_null_key_semantics(tmp_p
                 SlaStatus="FixedWithinSla" if status == "Fixed" else "OpenWithinSla")
         for index, (device, recommendation, status) in enumerate(cases)
     ]
-    result = engine(tmp_path, data).query({"view": "sla"})
+    result = engine(tmp_path, data).query({"view": "sla", "filters": {"includeInactive": True}})
     rows = {row["RecommendationId"]: row for row in result["tables"]["remediationOutcomeTable"]["items"]}
     assert rows["rec-0"]["FixedDevicesToday"] == 2
     assert rows["rec-1"]["FixedDevicesToday"] == 0
@@ -856,13 +863,13 @@ def test_sla_ignores_exposure_and_period_filters_and_uses_first_absence(tmp_path
         "view": "sla", "filters": {
             "exposureStatus": "DetectedOnly", "newPeriodFilter": True,
             "newPeriod": "custom", "newPeriodStart": "2020-01-01", "newPeriodEnd": "2020-01-02",
-            "remediationPeriodFilter": True,
+            "remediationPeriodFilter": True, "includeInactive": True,
         },
     })
     cards = {label: value for value, label in result["cards"]["slaCards"]}
     assert cards["Finding instances observed"] == 5
     assert cards["Findings confirmed fixed"] == 2
-    assert cards["SLA remediations pending verification"] == 2
+    assert cards["Open on inactive devices"] == 2
     assert cards["Remediation observed within policy SLA"] == 1
     assert cards["Remediation observed outside policy SLA"] == 0
     assert cards["Detected findings overdue"] == 1
@@ -933,7 +940,7 @@ def test_new_and_remediation_activity_have_independent_scope(tmp_path):
     ]
     result = engine(tmp_path, data).query({"view": "overview", "filters": {"exposureStatus": "DetectedOnly", "newPeriodFilter": True}})
     assert result["activity"]["newFindings"] == 1
-    assert result["activity"]["fixedFindings"] == 2
+    assert result["activity"]["fixedFindings"] == 1  # pending absences are not fixes
     assert result["scope"]["findings"] == 1
 
 
@@ -957,11 +964,12 @@ def test_between_run_activity_uses_comparable_run_boundaries_and_exact_drilldown
     e = engine(tmp_path, data)
     filters = {"newPeriod": "runs", "remediationPeriodFilter": True, "exposureStatus": "All"}
     result = e.query({"view": "overview", "mode": "cves", "filters": filters})
-    assert result["activity"]["fixedFindings"] == result["tables"]["findingsTable"]["total"] == 3
+    # Only Fixed rows count; the legacy pending and reopened rows are not fixes in the window.
+    assert result["activity"]["fixedFindings"] == result["tables"]["findingsTable"]["total"] == 1
     assert result["metadata"]["activityComparison"]["previousUtc"] == previous
     assert result["metadata"]["activityComparison"]["latestUtc"] == SNAPSHOT
     assert result["metadata"]["activityComparison"]["available"] is True
-    assert len(list(e.iter_export({"view": "overview", "mode": "cves", "filters": filters}))) == 3
+    assert len(list(e.iter_export({"view": "overview", "mode": "cves", "filters": filters}))) == 1
 
 
 def test_between_run_activity_without_previous_snapshot_is_unavailable_not_daily_fallback(tmp_path):
@@ -1063,7 +1071,7 @@ def test_tracking_counts_use_exact_collector_contract_and_empty_timestamp_catalo
     e = engine(tmp_path, data, snapshot_time="")
     assert e.dataset_info("findings")["rowCount"] == 5
     counts = e.active_recommendation_counts(SNAPSHOT)
-    assert sum(counts.values()) == 2
+    assert sum(counts.values()) == 3  # Open, Reopened and DetectionReturned are all Open now
     assert len(list(e.iter_dataset("recommendations"))) == 3
     with pytest.raises(ValueError, match="timestamp"):
         e.query({"view": "overview"})
@@ -1124,8 +1132,9 @@ def test_broad_activity_uses_covering_index_without_changing_counts(tmp_path):
         "view": "overview", "filters": {"origin": "Live", "hideNonReporting": True},
     })
     assert broad["activity"] == selective["activity"]
-    assert broad["activity"]["newFindings"] == 3
-    assert broad["activity"]["fixedFindings"] == 2
+    # The legacy PendingVerification row is inactive and out of the default scope.
+    assert broad["activity"]["newFindings"] == 2
+    assert broad["activity"]["fixedFindings"] == 1
     statements = []
     with e._connect() as db:
         db.set_trace_callback(statements.append)

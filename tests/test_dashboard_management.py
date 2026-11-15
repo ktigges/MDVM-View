@@ -31,7 +31,7 @@ def management_data():
 
 
 def request(view="executiveSnapshot", **filters):
-    return {"view": view, "filters": {"managementReporting": True, **filters}}
+    return {"view": view, "filters": {"managementReporting": True, "includeInactive": True, **filters}}
 
 
 def test_job_history_balances_entities_and_isolates_baselines_failures_and_origins():

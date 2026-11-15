@@ -43,7 +43,7 @@ def test_evidence_queries_preserve_cve_and_sla_lifecycle_arithmetic(tmp_path):
 
     engine = DashboardQueryEngine(tmp_path, "parity", SNAPSHOT, rows)
     request = {
-        "filters": {"exposureStatus": "All", "origin": "Both", "severity": "All",
+        "filters": {"exposureStatus": "All", "origin": "Both", "severity": "All", "includeInactive": True,
                     "domains": ["Devices", "Cloud"], "recommendationTypes": ["Vulnerability"]},
         "page": 0, "limit": 100,
     }
@@ -52,7 +52,7 @@ def test_evidence_queries_preserve_cve_and_sla_lifecycle_arithmetic(tmp_path):
          "KnownExploit": False, "OpenFindings": 2, "PendingFindings": 2,
          "FixedFindings": 1, "DetectedMachines": 1, "EvidenceRows": 5},
         {"CveId": "CVE-2026-1002", "Severity": "High", "CvssScore": 8.8,
-         "KnownExploit": True, "OpenFindings": 1, "PendingFindings": 0,
+         "KnownExploit": True, "OpenFindings": 1, "PendingFindings": 1,  # StaleDevice is inactive
          "FixedFindings": 0, "DetectedMachines": 1, "EvidenceRows": 2},
     ]
     overview = engine.query({**request, "view": "overview", "mode": "cves"})
@@ -68,7 +68,7 @@ def test_evidence_queries_preserve_cve_and_sla_lifecycle_arithmetic(tmp_path):
     assert sla["cards"]["slaCards"] == [
         [7, "Finding instances observed"],
         [1, "Findings confirmed fixed"],
-        [2, "SLA remediations pending verification"],
+        [3, "Open on inactive devices"],  # both legacy pending rows and the StaleDevice row
         [0, "Remediation observed within policy SLA"],
         [1, "Remediation observed outside policy SLA"],
         [1, "Detected findings overdue"],

@@ -45,9 +45,9 @@ def test_shared_generator_cardinalities_and_lifecycle(tmp_path):
     events = list(iter_json_rows(tmp_path / "finding-events.json.gz"))
     assert len(findings) == 80
     assert len(events) == 83
-    for field, expected in (("DeviceId", 7), ("CveId", 17), ("RecommendationId", 5), ("FindingStatus", 4)):
+    for field, expected in (("DeviceId", 7), ("CveId", 17), ("RecommendationId", 5), ("FindingStatus", 2)):
         assert len({row[field] for row in findings}) == expected
-    assert {row["FindingStatus"] for row in findings} == {"Fixed", "PendingVerification", "Reopened", "Open"}
+    assert {row["FindingStatus"] for row in findings} == {"Fixed", "Open"}
     assert {row["CollectionRunId"] for row in findings + events} == {"unique-test"}
     assert len(list(iter_json_rows(tmp_path / "devices.json.gz"))) == 7
     assert len(list(iter_json_rows(tmp_path / "recommendations.json.gz"))) == 5
