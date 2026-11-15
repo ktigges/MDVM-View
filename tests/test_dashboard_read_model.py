@@ -132,7 +132,7 @@ def test_read_model_does_not_change_collection_index_or_publish_evidence(tmp_pat
     import vulnerability_view.dashboard_index as index
     monkeypatch.setattr(dashboard_read_model.DashboardReadModel, "prepare",
                         lambda *args: pytest.fail("Collector must not construct viewer aggregates"))
-    assert index.QUERY_INDEX_VERSION == 11
+    assert index.QUERY_INDEX_VERSION == 12
     e.build_index({"findings": 237})
 
 

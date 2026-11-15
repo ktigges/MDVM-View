@@ -50,10 +50,16 @@ unknown-deadline count. A missing deadline cannot establish compliance. An empty
 denominator shows **Waiting for data**, not 0% or 100%. A genuine zero numerator
 with a positive denominator shows 0.0%.
 
+When retained history starts after a period begins, the card is still assessed
+and labeled **Partial history from <date>**. The open percentage is the state at
+the period end; fixes count only from the history start. A period with no
+retained history at all shows **Waiting for data**. The SLA screen's week and
+month comparisons follow the same rule.
+
 Use **Custom compliance period** to add a fifth snapshot, with inclusive start
 and end dates. Dates must be ordered and cannot extend past the pinned snapshot;
-the last date is capped at that snapshot's time. These dates are shared between
-the two screens but do not change the existing Executive Snapshot report/export
+the last date is capped at that snapshot's time. These dates apply to the SLA
+screen and do not change the Executive View report/export
 timeframe or calendar comparisons. Existing subscription, owner, severity, and
 other evidence-scope filters still apply.
 

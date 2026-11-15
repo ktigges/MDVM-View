@@ -1657,17 +1657,21 @@ test("SLA screen shows four-state tiles, severity gauges, the open vs fixed char
   for(const old of ["SLA at a glance","sla-summary-donut","Fully cleared</h2>","Distinct CVEs by severity"])assert.ok(!(overview+visuals).includes(old),old);
 });
 
-test("four-state comparisons without full history show Waiting for data, not zero",async()=>{
+test("four-state comparisons label partial history and show Waiting for data only without history",async()=>{
   const app=fixture();await tick();
   const report=slaDashboardReport();
   report.pairPeriods[2].coverage="partial";
+  report.pairPeriods[2].historyStartUtc="2026-10-08T00:00:00Z";
+  report.pairPeriods[4].coverage="unavailable";
   app.context.slaReport=report;
   app.run("renderSlaDashboard(slaReport)");
   const visuals=app.elements.get("slaDashboardVisuals").innerHTML;
   const week=visuals.slice(visuals.indexOf("Week over week"),visuals.indexOf("Month over month"));
-  assert.equal((week.match(/<td>Waiting for data<\/td>/g)||[]).length,16);
-  assert.match(week,/comparison is unavailable, not zero/);
-  assert.doesNotMatch(visuals.slice(visuals.indexOf("Month over month")),/Waiting for data/);
+  assert.doesNotMatch(week,/Waiting for data/);
+  assert.match(week,/Partial history from 2026-10-08/);
+  const month=visuals.slice(visuals.indexOf("Month over month"));
+  assert.equal((month.match(/<td>Waiting for data<\/td>/g)||[]).length,16);
+  assert.match(month,/comparison is unavailable, not zero/);
 });
 
 function managementPeriodsFixture(){
@@ -2023,12 +2027,14 @@ for(const view of ["slaDashboard"]){
   });
 }
 
-test("compliance percentages distinguish real zero, empty denominator and insufficient history",async()=>{
+test("compliance percentages distinguish real zero, empty denominator, partial and missing history",async()=>{
   const app=fixture();await tick();
   const periods=compliancePeriods();
   periods[0].cves={...periods[0].cves,openWithin:0,openOverdue:2,openWithinPercent:0};
   periods[0].machines={...periods[0].machines,completedWithin:0,completedLate:0,completionPercent:null};
   periods[1].coverage="partial";
+  periods[1].historyStartUtc="2026-10-12T00:00:00Z";
+  periods[2].coverage="unavailable";
   app.context.periods=periods;
   app.run('renderComplianceSnapshots("slaDashboard",periods)');
   const markup=app.elements.get("slaDashboardComplianceCards").innerHTML;
@@ -2037,8 +2043,13 @@ test("compliance percentages distinguish real zero, empty denominator and insuff
   assert.match(markup,/0 \/ 0 known-deadline fixed; none to assess/);
   assert.match(markup,/Waiting for data/);
   const partial=markup.split("<h3>Month to date</h3>")[1].split("<h3>Rolling 90 days</h3>")[0];
-  assert.match(partial,/Insufficient retained history/);
-  assert.doesNotMatch(partial,/\d+\.\d%|0 \/ 0|NaN|undefined/);
+  assert.match(partial,/Partial history from 2026-10-12/);
+  assert.match(partial,/fixes count only from/);
+  assert.match(partial,/\d+\.\d%/);
+  assert.doesNotMatch(partial,/NaN|undefined/);
+  const missing=markup.split("<h3>Rolling 90 days</h3>")[1].split("<h3>Year to date</h3>")[0];
+  assert.match(missing,/No retained history covers this period/);
+  assert.doesNotMatch(missing,/\d+\.\d%|NaN|undefined/);
   assert.match(html,/not a period average/);
 });
 

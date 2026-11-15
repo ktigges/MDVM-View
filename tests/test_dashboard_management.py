@@ -252,18 +252,24 @@ def test_compliance_clearance_rates_use_each_period_not_all_time(tmp_path, view)
 
 @pytest.mark.parametrize("view", ["slaDashboard", "executiveSnapshot"])
 @pytest.mark.parametrize("history_start", [None, "2026-10-23T00:00:00Z"])
-def test_compliance_insufficient_history_is_unknown_not_zero_or_success(tmp_path, view, history_start):
+def test_compliance_without_history_is_unknown_and_partial_history_is_assessed_and_labeled(tmp_path, view, history_start):
     data = compliance_data()
     data["run-history"] = [] if history_start is None else [{
         "DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT, "FindingHistoryStartUtc": history_start,
     }]
     reports = compliance_reports(engine(tmp_path, data).query(request(view)), view)
     for period in reports:
-        assert period["coverage"] == ("unavailable" if history_start is None else "partial")
-        for entity in ("cves", "machines"):
-            assert period[entity]["openWithinPercent"] is None
-            assert period[entity]["completionPercent"] is None
-            assert period[entity]["openWithin"] is None
+        if history_start is None:
+            assert period["coverage"] == "unavailable" and period["historyStartUtc"] is None
+            for entity in ("cves", "machines"):
+                assert period[entity]["openWithinPercent"] is None
+                assert period[entity]["completionPercent"] is None
+                assert period[entity]["openWithin"] is None
+        else:
+            # Partial history: the state at period end is known; fixes count from the history start.
+            assert period["coverage"] == "partial" and period["historyStartUtc"] == history_start
+            assert (period["cves"]["openWithin"], period["cves"]["openWithinPercent"]) == (3, 75)
+            assert period["cves"]["completionPercent"] == pytest.approx(200 / 3)
 
 
 @pytest.mark.parametrize("view", ["slaDashboard", "executiveSnapshot"])
@@ -383,7 +389,7 @@ def test_sla_dashboard_calendar_outcomes_use_their_own_period_and_deadline(tmp_p
     assert periods[2]["completedWithin"] == 1
 
 
-def test_sla_dashboard_partial_calendar_period_is_withheld(tmp_path):
+def test_sla_dashboard_partial_calendar_period_is_assessed_and_labeled(tmp_path):
     data = datasets(0)
     data["findings"] = [finding(0)]
     data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
@@ -391,9 +397,11 @@ def test_sla_dashboard_partial_calendar_period_is_withheld(tmp_path):
     periods = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]["periods"]
     assert periods[1]["coverage"] == "complete"
     assert periods[2]["coverage"] == "partial"
-    assert periods[2]["cves"]["completionPercent"] is None
-    assert periods[2]["cves"]["openWithin"] is None
-    assert periods[2]["cves"]["severity"] == []
+    assert periods[2]["historyStartUtc"] == "2026-10-08T00:00:00Z"
+    assert periods[2]["cves"]["openWithin"] == 0
+    assert len(periods[2]["cves"]["severity"]) == 4
+    assert [period["coverage"] for period in periods[3:]] == ["unavailable", "unavailable"]
+    assert all(period["cves"]["openWithin"] is None for period in periods[3:])
 
 
 def test_sla_dashboard_unknown_only_and_no_history_never_claim_compliance(tmp_path):

@@ -12,7 +12,7 @@ import pytest
 from vulnerability_view.config import Settings
 from vulnerability_view import dashboard_snapshots
 from vulnerability_view.dashboard_snapshots import DashboardSnapshots
-from vulnerability_view.dashboard_preparation import DashboardPreparation, initial_filters
+from vulnerability_view.dashboard_preparation import DashboardPreparation, initial_filters, view_filters
 from vulnerability_view.dashboard_queries import DashboardQueryEngine, PREPARED_VIEWS, _cache_filters
 from vulnerability_view.dashboard_server import DashboardQueryRequest, create_app
 from vulnerability_view.dashboard_startup import startup_rows, startup_stage
@@ -318,21 +318,28 @@ for(const line of source){
   if(line.startsWith("const presentation=")||line.startsWith("const filterConfig=")||
      line.startsWith("const workloadGroupingConfig=")||line.startsWith("const DEFAULT_RECOMMENDATION_TYPES=")||
      line.startsWith("const DEFAULT_DOMAINS=")||line.startsWith("const DEFAULT_REPORTING_DAYS=")||
-     line.startsWith("const PRIMARY_VIEWS=")||
+     line.startsWith("const PRIMARY_VIEWS=")||line.startsWith("let primaryView=")||line.startsWith("state.")||
      line.startsWith("const state=")||line.startsWith("const findingsList="))vm.runInContext(line,context);
 }
 vm.runInContext("const dashboardQuery={snapshot:{snapshotId:'test'}};const FINDINGS_PAGE_SIZE=100;",context);
 vm.runInContext(sourceText.slice(sourceText.indexOf("function dashboardFilters()"),sourceText.indexOf("function invalidateDashboardChannel(")),context);
-console.log(vm.runInContext("JSON.stringify(dashboardRequest().filters)",context));
+console.log(vm.runInContext(`JSON.stringify(Object.fromEntries(${JSON.stringify(process.argv[1].split(","))}.map(view=>[view,dashboardRequest(view).filters])))`,context));
 """
-    result = subprocess.run([node, "-e", script], cwd=ROOT, capture_output=True, text=True, timeout=10)
+    result = subprocess.run([node, "-e", script, ",".join(PREPARED_VIEWS)], cwd=ROOT, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
-    browser = json.loads(result.stdout)
-    # snapshot_query_payload supplies these from the selected snapshot and store.
-    for key in ("slaPolicy", "recommendationTrackingEnabled",
-                "recommendationTrackingLocalPreview", "recommendationTracking"):
-        browser.pop(key)
-    assert _cache_filters(browser) == initial_filters(ROOT / "dashboard/config.js")
+    requests = json.loads(result.stdout)
+    defaults = initial_filters(ROOT / "dashboard/config.js")
+    for view in PREPARED_VIEWS:
+        browser = requests[view]
+        # snapshot_query_payload supplies these from the selected snapshot and store.
+        for key in ("slaPolicy", "recommendationTrackingEnabled",
+                    "recommendationTrackingLocalPreview", "recommendationTracking"):
+            browser.pop(key)
+        # Startup prepares each view under exactly the filters its first browser request uses.
+        assert _cache_filters(browser) == _cache_filters(view_filters(view, defaults)), view
+    assert view_filters("trend", defaults)["newPeriod"] == "reporting"
+    assert view_filters("recommendations", defaults)["simplifiedDashboard"] is True
+    assert defaults["simplifiedDashboard"] is False
 
 
 def test_prepared_default_survives_other_queries_and_ignores_only_ui_state(tmp_path, monkeypatch):
@@ -563,7 +570,7 @@ def test_persistent_defaults_survive_filtered_query_churn_and_restart(tmp_path, 
                         )
                     for view in PREPARED_VIEWS:
                         payload = {
-                            "view": view, "filters": filters,
+                            "view": view, "filters": view_filters(view, filters),
                             "mode": "cves" if view == "overview" else "findings", "limit": 100,
                         }
                         result = entry.engine.cached(payload)

@@ -15,7 +15,6 @@ window.addEventListener("pageshow",()=>requestAnimationFrame(()=>window.scrollTo
 const state={runHistory:[],runs:[],secureScores:[],slaPolicy:null,recommendationTracking:new Map(),recommendationsById:new Map(),subscriptionInventoryById:new Map(),vulnerabilityDetailsById:new Map(),watchlistCves:new Map(),origin:"Both",osType:"All",reportingBreakdown:"All",severity:filterConfig.defaultSeverity||"All",exposureStatus:"DetectedAndPending",assetClass:"All",subscription:"All",hideNonReporting:Boolean(filterConfig.defaultHideNonReporting),includeInactive:false,reportingDays:DEFAULT_REPORTING_DAYS,includeDiscoveredOnly:Boolean(filterConfig.defaultIncludeDiscoveredOnly),recommendationTypes:new Set(DEFAULT_RECOMMENDATION_TYPES),recommendationTrackingFilter:"All",recommendationCatalogStatus:"Unresolved exposure",recommendationCatalogSort:"priority",recommendationTrackingEnabled:false,recommendationTrackingLocalPreview:false,team:"All",search:"",domains:new Set(DEFAULT_DOMAINS),newPeriod:"day",newPeriodFilter:false,remediationPeriodFilter:false,latestRunChangesOnly:false,newPeriodStart:"",newPeriodEnd:"",statisticsPeriod:"week",reportingEntity:"machines",reportingChange:"Fixed",executiveSnapshotPeriod:"30days",executiveSnapshotStart:"",executiveSnapshotEnd:"",executiveSnapshotSubscription:"All",executiveSnapshotOwner:"All",executiveSnapshotUnit:"machines",selectedRecommendationId:"",detailRecommendationIds:[],selectedEntity:null,selectedCveDialogId:"",pivotSourceLabel:"",snapshotTimeMs:NaN,activeView:"executive"};
 const PRIMARY_VIEWS={executive:"Summary",overview:"Vulnerabilities",recommendations:"Recommendations",workstations:"Machines",slaDashboard:"SLA",trend:"Reporting",executiveSnapshot:"Executive View",jobHistory:"Job history"};
 let primaryView="executive";
-state.slaEntity="cves";
 const DEFENDER_RECOMMENDATIONS_URL="https://security.microsoft.com/exposure-recommendations?tabId=Devices";
 const DEFENDER_VULNERABILITIES_URL="https://security.microsoft.com/vulnerabilities/devices";
 const MAX_CUSTOMER_LOGO_BYTES=2*1024*1024;
@@ -682,7 +681,9 @@ function cacheDashboardResponse(key,payload){
 
 function dashboardFilters(){
   const filters={};
+  // machineCveStatus is detail-only state; dashboardRequest adds it for machine detail.
   for(const [key,value] of Object.entries(state)){
+    if(key==="machineCveStatus")continue;
     if(value instanceof Set)filters[key]=[...value];
     else if(value===null||["string","number","boolean"].includes(typeof value))filters[key]=value;
   }
@@ -1241,10 +1242,10 @@ function renderComplianceSnapshots(view,periods){
   }
   const count=value=>typeof value==="number"&&Number.isFinite(value)&&value>=0;
   root.innerHTML=periods.map(period=>{
-    const available=period.coverage==="complete";
+    const available=period.coverage==="complete"||period.coverage==="partial";
     return `<article class="panel sla-compliance-period">
       <h3>${esc(period.label)}</h3><p class="coverage-note">${esc(period.start)} to ${esc(period.end)} UTC</p>
-      ${available?"":'<p class="sla-compliance-history">Insufficient retained history for this entire period. Percentages are unavailable, not zero.</p>'}
+      ${period.coverage==="partial"?`<p class="sla-compliance-history">${esc(partialHistoryNote(period))}</p>`:available?"":'<p class="sla-compliance-history">No retained history covers this period. Percentages are unavailable, not zero.</p>'}
       ${[["cves","Distinct CVEs"],["machines","Distinct machines"]].map(([key,title])=>{
         const values=period[key]||{};
         const rate=(label,help,percent,numerator,other,unknown,kind)=>{
@@ -1652,8 +1653,12 @@ function slaGaugeGrid(severity,periodLabel){
   return ["Critical","High","Medium","Low"].map(label=>slaGauge({...empty,...rows.get(label),label})).join("")
     +`<p class="coverage-note">Within SLA % = (Open – within SLA + Fixed – within SLA) ÷ all machine/CVE pairs with a known deadline. Fixed pairs count when fixed in ${esc(periodLabel||"the selected period")}. Pairs without a deadline are excluded.</p>`;
 }
+function partialHistoryNote(period){
+  const start=period?.historyStartUtc?formatUtc(period.historyStartUtc):"the start of retained history";
+  return `Partial history from ${start}. Open – within SLA % is the state at the period end; fixes count only from ${start}.`;
+}
 function fourStateComparison(title,previous,current){
-  const known=period=>period?.coverage==="complete"&&Array.isArray(period.severity);
+  const known=period=>(period?.coverage==="complete"||period?.coverage==="partial")&&Array.isArray(period.severity);
   const value=(period,label,key)=>{if(!known(period))return null;const row=period.severity.find(item=>item.label===label);return row?Number(row[key])||0:0;};
   const span=period=>period?`${esc(period.label)}${period.start?` (${esc(period.start)} – ${esc(period.end)})`:""}`:"";
   const cell=(label,key)=>{
@@ -1665,7 +1670,8 @@ function fourStateComparison(title,previous,current){
   return `<article class="panel four-state-comparison"><div class="panel-title"><h3>${esc(title)}</h3><span>${span(previous)} → ${span(current)}</span></div>
     <div class="table-wrap"><table><thead><tr><th scope="col">Severity</th>${FOUR_STATES.map(([,label])=>`<th scope="col">${metricLabel(label)}</th>`).join("")}</tr></thead>
     <tbody>${["Critical","High","Medium","Low"].map(label=>`<tr><th scope="row">${label}</th>${FOUR_STATES.map(([key])=>cell(label,key)).join("")}</tr>`).join("")}</tbody></table></div>
-    ${known(previous)&&known(current)?"":'<p class="coverage-note">Retained history does not fully cover both periods; the comparison is unavailable, not zero.</p>'}
+    ${known(previous)&&known(current)?"":'<p class="coverage-note">No retained history covers one of these periods; the comparison is unavailable, not zero.</p>'}
+    ${[previous,current].filter(period=>period?.coverage==="partial").slice(0,1).map(period=>`<p class="coverage-note">${esc(partialHistoryNote(period))}</p>`).join("")}
     <p class="coverage-note">Machine/CVE pairs. Open counts are at each period end; fixed counts are fixes during each period.</p></article>`;
 }
 function managementPairPeriods(sla,periods){

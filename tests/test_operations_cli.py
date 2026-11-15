@@ -3257,3 +3257,42 @@ def test_concise_watch_keeps_authoritative_outcome_when_telemetry_is_unavailable
     assert "FAILED" in captured.out and "Processing step 5/7: summaries" in captured.out
     assert "warnings and errors unavailable this refresh: Telemetry permission denied" in captured.out
     assert "Collection failed" in captured.err
+
+
+def _running_workflow(**progress):
+    return {"instanceId": "vulnerability-collection", "state": "Running", "updatedUtc": "now", "progress": {
+        "phase": "collect", "runId": "live-20261115T225612Z", "collectionMode": "full", "done": False,
+        "newRequests": 100, "cachedRequests": 0, "retryAfter": 0, "retry": False, "reason": "activity budget reached",
+        "downloadedRows": 24435, "downloadedBytes": 8400482, "machinesCompleted": 92, "machinesTotal": 125,
+        "lastProgress": "[machine_vulnerabilities] machines complete: 92/125; 24,307 total rows; 246.6s elapsed",
+        **progress,
+    }}
+
+
+def test_workflow_summary_puts_key_collector_stats_on_one_line():
+    summary, last = operations_cli._workflow_summary(_running_workflow())
+    assert summary.startswith("Summary: Running · phase collect (full) · machines 92/125 (74%) · 24,435 rows · 8.0 MiB")
+    assert "requests 100 new/0 cached" in summary
+    assert "batch handoff (normal; continues automatically)" in summary
+    assert "live-20261115T225612Z" in summary and " min" in summary
+    assert last == "Last:    [machine_vulnerabilities] machines complete: 92/125; 24,307 total rows; 246.6s elapsed"
+
+
+def test_workflow_summary_shows_throttling_completion_and_missing_counts():
+    throttled, _ = operations_cli._workflow_summary(_running_workflow(reason="HTTP 429", retryAfter=30, retry=True))
+    assert "waiting: HTTP 429; retry in 30s" in throttled
+    done, _ = operations_cli._workflow_summary(_running_workflow(done=True))
+    assert "collection done" in done
+    lines = operations_cli._workflow_summary({"state": "Completed", "progress": {"phase": "publish"}})
+    assert lines == ["Summary: Completed · phase publish"]
+
+
+def test_check_runs_prints_the_summary_last(monkeypatch, capsys):
+    workflow = _running_workflow()
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {"published": False, "reason": "none", "workflow": workflow})
+    monkeypatch.setattr(operations_cli, "_workspace_context", lambda: ({"subscription_id": "s"}, "w"))
+    monkeypatch.setattr(operations_cli, "_log_query", lambda *args, **kwargs: [])
+    operations_cli.check_runs(5, True)
+    lines = capsys.readouterr().out.rstrip().splitlines()
+    assert lines[-2].startswith("Summary: Running · phase collect (full) · machines 92/125")
+    assert lines[-1].startswith("Last:    [machine_vulnerabilities]")
