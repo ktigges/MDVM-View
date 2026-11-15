@@ -102,7 +102,7 @@ def test_console_watch_reports_progress_until_completion_without_querying_teleme
     monkeypatch.setattr(operations_cli.time, "monotonic", lambda: 0)
     waits = []
     monkeypatch.setattr(operations_cli.time, "sleep", waits.append)
-    assert operations_cli.main(["check-runs", "--watch"]) == 0
+    assert operations_cli.main(["check-runs", "--watch", "--verbose"]) == 0
     output = capsys.readouterr().out
     assert "downloaded=50,000 rows" in output
     assert "downloadedBytes" not in output
@@ -148,7 +148,7 @@ def test_console_watch_logs_are_compact_run_scoped_and_refresh_on_cadence(monkey
     monkeypatch.setattr(operations_cli, "time", SimpleNamespace(
         monotonic=lambda: next(clock), sleep=waits.append,
     ))
-    assert operations_cli.main(["check-runs", "--watch", "--logs"]) == 0
+    assert operations_cli.main(["check-runs", "--watch", "--logs", "--verbose"]) == 0
     output = capsys.readouterr().out
     assert "rows=420,000" in output and "rows=430,000" in output
     assert "stage=normalize step=write-dataset source=current dataset=findings" in output
@@ -174,7 +174,7 @@ def test_console_watch_telemetry_failure_does_not_override_authoritative_status(
         raise RuntimeError("Telemetry permission denied")
 
     monkeypatch.setattr(operations_cli, "_workspace_context", unavailable)
-    assert operations_cli.main(["check-runs", "--watch", "--logs"]) == exit_code
+    assert operations_cli.main(["check-runs", "--watch", "--logs", "--verbose"]) == exit_code
     captured = capsys.readouterr()
     assert "logs unavailable: Telemetry permission denied" in captured.out
     if timed_out:
@@ -3181,3 +3181,79 @@ def test_source_provenance_tolerates_packaging_without_git_history(monkeypatch):
     assert operations_cli._source_provenance() == {
         "commit": "unavailable", "branch": "unavailable", "uncommittedChanges": False,
     }
+
+
+NOW = datetime(2026, 11, 15, 12, 13, 45, tzinfo=UTC)
+RUN = "live-20261115T120745Z"
+
+
+@pytest.mark.parametrize("state,progress,expected", [
+    ("Running", {"phase": "collect", "runId": RUN, "machinesCompleted": 92, "machinesTotal": 125,
+                 "findingRowsCheckpointed": 24439, "lastProgress": "[machine_vulnerabilities] machines complete: 92/125",
+                 "reason": "activity budget reached"},
+     "RUNNING · 6.0 min elapsed · Collecting machine vulnerabilities · machines 92/125 (73%) · 33 to go · 24,439 rows · pausing between batches (normal)"),
+    ("Running", {"phase": "process", "runId": RUN, "stage": "reconcile"},
+     "RUNNING · 6.0 min elapsed · Processing step 2/7: reconcile · 5 after this"),
+    ("Running", {"phase": "verify", "runId": RUN, "file": 96, "files": 357},
+     "RUNNING · 6.0 min elapsed · Verifying files 96/357 (26%) · 261 to go"),
+    ("Failed", {"phase": "collect", "runId": RUN, "reason": "HTTP 403 authorization denied"},
+     "FAILED · took 9.8 min · Collecting · reason: HTTP 403 authorization denied"),
+    ("Completed", {"phase": "completed", "runId": RUN, "published": True},
+     "COMPLETED · took 9.8 min · Completed · published"),
+])
+def test_status_summary_is_one_readable_line(state, progress, expected):
+    workflow = {"state": state, "progress": progress, "updatedUtc": "2026-11-15T12:17:35+00:00"}
+    assert operations_cli._status_summary(workflow, NOW) == expected
+
+
+def test_status_summary_tolerates_missing_progress():
+    assert operations_cli._status_summary({"state": "Completed", "progress": None}, NOW) == "COMPLETED · No active collection"
+
+
+def test_problem_line_leads_with_http_status_and_hides_timing_internals():
+    row = {"TimeGenerated": "2026-11-15T12:16:25Z", "SeverityLevel": 2, "Count": 2, "HttpStatus": "504",
+           "Message": f"[run] runId={RUN} [secure_scores] optional endpoint unavailable: HTTP 504"}
+    line = operations_cli._problem_line(row)
+    assert "WARNING HTTP 504 [secure_scores] optional endpoint unavailable: HTTP 504 (x2)" in line
+    assert "runId=" not in line
+
+
+def test_concise_watch_prints_each_new_problem_once(monkeypatch, capsys):
+    states = iter(["Running", "Completed"])
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {
+        "workflow": {"state": next(states), "progress": {"phase": "verify", "runId": RUN, "file": 1, "files": 2}},
+    })
+    monkeypatch.setattr(operations_cli, "_workspace_context", lambda: ({"function_app_name": "func", "subscription_id": "s"}, "w"))
+    problem = {"TimeGenerated": "2026-11-15T12:16:25Z", "SeverityLevel": 3, "Count": 1, "HttpStatus": "429",
+               "Message": "[collection] Retryable HTTP 429; waiting 60.0s"}
+    queries = []
+
+    def query(workspace, subscription, text, *, timespan):
+        queries.append(text)
+        assert f'Message has "{RUN}"' in text and "SeverityLevel >= 2" in text
+        return [problem]
+
+    monkeypatch.setattr(operations_cli, "_log_query", query)
+    monkeypatch.setattr(operations_cli.time, "sleep", lambda delay: None)
+    assert operations_cli.main(["check-runs", "--watch", "--logs"]) == 0
+    output = capsys.readouterr().out
+    assert output.count("ERROR HTTP 429") == 1
+    assert len(queries) == 2
+    assert "Verifying files 1/2 (50%)" in output
+    assert "logAge=" not in output
+
+
+def test_concise_watch_keeps_authoritative_outcome_when_telemetry_is_unavailable(monkeypatch, capsys):
+    monkeypatch.setattr(operations_cli, "_function_publication_status", lambda: {
+        "workflow": {"state": "Failed", "progress": {"phase": "process", "runId": RUN, "stage": "summaries"}},
+    })
+
+    def unavailable():
+        raise RuntimeError("Telemetry permission denied")
+
+    monkeypatch.setattr(operations_cli, "_workspace_context", unavailable)
+    assert operations_cli.main(["check-runs", "--watch", "--logs"]) == 1
+    captured = capsys.readouterr()
+    assert "FAILED" in captured.out and "Processing step 5/7: summaries" in captured.out
+    assert "warnings and errors unavailable this refresh: Telemetry permission denied" in captured.out
+    assert "Collection failed" in captured.err

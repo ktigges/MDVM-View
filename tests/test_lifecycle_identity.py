@@ -126,3 +126,12 @@ def test_disk_backed_reconcile_matches_in_memory(tmp_path):
         store.close()
     assert actual == expected
     assert {row["FindingKey"] for row in actual} == {"new", "k", "k#e2", "gone"}
+
+
+def test_kept_open_absence_uses_the_sla_start_as_first_seen():
+    # Older rows stored the CVE's tenant-wide first detection in FirstSeenUtc.
+    previous = [row("k", FirstSeenUtc="2025-01-01T00:00:00Z")]
+    inactive = [{"DeviceId": "d1", "HealthStatus": "Inactive", "OnboardingStatus": "Onboarded", "LastSeenUtc": "2026-10-01T00:00:00Z"}]
+    result = reconcile_live_findings([], previous, SNAP, "run", inactive)
+    assert result[0]["FindingStatus"] == "Open"
+    assert result[0]["FirstSeenUtc"] == result[0]["SlaStartUtc"] == "2026-11-01T00:00:00Z"

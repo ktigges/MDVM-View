@@ -175,7 +175,7 @@ def test_deployment_menus_expose_matching_operations_submenu():
     shell, powershell = menu_sources()
     options = (
         "Operations and diagnostics",
-        "1) Show current collector activity",
+        "1) Show current collector status, warnings, and errors",
         "2) Show active progress and latest 5 published runs",
         "3) Show latest 10 published runs",
         "4) Show detailed Function diagnostics for the last 24 hours",
@@ -190,7 +190,8 @@ def test_deployment_menus_expose_matching_operations_submenu():
         "13) Show Web App startup logs (latest retained container log)",
         "14) Stop a named collector run and its Function host (preserves history)",
         "15) Watch current collection progress on the console",
-        "16) Return to deployment menu",
+        "16) Show raw collector state and verbose progress (detailed)",
+        "17) Return to deployment menu",
     )
 
     for option in options:
@@ -218,7 +219,7 @@ def test_bash_custom_log_days_default_validation_and_return_order():
     ])
     result = subprocess.run(
         ["bash", "-c", script],
-        input="9\n0\n-1\nabc\n\n10\n3\n11\n12\n13\n15\n16\n",
+        input="9\n0\n-1\nabc\n\n10\n3\n11\n12\n13\n15\n1\n16\n17\n",
         text=True, capture_output=True, timeout=15,
     )
     assert result.returncode == 0, result.stderr
@@ -227,8 +228,11 @@ def test_bash_custom_log_days_default_validation_and_return_order():
     assert "CALL: export-latest-snapshot" in result.stdout
     assert "CALL: download-collection-diagnostics" in result.stdout
     assert "CALL: check-webapp-startup-logs" in result.stdout
-    assert "CALL: check-runs --watch --logs" in result.stdout
-    assert result.stdout.count("CALL:") == 6
+    assert "CALL: check-runs --watch --logs\n" in result.stdout.replace("\r\n", "\n")
+    assert "CALL: status-summary" in result.stdout
+    assert "CALL: check-function-logs --hours 1 --limit 3 --status-only" in result.stdout
+    assert "CALL: check-runs --watch --logs --verbose" in result.stdout
+    assert result.stdout.count("CALL:") == 9
     assert result.stdout.count("Enter a positive whole number of days.") == 3
 
 
@@ -245,7 +249,7 @@ $helper = $ast.Find({{ param($node) $node -is [System.Management.Automation.Lang
 Set-Item -Path function:Invoke-FunctionLogsForDays -Value ($helper.Body.GetScriptBlock())
 $menu = $ast.Find({{ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-OperationsMenu' }}, $true)
 $script:Choices = [System.Collections.Generic.Queue[string]]::new()
-'9', '0', '-1', 'abc', '', '10', '3', '11', '12', '13', '15', '16' | ForEach-Object {{ $script:Choices.Enqueue($_) }}
+'9', '0', '-1', 'abc', '', '10', '3', '11', '12', '13', '15', '1', '16', '17' | ForEach-Object {{ $script:Choices.Enqueue($_) }}
 function Read-Host {{ param($Prompt) $script:Choices.Dequeue() }}
 function Pause-Menu {{}}
 function Invoke-OperationsCli {{ param([Parameter(ValueFromRemainingArguments)][string[]]$CliArguments) Write-Output ('CALL: ' + ($CliArguments -join ' ')) }}
@@ -261,8 +265,11 @@ function Invoke-OperationsCli {{ param([Parameter(ValueFromRemainingArguments)][
     assert "CALL: export-latest-snapshot" in result.stdout
     assert "CALL: download-collection-diagnostics" in result.stdout
     assert "CALL: check-webapp-startup-logs" in result.stdout
-    assert "CALL: check-runs --watch --logs" in result.stdout
-    assert result.stdout.count("CALL:") == 6
+    assert "CALL: check-runs --watch --logs\n" in result.stdout.replace("\r\n", "\n")
+    assert "CALL: status-summary" in result.stdout
+    assert "CALL: check-function-logs --hours 1 --limit 3 --status-only" in result.stdout
+    assert "CALL: check-runs --watch --logs --verbose" in result.stdout
+    assert result.stdout.count("CALL:") == 9
     assert result.stdout.count("Enter a positive whole number of days.") == 3
 
 

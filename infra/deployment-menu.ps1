@@ -290,7 +290,7 @@ function Invoke-OperationsMenu {
         Write-Host @"
 
 Operations and diagnostics
-  1) Show current collector activity
+  1) Show current collector status, warnings, and errors
   2) Show active progress and latest 5 published runs
   3) Show latest 10 published runs
   4) Show detailed Function diagnostics for the last 24 hours
@@ -305,10 +305,11 @@ Operations and diagnostics
   13) Show Web App startup logs (latest retained container log)
   14) Stop a named collector run and its Function host (preserves history)
   15) Watch current collection progress on the console
-  16) Return to deployment menu
+  16) Show raw collector state and verbose progress (detailed)
+  17) Return to deployment menu
 "@
         switch (Read-Host "Select an option") {
-            "1" { Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only; Pause-Menu }
+            "1" { Invoke-OperationsCli status-summary; Pause-Menu }
             "2" { Invoke-OperationsCli check-runs --limit 5 --progress; Pause-Menu }
             "3" { Invoke-OperationsCli check-runs --limit 10; Pause-Menu }
             "4" { Invoke-OperationsCli check-function-logs --hours 24 --limit 10; Pause-Menu }
@@ -329,8 +330,13 @@ Operations and diagnostics
                 Pause-Menu
             }
             "15" { Invoke-OperationsCli check-runs --watch --logs; Pause-Menu }
-            "16" { return }
-            default { Write-Host "Select a number from 1 through 16." }
+            "16" {
+                Invoke-OperationsCli check-function-logs --hours 1 --limit 3 --status-only
+                Invoke-OperationsCli check-runs --watch --logs --verbose
+                Pause-Menu
+            }
+            "17" { return }
+            default { Write-Host "Select a number from 1 through 17." }
         }
     }
 }

@@ -172,7 +172,7 @@ operations_menu() {
     cat <<'EOF'
 
 Operations and diagnostics
-  1) Show current collector activity
+  1) Show current collector status, warnings, and errors
   2) Show active progress and latest 5 published runs
   3) Show latest 10 published runs
   4) Show detailed Function diagnostics for the last 24 hours
@@ -187,12 +187,13 @@ Operations and diagnostics
   13) Show Web App startup logs (latest retained container log)
   14) Stop a named collector run and its Function host (preserves history)
   15) Watch current collection progress on the console
-  16) Return to deployment menu
+  16) Show raw collector state and verbose progress (detailed)
+  17) Return to deployment menu
 EOF
     printf 'Select an option: '
     read -r operations_choice
     case "$operations_choice" in
-      1) run_cli check-function-logs --hours 1 --limit 3 --status-only; pause_menu ;;
+      1) run_cli status-summary; pause_menu ;;
       2) run_cli check-runs --limit 5 --progress; pause_menu ;;
       3) run_cli check-runs --limit 10; pause_menu ;;
       4) run_cli check-function-logs --hours 24 --limit 10; pause_menu ;;
@@ -213,8 +214,12 @@ EOF
         fi
         pause_menu ;;
       15) run_cli check-runs --watch --logs; pause_menu ;;
-      16) return ;;
-      *) printf 'Select a number from 1 through 16.\n' ;;
+      16)
+        run_cli check-function-logs --hours 1 --limit 3 --status-only
+        run_cli check-runs --watch --logs --verbose
+        pause_menu ;;
+      17) return ;;
+      *) printf 'Select a number from 1 through 17.\n' ;;
     esac
   done
 }
