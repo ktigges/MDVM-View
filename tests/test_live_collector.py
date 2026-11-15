@@ -2251,3 +2251,52 @@ def test_raw_snapshot_replay_can_allow_missing_required_pages(tmp_path):
     assert len(data["findings"]) == 1
     assert {status["Endpoint"]: status["Status"] for status in statuses}["recommendations"] == "HistoricalUnavailable"
     assert statuses[-1]["Status"] == "OptionalUnavailable"
+
+def _serve_export(monkeypatch, rows):
+    """Extend the device-scoped fake API with the full software-vulnerability export."""
+    original = requests.Session.get
+
+    def get(self, url, **kwargs):
+        parsed = urlsplit(url)
+        if parsed.path == "/api/machines/SoftwareVulnerabilitiesByMachine":
+            assert "pageSize" in parse_qs(parsed.query) and "$top" not in parse_qs(parsed.query)
+            return response({"value": rows}, url)
+        return original(self, url, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "get", get)
+
+
+EXPORT_ROWS = [
+    {"id": f"{device}_vendor_product_1.0_CVE-2026-0001", "deviceId": device, "cveId": "CVE-2026-0001",
+     "softwareVendor": "vendor", "softwareName": "Product", "softwareVersion": "1.0",
+     "vulnerabilitySeverityLevel": "High", "firstSeenTimestamp": "2026-09-01 08:00:00"}
+    for device in ("device-1", "device-2", "device-3", "not-in-inventory")
+]
+
+
+@pytest.mark.parametrize("raw_only", [False, True])
+def test_full_collection_from_export_keeps_included_devices_with_defender_first_seen(device_scoped_run, monkeypatch, raw_only):
+    payloads, _, calls, _ = device_scoped_run
+    _serve_export(monkeypatch, EXPORT_ROWS)
+    snapshot = datetime(2026, 10, 18, tzinfo=timezone.utc)
+    data, statuses = collect_live(
+        Settings().defender_api_base_url, Credential(), vulnerability_collection_mode="full",
+        exclude_scale_sets=True, full_collection_source="export", snapshot=snapshot, raw_only=raw_only,
+    )
+    status = next(row for row in statuses if row["Endpoint"] == "machine_vulnerabilities")
+    assert (status["Status"], status["CollectionMethod"]) == ("Success", "Export")
+    assert (status["SourceRowCount"], status["RowCount"], status["MachineCount"]) == (4, 2, 2)
+    assert not any("/api/vulnerabilities/machinesVulnerabilities" in url for url in calls)
+    if raw_only:
+        data, _ = replay_raw_snapshot(Path("output/raw") / f"live-{snapshot:%Y%m%dT%H%M%SZ}", exclude_scale_sets=True)
+    # The scale-set instance and the device outside inventory are dropped before normalization.
+    assert sorted(row["DeviceId"] for row in data["findings"]) == ["device-1", "device-3"]
+    assert {row["FirstSeenUtc"] for row in data["findings"]} == {"2026-09-01T08:00:00Z"}
+    assert {row["SlaStartUtc"] for row in data["findings"]} == {"2026-09-01T08:00:00Z"}
+    assert {row["DeviceId"] for row in data["recommendationMachines"]} == {"device-1", "device-3"}
+    assert {row["CveId"] for row in data["vulnerabilities"]} == {"CVE-2026-0001"}
+
+
+def test_full_collection_source_is_validated():
+    with pytest.raises(ValueError, match="per-machine or export"):
+        collect_live(Settings().defender_api_base_url, Credential(), full_collection_source="api")

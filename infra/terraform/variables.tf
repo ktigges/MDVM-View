@@ -367,6 +367,17 @@ variable "exclude_scale_sets" {
   default     = false
 }
 
+variable "full_collection_source" {
+  description = "Findings source for full collections: per-machine (one request per included device) or export (full software-vulnerability export with Defender first-seen dates, filtered while streaming)."
+  type        = string
+  default     = "per-machine"
+
+  validation {
+    condition     = contains(["per-machine", "export"], var.full_collection_source)
+    error_message = "full_collection_source must be per-machine or export."
+  }
+}
+
 variable "full_collection_weekday" {
   description = "Weekly full vulnerability reconciliation day, Monday 0 through Sunday 6."
   type        = number

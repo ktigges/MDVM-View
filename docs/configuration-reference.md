@@ -60,6 +60,7 @@ deployment environment. In that case, keep these pairs synchronized:
 | `vulnerability_collection_mode` | `VULNERABILITY_COLLECTION_MODE` |
 | `enable_experimental_endpoints` | `ENABLE_EXPERIMENTAL_ENDPOINTS` |
 | `exclude_scale_sets` | `EXCLUDE_SCALE_SETS` |
+| `full_collection_source` | `FULL_COLLECTION_SOURCE` |
 | `full_collection_weekday` | `FULL_COLLECTION_WEEKDAY` |
 | `collection_schedule` | `COLLECTION_SCHEDULE` |
 | `dashboard_cache_seconds` | `DASHBOARD_CACHE_SECONDS` |
@@ -111,6 +112,7 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `vulnerability_collection_mode` | `auto`; `auto`, `delta`, or `full` | Uses daily deltas with initial, weekly, and stale-state full reconciliation; scale-set exclusion applies to both modes |
 | `enable_experimental_endpoints` | `false` | Enables undocumented Defender compatibility probes |
 | `exclude_scale_sets` | `false` | Opt-in exclusion of Azure scale-set devices from live collection |
+| `full_collection_source` | `per-machine`; `per-machine` or `export` | Findings source for full runs. `per-machine` requests each included device. `export` pages the full software-vulnerability export (rows carry Defender's per-device `firstSeenTimestamp`, used as the SLA start) and drops excluded or unknown devices while streaming |
 | `full_collection_weekday` | `6`; Monday `0` through Sunday `6` | Full vulnerability reconciliation day when collection mode is `auto` |
 | `web_app_name` | Required, globally unique | Dashboard Web App name |
 | `web_app_service_plan_name` | Required | Linux App Service plan name |

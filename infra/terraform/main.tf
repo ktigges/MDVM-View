@@ -484,6 +484,7 @@ resource "azurerm_linux_function_app" "collector" {
     "ENABLE_EXPERIMENTAL_ENDPOINTS"    = tostring(var.enable_experimental_endpoints)
     "EXCLUDE_SCALE_SETS"               = tostring(var.exclude_scale_sets)
     "FULL_COLLECTION_WEEKDAY"          = tostring(var.full_collection_weekday)
+    "FULL_COLLECTION_SOURCE"           = var.full_collection_source
     "FUNCTIONS_WORKER_RUNTIME"         = "python"
     "SCM_DO_BUILD_DURING_DEPLOYMENT"   = "true"
     "ENABLE_ORYX_BUILD"                = "true"

@@ -226,3 +226,15 @@ def test_dashboard_data_source_rejects_unknown_value(monkeypatch, tmp_path: Path
         assert str(error) == "DASHBOARD_DATA_SOURCE must be local or azure"
     else:
         raise AssertionError("Expected invalid dashboard data source to fail")
+
+def test_full_collection_source_defaults_to_per_machine_and_accepts_export(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv("FULL_COLLECTION_SOURCE", raising=False)
+    assert Settings.load(env_path=tmp_path / ".env").full_collection_source == "per-machine"
+    monkeypatch.setenv("FULL_COLLECTION_SOURCE", "Export")
+    assert Settings.load(env_path=tmp_path / ".env").full_collection_source == "export"
+
+
+def test_full_collection_source_rejects_unknown_values(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("FULL_COLLECTION_SOURCE", "advanced-hunting")
+    with pytest.raises(ValueError, match="FULL_COLLECTION_SOURCE must be per-machine or export"):
+        Settings.load(env_path=tmp_path / ".env")
