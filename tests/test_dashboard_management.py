@@ -182,7 +182,7 @@ def compliance_reports(result, view):
 
 
 @pytest.mark.parametrize("view", ["slaDashboard", "executiveSnapshot"])
-def test_compliance_reports_distinct_denominators_unknowns_and_pending(tmp_path, view):
+def test_compliance_reports_distinct_denominators_unknowns_and_inactive(tmp_path, view):
     e = engine(tmp_path, compliance_data())
     payload = request(view, slaComplianceStart="2026-10-19", slaComplianceEnd="2026-10-24")
     result = e.query(payload)
@@ -199,7 +199,7 @@ def test_compliance_reports_distinct_denominators_unknowns_and_pending(tmp_path,
         assert (machines["completedWithin"], machines["completedLate"], machines["completedUnknown"]) == (1, 1, 1)
         assert cves["completionPercent"] == pytest.approx(200 / 3)
         assert machines["completionPercent"] == 50
-        assert cves["awaitingConfirmation"] == machines["awaitingConfirmation"] == 1
+        assert "awaitingConfirmation" not in cves
     if view == "slaDashboard":
         assert len(result["metadata"]["slaDashboard"]["periods"]) == 5
     else:
@@ -329,9 +329,12 @@ def test_dedicated_sla_dashboard_counts_entities_and_keeps_confirmed_rates_separ
     current = report["periods"][0]["cves"]
     assert current["openWithin"] == current["openOverdue"] == current["unknownOpen"] == 1
     assert current["openWithinPercent"] == 50
-    assert current["completedWithin"] == current["awaitingConfirmation"] == 1
+    assert current["completedWithin"] == current["confirmedFixes"] == 1
     assert current["completionPercent"] == 100
-    assert current["observedFixes"] == 2
+    assert "awaitingConfirmation" not in current and "observedFixes" not in current
+    active = engine(tmp_path / "active", data).query(request("slaDashboard", includeInactive=False))
+    active_current = active["metadata"]["slaDashboard"]["periods"][0]["cves"]
+    assert (active_current["openWithin"], active_current["openOverdue"], active_current["unknownOpen"]) == (0, 1, 1)
     assert len(report["periods"]) == 5
     assert all(row["coverage"] == "complete" for row in report["periods"])
     assert not result["tables"]
@@ -406,7 +409,6 @@ def test_sla_dashboard_unknown_only_and_no_history_never_claim_compliance(tmp_pa
     assert current["unknownOpen"] == 2
     assert current["openWithinPercent"] is current["completionPercent"] is None
     assert current["confirmedFixes"] == 0
-    assert current["awaitingConfirmation"] == current["observedFixes"] == 1
     assert all(period["cves"]["completionPercent"] is None for period in report["periods"][1:])
 
 
@@ -420,20 +422,19 @@ def test_simple_sla_summary_counts_machine_cve_pairs_without_software_multiplica
     high = next(row for row in summary["severity"] if row["label"] == "High")
     assert (high["openWithin"], high["openOverdue"], high["unknownOpen"]) == (4, 1, 1)
     assert (high["completedWithin"], high["completedLate"], high["completedUnknown"]) == (2, 1, 1)
-    assert high["awaitingConfirmation"] == 1
+    assert "awaitingConfirmation" not in high
     assert high["within"] == pytest.approx(200 / 3)
     assert [row["label"] for row in summary["severity"]] == ["Critical", "High", "Medium", "Low"]
 
 
 @pytest.mark.parametrize(("status", "count", "progress"), [
-    ("Open", 6, {"Open", "Fix observed — awaiting confirmation"}),
-    ("Fixed", 4, {"Confirmed fixed"}),
-    ("Awaiting", 1, {"Fix observed — awaiting confirmation"}),
-    ("OpenWithin", 4, {"Open", "Fix observed — awaiting confirmation"}),
+    ("Open", 6, {"Open"}),
+    ("Fixed", 4, {"Fixed"}),
+    ("OpenWithin", 4, {"Open"}),
     ("OpenOverdue", 1, {"Open"}),
-    ("FixedWithin", 2, {"Confirmed fixed"}),
-    ("FixedLate", 1, {"Confirmed fixed"}),
-    ("Unknown", 2, {"Open", "Confirmed fixed"}),
+    ("FixedWithin", 2, {"Fixed"}),
+    ("FixedLate", 1, {"Fixed"}),
+    ("Unknown", 2, {"Open", "Fixed"}),
 ])
 def test_simple_sla_summary_drilldown_and_export_match_metric(tmp_path, status, count, progress):
     e = engine(tmp_path, compliance_data())
@@ -447,10 +448,15 @@ def test_simple_sla_summary_drilldown_and_export_match_metric(tmp_path, status, 
     assert len(list(e.iter_export({**payload, "table": "slaSummaryTable"}))) == count
 
 
-@pytest.mark.parametrize("kind,identifier", [
-    ("machine", "one"), ("cve", "CVE-SHARED"), ("recommendation", "rec-0"),
+def test_simple_sla_summary_rejects_retired_awaiting_status(tmp_path):
+    with pytest.raises(ValueError, match="SLA summary status"):
+        engine(tmp_path, compliance_data()).query(request("slaDashboard", slaSummaryStatus="Awaiting"))
+
+
+@pytest.mark.parametrize("kind,identifier,expected", [
+    ("machine", "one", []), ("cve", "CVE-SHARED", ["two"]), ("recommendation", "rec-0", ["two"]),
 ])
-def test_observed_remediation_detail_keeps_activity_scope_and_explains_pending(tmp_path, kind, identifier):
+def test_observed_remediation_detail_keeps_activity_scope_and_settles_pending_into_open(tmp_path, kind, identifier, expected):
     data = datasets(0)
     data["findings"] = [
         finding(0, DeviceId="one", CveId="CVE-SHARED", RecommendationId="rec-0",
@@ -460,20 +466,22 @@ def test_observed_remediation_detail_keeps_activity_scope_and_explains_pending(t
                 FindingStatus="Fixed", FixedUtc="2026-10-20T10:00:00Z"),
         finding(3, DeviceId="one", CveId="CVE-SHARED", RecommendationId="rec-0",
                 Severity="Low", FindingStatus="Fixed", FixedUtc="2026-10-24T10:00:00Z"),
+        finding(4, DeviceId="two", CveId="CVE-SHARED", RecommendationId="rec-0",
+                FindingStatus="Fixed", FixedUtc="2026-10-24T10:00:00Z"),
     ]
     e = engine(tmp_path, data)
     payload = {**request("detail", remediationPeriodFilter=True, exposureStatus="All", severity="High"),
                "selection": {"type": kind, "id": identifier}}
     result = e.query(payload)
-    assert result["tables"]["pivotFindingTable"]["total"] == 1
-    assert result["tables"]["pivotCveTable"]["total"] == 1
-    assert result["tables"]["pivotRecommendationTable"]["total"] == 1
-    assert result["tables"]["pivotFindingTable"]["items"][0]["FindingStatus"] == "PendingConfirmation"
+    items = result["tables"]["pivotFindingTable"]["items"]
+    assert [row["DeviceId"] for row in items] == expected
+    assert all(row["FindingStatus"] == "Fixed" for row in items)
     cards = {card[1]: card[0] for card in result["cards"]["pivotCards"]}
-    assert cards["Remediation observations"] == 1
-    assert cards["Observations awaiting confirmation"] == 1
-    assert "not full-CVE clearance" in result["texts"]["pivotSummary"]
-    assert len(list(e.iter_export({**payload, "table": "pivotFindingTable"}))) == 1
+    assert cards["Remediation observations"] == len(expected)
+    assert cards["Observations on inactive devices"] == 0
+    assert "Observations awaiting confirmation" not in cards
+    assert "A fix on one software item is not a fixed CVE" in result["texts"]["pivotSummary"]
+    assert len(list(e.iter_export({**payload, "table": "pivotFindingTable"}))) == len(expected)
 
 
 @pytest.mark.parametrize("view", ["executive", "overview", "sla", "executiveSnapshot", "trend"])
@@ -492,8 +500,8 @@ def test_management_metric_drilldowns_match_every_card_and_export(tmp_path, view
 def test_observed_machine_detail_can_still_load_full_cve_history_without_losing_activity_evidence(tmp_path):
     data = datasets(0)
     data["findings"] = [
-        finding(0, DeviceId="one", CveId="CVE-SHARED", FindingStatus="PendingConfirmation",
-                EffectiveRemediationUtc="2026-10-24T10:00:00Z"),
+        finding(0, DeviceId="one", CveId="CVE-SHARED", FindingStatus="Fixed",
+                FixedUtc="2026-10-24T10:00:00Z", ProductVersion="old"),
         finding(1, DeviceId="one", CveId="CVE-SHARED"),
         finding(2, DeviceId="one", CveId="CVE-CLEARED", FindingStatus="Fixed", FixedUtc="2026-10-20T10:00:00Z"),
     ]
@@ -503,7 +511,7 @@ def test_observed_machine_detail_can_still_load_full_cve_history_without_losing_
                "selection": {"type": "machine", "id": "one"}}
     result = engine(tmp_path, data).query(payload)
     assert result["tables"]["pivotFindingTable"]["total"] == 1
-    fixes = [row for row in result["tables"]["pivotMachineHistoryTable"]["items"] if row["Change"] == "Confirmed fixed"]
+    fixes = [row for row in result["tables"]["pivotMachineHistoryTable"]["items"] if row["Change"] == "Fixed"]
     assert [row["CveId"] for row in fixes] == ["CVE-CLEARED"]
 
 
@@ -527,19 +535,19 @@ def test_three_machines_with_fixes_do_not_imply_global_cve_clearance(tmp_path):
     detail = e.query({**request("detail", remediationPeriodFilter=True, exposureStatus="All"),
                       "selection": {"type": "cve", "id": "CVE-SHARED"}})
     assert detail["tables"]["pivotFindingTable"]["total"] == 3
-    assert "not full-CVE clearance" in detail["texts"]["pivotSummary"]
+    assert "A fix on one software item is not a fixed CVE" in detail["texts"]["pivotSummary"]
 
 
-def test_remediation_progress_counts_distinct_cves_and_keeps_partial_fixes_open(tmp_path):
+def test_remediation_progress_counts_distinct_cves_and_only_full_clearance_as_fixed(tmp_path):
     data = management_data()
     data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
                             "FindingHistoryStartUtc": "2026-10-17T00:00:00Z"}]
     result = engine(tmp_path, data).query(request("executiveSnapshot"))
     chart = result["charts"]["executiveSnapshotManagementRemediationProgress"]
     current = chart["rows"][-1]
-    assert (current["baseline"], current["new"], current["fixed"], current["open"]) == (6, 0, 2, 5)
+    assert (current["baseline"], current["new"], current["fixed"], current["open"]) == (6, 0, 1, 5)
     assert chart["unit"] == "distinct-cves"
-    assert current["fixed"] != result["metadata"]["management"]["periods"][0]["cves"]["FullyResolved"]
+    assert current["fixed"] == result["metadata"]["management"]["periods"][0]["cves"]["FullyResolved"]
 
 
 def partial_progress_data():
@@ -560,15 +568,27 @@ def partial_progress_data():
     return data
 
 
+def progress_payload(view, **filters):
+    payload = request(view, **filters)
+    if view == "detail":
+        payload["selection"] = {"type": "machine", "id": "one"}
+    return payload
+
+
+def current_progress(result, view):
+    chart_id = "machineRemediationProgress" if view == "detail" else "executiveSnapshotManagementRemediationProgress"
+    return result["charts"][chart_id]["rows"][-1]
+
+
 @pytest.mark.parametrize("view", ["executiveSnapshot", "detail"])
-@pytest.mark.parametrize(("status", "version", "observed", "partial", "awaiting"), [
-    ("Fixed", "3.14.7", "2026-10-24T10:00:00Z", 0, 0),
-    ("PendingConfirmation", "3.14.7", "2026-10-24T10:00:00Z", 0, 0),
-    ("Fixed", "3.14.8", "2026-10-24T10:00:00Z", 1, 0),
-    ("Fixed", "3.14.7", "2026-10-24T11:00:00Z", 1, 0),
+@pytest.mark.parametrize(("status", "version", "observed"), [
+    ("Fixed", "3.14.7", "2026-10-24T10:00:00Z"),
+    ("PendingConfirmation", "3.14.7", "2026-10-24T10:00:00Z"),
+    ("Fixed", "3.14.8", "2026-10-24T10:00:00Z"),
+    ("Fixed", "3.14.7", "2026-10-24T11:00:00Z"),
 ])
 def test_identity_changes_are_not_fixes_when_identical_software_remains_detected(
-    tmp_path, view, status, version, observed, partial, awaiting,
+    tmp_path, view, status, version, observed,
 ):
     data = datasets(0)
     data["findings"] = [
@@ -580,21 +600,17 @@ def test_identity_changes_are_not_fixes_when_identical_software_remains_detected
         finding(1, DeviceId="one", CveId="CVE-SAME", SoftwareName="python",
                 SoftwareVersion=version, FirstObservedUtc=observed),
     ]
-    payload = request(view)
-    if view == "detail":
-        payload["selection"] = {"type": "machine", "id": "one"}
+    payload = progress_payload(view)
     e = engine(tmp_path, data)
     result = e.query(payload)
-    chart_id = "machineRemediationProgress" if view == "detail" else "executiveSnapshotManagementRemediationProgress"
-    current = result["charts"][chart_id]["rows"][-1]
+    current = current_progress(result, view)
     assert current["open"] == 1
-    assert current["partial"] == partial
-    assert current["awaiting"] == awaiting
-    assert current["resolved"] == 0
-    assert e.query(payload)["charts"][chart_id] == result["charts"][chart_id]
+    assert current["fixed"] == current["resolved"] == 0
+    assert "partial" not in current and "awaiting" not in current
+    assert e.query(payload)["charts"] == result["charts"]
 
 
-def test_scan_breakdown_separates_absent_cves_from_pending_software_on_detected_cves(tmp_path):
+def test_scan_breakdown_separates_detected_from_inactive_cves(tmp_path):
     data = partial_progress_data()
     data["findings"].append(finding(
         90, DeviceId="one", CveId="CVE-ABSENT", FindingStatus="PendingConfirmation",
@@ -605,77 +621,57 @@ def test_scan_breakdown_separates_absent_cves_from_pending_software_on_detected_
         FirstObservedUtc="2026-10-01T00:00:00Z", EffectiveRemediationUtc="2026-10-24T10:00:00Z",
     ))
     e = engine(tmp_path, data)
-    payload = {**request("detail"), "selection": {"type": "machine", "id": "one"}}
-    result = e.query(payload)
-    progress = result["metadata"]["machineRemediation"]
-    assert progress["scanBreakdown"] == {"detected": 3, "awaitingClearance": 1, "verificationRequired": 1}
+    payload = progress_payload("detail")
+    progress = e.query(payload)["metadata"]["machineRemediation"]
+    assert progress["scanBreakdown"] == {"detected": 3, "inactive": 2}
     assert sum(progress["scanBreakdown"].values()) == progress["Open"] == 5
-    absent = e.query({**payload, "filters": {**payload["filters"], "machineCveStatus": "Absent"}})
-    assert [row["CveId"] for row in absent["tables"]["pivotSlaCveTable"]["items"]] == ["CVE-ABSENT"]
+    inactive = e.query(progress_payload("detail", machineCveStatus="Inactive"))
+    assert [row["CveId"] for row in inactive["tables"]["pivotSlaCveTable"]["items"]] == ["CVE-ABSENT", "CVE-UNVERIFIED"]
+    active = engine(tmp_path / "active", data).query(progress_payload("detail", includeInactive=False))
+    assert active["metadata"]["machineRemediation"]["scanBreakdown"] == {"detected": 3, "inactive": 0}
+    assert {row["CveId"] for row in active["tables"]["pivotSlaCveTable"]["items"]} == {
+        "CVE-ADDED", "CVE-PARTIAL", "CVE-PENDING",
+    }
 
 
 @pytest.mark.parametrize("view", ["executiveSnapshot", "detail"])
-def test_progress_separates_initial_inventory_partial_fixes_and_pending_evidence(tmp_path, view):
-    payload = request(view)
-    if view == "detail":
-        payload["selection"] = {"type": "machine", "id": "one"}
-    result = engine(tmp_path, partial_progress_data()).query(payload)
-    chart_id = "machineRemediationProgress" if view == "detail" else "executiveSnapshotManagementRemediationProgress"
-    current = result["charts"][chart_id]["rows"][-1]
-    assert {key: current[key] for key in ("baseline", "new", "fixed", "partial", "awaiting", "open")} == {
-        "baseline": 2, "new": 1, "fixed": 0, "partial": 1, "awaiting": 1, "open": 3,
+def test_progress_separates_initial_inventory_and_keeps_partially_fixed_cves_open(tmp_path, view):
+    current = current_progress(engine(tmp_path, partial_progress_data()).query(progress_payload(view)), view)
+    assert {key: current[key] for key in ("baseline", "new", "fixed", "open")} == {
+        "baseline": 2, "new": 1, "fixed": 0, "open": 3,
     }
-    assert current["openBreakdown"] == {"withoutProgress": 1, "confirmedProgress": 1, "awaiting": 1}
+    assert current["openBreakdown"] == {"withinSla": 3, "pastSla": 0}
     assert sum(current["openBreakdown"].values()) == current["open"]
+    assert current["scanBreakdown"] == {"detected": 3, "inactive": 0}
     assert current["resolved"] == 0
 
 
 @pytest.mark.parametrize("view", ["executiveSnapshot", "detail"])
-def test_open_progress_groups_count_pending_and_confirmed_overlap_only_once(tmp_path, view):
+def test_open_progress_breakdown_splits_open_cves_by_sla(tmp_path, view):
     data = partial_progress_data()
-    data["findings"].append(finding(
-        90, DeviceId="one", CveId="CVE-PARTIAL", FirstObservedUtc="2026-10-01T00:00:00Z",
-        FindingStatus="PendingConfirmation", EffectiveRemediationUtc="2026-10-24T11:00:00Z",
-    ))
-    payload = request(view)
-    if view == "detail":
-        payload["selection"] = {"type": "machine", "id": "one"}
-    result = engine(tmp_path, data).query(payload)
-    chart_id = "machineRemediationProgress" if view == "detail" else "executiveSnapshotManagementRemediationProgress"
-    current = result["charts"][chart_id]["rows"][-1]
-    assert current["openBreakdown"] == {"withoutProgress": 1, "confirmedProgress": 0, "awaiting": 2}
+    for row in data["findings"]:
+        if row["CveId"] == "CVE-ADDED":
+            row["SlaDueUtc"] = "2026-10-23T00:00:00Z"
+    current = current_progress(engine(tmp_path, data).query(progress_payload(view)), view)
+    assert current["openBreakdown"] == {"withinSla": 2, "pastSla": 1}
     assert sum(current["openBreakdown"].values()) == current["open"] == 3
-    if view == "detail":
-        partial = engine(tmp_path / "filtered", data).query({
-            **payload, "filters": {**payload["filters"], "machineCveStatus": "Partial"},
-        })
-        assert partial["tables"]["pivotSlaCveTable"]["total"] == 0
 
 
-def test_open_progress_counts_clearance_on_other_machine_as_progress_not_global_resolution(tmp_path):
+def test_clearance_on_other_machine_is_not_a_fixed_cve(tmp_path):
     data = partial_progress_data()
     data["findings"].append(finding(
         91, DeviceId="other", CveId="CVE-ADDED", FirstObservedUtc="2026-10-22T00:00:00Z",
         FindingStatus="Fixed", FixedUtc="2026-10-24T11:00:00Z",
     ))
-    result = engine(tmp_path, data).query(request("executiveSnapshot"))
-    current = result["charts"]["executiveSnapshotManagementRemediationProgress"]["rows"][-1]
-    assert current["openBreakdown"] == {"withoutProgress": 0, "confirmedProgress": 2, "awaiting": 1}
-    assert current["resolved"] == 0
-    assert current["fixed"] == 1
+    current = current_progress(engine(tmp_path, data).query(request("executiveSnapshot")), "executiveSnapshot")
+    assert current["open"] == 3
+    assert current["fixed"] == current["resolved"] == 0
 
 
-@pytest.mark.parametrize(("status", "cve"), [("Partial", "CVE-PARTIAL"), ("Awaiting", "CVE-PENDING")])
-def test_machine_progress_filters_include_partial_and_mixed_pending_evidence(tmp_path, status, cve):
-    payload = {**request("detail", machineCveStatus=status), "selection": {"type": "machine", "id": "one"}}
-    e = engine(tmp_path, partial_progress_data())
-    result = e.query(payload)
-    rows = result["tables"]["pivotSlaCveTable"]["items"]
-    assert [row["CveId"] for row in rows] == [cve]
-    assert "still open" in rows[0]["EvidenceProgress"]
-    assert rows[0]["FixedUtc"] is None
-    assert rows[0]["EffectiveRemediationUtc"] == "2026-10-24T10:00:00Z"
-    assert [row["CveId"] for row in e.iter_export({**payload, "table": "pivotSlaCveTable"})] == [cve]
+@pytest.mark.parametrize("status", ["Partial", "Awaiting", "Absent"])
+def test_machine_progress_rejects_retired_statuses(tmp_path, status):
+    with pytest.raises(ValueError, match="machine CVE status"):
+        engine(tmp_path, partial_progress_data()).query(progress_payload("detail", machineCveStatus=status))
 
 
 def test_discovery_chart_does_not_invent_new_counts_without_baseline_history(tmp_path):
@@ -685,17 +681,13 @@ def test_discovery_chart_does_not_invent_new_counts_without_baseline_history(tmp
     assert current["open"] == 5
 
 
-def test_progress_date_range_excludes_baseline_and_prior_additions_but_keeps_pending_backlog(tmp_path):
-    data = partial_progress_data()
-    for row in data["findings"]:
-        if row["FindingStatus"] == "PendingConfirmation":
-            row["EffectiveRemediationUtc"] = "2026-10-20T10:00:00Z"
-    result = engine(tmp_path, data).query(request(
+def test_progress_date_range_excludes_baseline_and_prior_additions_but_keeps_open_backlog(tmp_path):
+    result = engine(tmp_path, partial_progress_data()).query(request(
         "executiveSnapshot", executiveSnapshotPeriod="custom",
         executiveSnapshotStart="2026-10-23", executiveSnapshotEnd="2026-10-24",
     ))
     current = result["charts"]["executiveSnapshotManagementRemediationProgress"]["rows"][-1]
-    assert (current["baseline"], current["new"], current["partial"], current["awaiting"]) == (0, 0, 1, 1)
+    assert (current["baseline"], current["new"], current["fixed"], current["open"]) == (0, 0, 0, 3)
 
 
 @pytest.mark.parametrize("activity", [False, True])
@@ -703,7 +695,7 @@ def test_progress_date_range_excludes_baseline_and_prior_additions_but_keeps_pen
     ("All", {"CVE-FIXED", "CVE-OPEN", "CVE-PENDING"}),
     ("Open", {"CVE-OPEN", "CVE-PENDING"}),
     ("Fixed", {"CVE-FIXED"}),
-    ("Awaiting", {"CVE-PENDING"}),
+    ("Inactive", {"CVE-PENDING"}),
 ])
 def test_machine_remediation_shows_fixed_and_remaining_even_from_activity(tmp_path, activity, status, expected):
     data = datasets(0)
@@ -731,7 +723,7 @@ def test_machine_remediation_shows_fixed_and_remaining_even_from_activity(tmp_pa
     assert "Full-period history: complete" in current["coverage"]
     assert (current["new"], current["fixed"], current["open"]) == (3, 1, 2)
     if activity:
-        assert result["tables"]["pivotFindingTable"]["total"] == 6
+        assert result["tables"]["pivotFindingTable"]["total"] == 3
 
 
 @pytest.mark.parametrize("view,table,activity", [
@@ -748,7 +740,7 @@ def test_activity_drilldowns_include_history_without_current_inventory_or_catalo
                                                   "value": "Operations", "label": "Grouped workloads"}]})
     result = e.query(payload)
     assert result["tables"][table]["total"] == result["activity"][activity]
-    assert result["tables"][table]["total"] == (4 if view == "workstations" else 3)
+    assert result["tables"][table]["total"] == 3
     assert len(list(e.iter_export({**payload, "table": table}))) == result["activity"][activity]
 
 
@@ -794,7 +786,7 @@ def test_shared_sla_panels_use_distinct_entities_even_after_cache_restore(tmp_pa
     assert not any("MachineCve" in column for column in result["tables"][prefix + "ComparisonTable"]["columns"])
 
 
-def test_sla_entity_full_clearance_is_not_partial_or_pending_progress(tmp_path):
+def test_sla_entity_only_full_clearance_counts_as_fixed(tmp_path):
     data = datasets(0)
     data["findings"] = [
         finding(0, DeviceId="one", CveId="CVE-SHARED", FindingStatus="Fixed", FixedUtc="2026-10-24T11:00:00Z"),
@@ -807,9 +799,9 @@ def test_sla_entity_full_clearance_is_not_partial_or_pending_progress(tmp_path):
     current = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]["periods"][0]
     for entity in ("cves", "machines"):
         assert current[entity]["totalOpen"] == 3
+        assert current[entity]["openWithin"] == 3
         assert current[entity]["confirmedFixes"] == current[entity]["completedWithin"] == 1
-        assert current[entity]["improved"] == current[entity]["awaitingConfirmation"] == 1
-        assert current[entity]["observedFixes"] == 3
+        assert not {"improved", "awaitingConfirmation", "observedFixes"} & current[entity].keys()
 
 
 def test_full_clearance_assesses_earlier_late_and_unknown_components(tmp_path):
@@ -833,7 +825,7 @@ def test_full_clearance_assesses_earlier_late_and_unknown_components(tmp_path):
 
 
 @pytest.mark.parametrize("view", ["executive", "executiveSnapshot", "trend", "overview"])
-def test_observed_progress_totals_include_pending_without_claiming_completed_sla(tmp_path, view):
+def test_entity_totals_count_inactive_as_open_and_only_full_clearance_as_fixed(tmp_path, view):
     data = datasets(0)
     data["findings"] = [
         finding(0, DeviceId="one", CveId="CVE-PENDING", FindingStatus="PendingConfirmation",
@@ -845,48 +837,49 @@ def test_observed_progress_totals_include_pending_without_claiming_completed_sla
     ] * 10
     result = engine(tmp_path, data).query(request(view))
     prefix = view + "Management"
-    assert result["cards"][prefix + "FixActivity"] == [
-        [1, "CVEs fully cleared"], [0, "CVEs improved, still unresolved"],
-        [1, "CVEs with fixes awaiting confirmation"],
-        [0, "Machines fully cleared"], [1, "Machines improved, still unresolved"],
-        [1, "Machines with fixes awaiting confirmation"],
-    ]
+    assert result["cards"][prefix + "FixActivity"] == [[1, "CVEs fully cleared"], [0, "Machines fully cleared"]]
     row = result["tables"][prefix + "MachineTable"]["items"][0]
-    assert row["TotalObservedFixes"] == 2
-    assert row["FixedCVEs"] == row["FixesAwaitingConfirmation"] == 1
+    assert (row["ProgressStatus"], row["SlaStatus"], row["InactiveDevice"]) == ("Open", "Open – past SLA", "Yes")
+    assert row["FixedCVEs"] == row["CompletedWithinSLA"] == 1
+    assert "TotalObservedFixes" not in row and "FixesAwaitingConfirmation" not in row
     assert row["OpenWithinSLA"] == row["OverdueOutcomes"] == row["UnknownOpenSLA"] == 1
     assert row["OpenSLAWithinRate"] == "50.0%"
     assert row["SLACompliance"] == "100.0%"
     comparison = result["tables"][prefix + "ComparisonTable"]["items"][0]
-    assert comparison["TotalObservedMachineCveFixes"] == 2
+    assert comparison["ConfirmedMachineCveFixes"] == 1
     assert comparison["OpenMachineCveWithinSLA"] == "50%"
-    assert result["metadata"]["management"]["sla"]["periods"][0]["outcomes"]["Remaining"] == 3
+    assert result["metadata"]["management"]["sla"]["periods"][0]["outcomes"] == {
+        "WithinSLA": 1, "LateSLA": 0, "UnknownSLA": 0, "Remaining": 3, "Fixed": 1,
+    }
     exported = list(engine(tmp_path, data).iter_export({**request(view), "table": prefix + "MachineTable"}))
-    assert exported[0]["TotalObservedFixes"] == 2
+    assert exported[0]["FixedCVEs"] == 1
     assert exported[0]["OpenSLAWithinRate"] == "50.0%"
 
 
 @pytest.mark.parametrize("view", ["executive", "overview", "executiveSnapshot", "trend", "sla"])
-def test_management_counts_unique_entities_and_separates_progress_from_resolution(tmp_path, view):
+def test_management_counts_unique_entities_as_open_or_fully_resolved(tmp_path, view):
     result = engine(tmp_path, management_data()).query(request(view, statisticsPeriod="30days"))
     current = result["metadata"]["management"]["periods"][0]
     for entity in ("machines", "cves"):
-        assert {key: current[entity][key] for key in ("Open", "Improved", "FullyResolved", "Overdue", "Pending", "UnknownSla")} == {
-            "Open": 5, "Improved": 1, "FullyResolved": 1, "Overdue": 2, "Pending": 1, "UnknownSla": 1,
+        assert {key: current[entity][key] for key in ("Open", "FullyResolved", "Overdue", "Pending", "UnknownSla")} == {
+            "Open": 5, "FullyResolved": 1, "Overdue": 2, "Pending": 1, "UnknownSla": 1,
         }
+        assert "Improved" not in current[entity]
     assert current["recommendations"]["Open"] == 2
-    assert current["recommendations"]["Improved"] == 1
     assert current["recommendations"]["FullyResolved"] == 1
     prefix = view + "Management"
     machine_rows = {row["DeviceId"]: row for row in result["tables"][prefix + "MachineTable"]["items"]}
-    assert machine_rows["one"]["ProgressStatus"] == "Improved"
-    assert machine_rows["three"]["ProgressStatus"] == "Fully resolved"
-    assert machine_rows["four"]["ProgressStatus"] == "Still open"
-    assert machine_rows["five"]["ProgressStatus"] == "Still open"
-    assert machine_rows["six"]["SlaStatus"] == "Unknown SLA"
+    assert {device: row["ProgressStatus"] for device, row in machine_rows.items()} == {
+        "one": "Open", "two": "Open", "three": "Fixed", "four": "Open", "five": "Open", "six": "Open",
+    }
+    assert machine_rows["one"]["SlaStatus"] == "Open – past SLA"
+    assert machine_rows["two"]["SlaStatus"] == "Open – within SLA"
+    assert machine_rows["four"]["InactiveDevice"] == "Yes"
+    assert machine_rows["six"]["SlaStatus"] == "Open – no SLA deadline"
     assert machine_rows["one"]["DeviceName"]
     cves = {row["CveId"]: row for row in result["tables"][prefix + "CveTable"]["items"]}
-    assert cves["CVE-X"]["ProgressStatus"] == "Improved"
+    assert cves["CVE-X"]["ProgressStatus"] == "Open"
+    assert cves["CVE-Z"]["ProgressStatus"] == "Fixed"
     assert cves["CVE-X"]["AffectedMachines"] == 1
     assert cves["CVE-X"]["Severity"] == "High"
     for name in ("Machine", "Cve", "Recommendation"):
@@ -907,16 +900,21 @@ def test_management_resolution_uses_full_scope_not_only_changed_rows(tmp_path):
     assert actual == expected
     scoped = e.query(request(severity="High"))["metadata"]["management"]["periods"][0]
     assert scoped["machines"]["FullyResolved"] == 2
-    assert scoped["machines"]["Improved"] == 0
+    assert scoped["machines"]["Open"] == 4
 
 
-def test_management_historical_resolution_precedes_later_confirmed_reopening(tmp_path):
+def test_management_reopened_vulnerability_starts_a_new_episode(tmp_path):
+    # A vulnerability that comes back is a new episode: before its return date it is not open.
     result = engine(tmp_path, management_data()).query(request(
         executiveSnapshotPeriod="custom", executiveSnapshotStart="2026-10-20", executiveSnapshotEnd="2026-10-21",
     ))
-    rows = result["tables"]["executiveSnapshotManagementMachineTable"]["items"]
-    assert next(row for row in rows if row["DeviceId"] == "five")["ProgressStatus"] == "Fully resolved"
-    assert next(row for row in rows if row["DeviceId"] == "four")["ProgressStatus"] == "Still open"
+    rows = {row["DeviceId"]: row for row in result["tables"]["executiveSnapshotManagementMachineTable"]["items"]}
+    assert "five" not in rows
+    assert rows["four"]["ProgressStatus"] == "Open"
+    assert rows["three"]["ProgressStatus"] == "Fixed"
+    current = engine(tmp_path / "current", management_data()).query(request())
+    machines = {row["DeviceId"]: row for row in current["tables"]["executiveSnapshotManagementMachineTable"]["items"]}
+    assert machines["five"]["ProgressStatus"] == "Open"
 
 
 def test_management_does_not_backdate_machine_risk_to_cve_catalog_first_seen(tmp_path):
@@ -958,8 +956,7 @@ def test_management_sla_completion_denominator_excludes_open_and_unknown_outcome
     result = engine(tmp_path, data).query(request())
     sla = result["metadata"]["management"]["sla"]["periods"][0]
     assert sla["CompliancePercent"] == 100
-    assert sla["outcomes"] == {"WithinSLA": 1, "LateSLA": 0, "UnknownSLA": 1, "Remaining": 1, "Fixed": 2,
-                               "AwaitingConfirmation": 0}
+    assert sla["outcomes"] == {"WithinSLA": 1, "LateSLA": 0, "UnknownSLA": 1, "Remaining": 1, "Fixed": 2}
     severity = {row["label"]: row for row in sla["severity"]}
     assert severity["Critical"]["assessed"] == severity["Critical"]["completedWithin"] == 1
     assert severity["Critical"]["within"] == 100
@@ -1092,7 +1089,7 @@ def test_management_activity_and_os_exports_respect_scope_without_claiming_resol
     assert len(rows) == expected
     assert all(not any("Findings" in key for key in row) for row in rows)
     assert all(row.get("DeviceId") != "low" and row.get("CveId") != "CVE-2026-0005" for row in rows)
-    assert result["cards"]["lifecycleCards"][2][0] == 0
+    assert result["cards"]["lifecycleCards"] == [[expected, "Open at period end"], [0, "Fixed (fully cleared) in scope"]]
     if breakdown != "All":
         assert all("OSPlatform" in row and "OSMetadataSource" in row for row in rows)
 
@@ -1199,13 +1196,13 @@ def test_machine_cve_sla_three_cves_two_fixed_one_remaining(tmp_path, view):
     assert machine["CompletedWithinSLA"] == machine["CompletedLate"] == 1
     assert machine["SLACompliance"] == "50.0%"
     assert "ExecutiveStatus" not in machine
-    assert machine["ProgressStatus"] == "Improved"
+    assert (machine["ProgressStatus"], machine["SlaStatus"]) == ("Open", "Open – within SLA")
     sla = result["metadata"]["management"]["sla"]
     assert sla["unit"] == "machine-cve"
     assert sla["periods"][0]["CompliancePercent"] == 50
     # CVE-A is fixed on X, but remains open on Y.
     cve = next(row for row in result["tables"][view + "ManagementCveTable"]["items"] if row["CveId"] == "CVE-A")
-    assert cve["ProgressStatus"] == "Improved" and cve["FixedMachines"] == 1
+    assert cve["ProgressStatus"] == "Open" and cve["FixedMachines"] == 1
     assert "ExecutiveStatus" not in sla["periods"][0]
     for suffix in ("SlaSeverity", "Movement"):
         assert view + "Management" + suffix in result["charts"]
@@ -1242,16 +1239,21 @@ def test_machine_cve_sla_uses_earliest_deadline_and_last_confirmed_removal(tmp_p
 
 
 @pytest.mark.parametrize("status", ["PendingVerification", "PendingConfirmation"])
-def test_machine_cve_sla_pending_is_never_completed(tmp_path, status):
+def test_machine_cve_sla_legacy_pending_is_open_on_inactive_device(tmp_path, status):
     data = datasets(0)
     data["findings"] = [finding(0, FindingStatus=status, FixedUtc="2026-10-24T11:00:00Z")]
     result = engine(tmp_path, data).query(request())
-    assert result["metadata"]["management"]["sla"]["periods"][0]["CompliancePercent"] is None
+    sla = result["metadata"]["management"]["sla"]["periods"][0]
+    assert sla["CompliancePercent"] is None
+    assert sla["outcomes"] == {"WithinSLA": 0, "LateSLA": 0, "UnknownSLA": 0, "Remaining": 1, "Fixed": 0}
     row = result["tables"]["executiveSnapshotManagementMachineTable"]["items"][0]
-    assert row["FixedCVEs"] == 0 and row["PendingEvidence"] == "Yes"
+    assert row["FixedCVEs"] == 0 and row["InactiveDevice"] == "Yes"
+    assert (row["ProgressStatus"], row["SlaStatus"]) == ("Open", "Open – within SLA")
+    hidden = engine(tmp_path / "active", data).query(request(includeInactive=False))
+    assert hidden["tables"]["executiveSnapshotManagementMachineTable"]["total"] == 0
 
 @pytest.mark.parametrize("view", ["executive", "overview", "sla", "trend", "executiveSnapshot"])
-def test_observed_fixes_are_visible_before_confirmation_without_completed_sla(tmp_path, view):
+def test_legacy_fix_awaiting_confirmation_is_open_not_completed_sla(tmp_path, view):
     data = datasets(0)
     row = finding(
         0, FindingStatus="PendingConfirmation", EffectiveRemediationUtc="2026-10-24T11:00:00Z",
@@ -1261,27 +1263,20 @@ def test_observed_fixes_are_visible_before_confirmation_without_completed_sla(tm
     result = engine(tmp_path, data).query(request(view))
     prefix = view + "Management"
     sla = result["metadata"]["management"]["sla"]["periods"][0]
-    assert sla["outcomes"]["AwaitingConfirmation"] == 1
-    assert sla["outcomes"]["Fixed"] == sla["outcomes"]["WithinSLA"] == sla["outcomes"]["LateSLA"] == 0
+    assert sla["outcomes"] == {"WithinSLA": 0, "LateSLA": 0, "UnknownSLA": 0, "Remaining": 1, "Fixed": 0}
     assert sla["CompliancePercent"] is None
     machine = result["tables"][prefix + "MachineTable"]["items"][0]
-    assert machine["FixesAwaitingConfirmation"] == 1
     assert machine["SLACompliance"] == "Waiting for data"
-    assert machine["ProgressStatus"] == "Fix observed — awaiting confirmation"
+    assert machine["ProgressStatus"] == "Open"
+    assert "FixesAwaitingConfirmation" not in machine
     severity = next(row for row in sla["severity"] if row["label"] == "High")
-    assert severity["awaitingConfirmation"] == 1 and severity["assessed"] == 0
-    assert result["cards"][prefix + "FixActivity"] == [
-        [0, "CVEs fully cleared"], [0, "CVEs improved, still unresolved"],
-        [1, "CVEs with fixes awaiting confirmation"],
-        [0, "Machines fully cleared"], [0, "Machines improved, still unresolved"],
-        [1, "Machines with fixes awaiting confirmation"],
-    ]
-    exported = list(engine(tmp_path, data).iter_export({**request(view), "table": prefix + "MachineTable"}))
-    assert exported[0]["FixesAwaitingConfirmation"] == 1
+    assert severity["openWithin"] == 1 and severity["assessed"] == 0
+    assert "awaitingConfirmation" not in severity
+    assert result["cards"][prefix + "FixActivity"] == [[0, "CVEs fully cleared"], [0, "Machines fully cleared"]]
 
 
 @pytest.mark.parametrize("status", ["Open", "DetectionReturned", "PendingVerification", "StaleDevice", "Unknown"])
-def test_observed_fix_requires_all_machine_cve_evidence_to_clear(tmp_path, status):
+def test_fix_requires_all_machine_cve_evidence_to_clear(tmp_path, status):
     data = datasets(0)
     data["findings"] = [
         finding(0, FindingStatus="PendingConfirmation", EffectiveRemediationUtc="2026-10-24T11:00:00Z"),
@@ -1289,7 +1284,7 @@ def test_observed_fix_requires_all_machine_cve_evidence_to_clear(tmp_path, statu
     ]
     result = engine(tmp_path, data).query(request())
     sla = result["metadata"]["management"]["sla"]["periods"][0]
-    assert sla["outcomes"]["AwaitingConfirmation"] == 0
+    assert sla["outcomes"]["Remaining"] == 1
     assert sla["outcomes"]["Fixed"] == 0 and sla["CompliancePercent"] is None
 
 
@@ -1305,7 +1300,7 @@ def test_confirmed_fix_is_attributed_to_first_absence_not_confirmation(tmp_path)
                              executiveSnapshotEnd="2026-10-23"))
     sla = result["metadata"]["management"]["sla"]["periods"][0]
     assert sla["outcomes"]["WithinSLA"] == 1
-    assert sla["outcomes"]["LateSLA"] == sla["outcomes"]["AwaitingConfirmation"] == 0
+    assert sla["outcomes"]["LateSLA"] == 0
     assert sla["CompliancePercent"] == 100
     machine = result["tables"]["executiveSnapshotManagementMachineTable"]["items"][0]
     assert machine["FixedCVEs"] == 1
@@ -1329,7 +1324,6 @@ def test_daily_collection_to_dashboard_first_absence_fix_and_reopened_detection(
     data["findings"] = pending
     result = engine(tmp_path / "pending", data, snapshot_time=first_absence).query(request())
     sla = result["metadata"]["management"]["sla"]["periods"][0]
-    assert sla["outcomes"]["AwaitingConfirmation"] == 0
     assert sla["outcomes"]["Fixed"] == sla["outcomes"]["WithinSLA"] == 1
     assert sla["CompliancePercent"] == 100
 
@@ -1343,14 +1337,15 @@ def test_daily_collection_to_dashboard_first_absence_fix_and_reopened_detection(
     ))
     sla = result["metadata"]["management"]["sla"]["periods"][0]
     assert sla["outcomes"]["WithinSLA"] == sla["outcomes"]["Fixed"] == 1
-    assert sla["outcomes"]["LateSLA"] == sla["outcomes"]["AwaitingConfirmation"] == 0
+    assert sla["outcomes"]["LateSLA"] == 0
 
     data["findings"] = reconcile_live_findings(
         previous, pending, datetime.fromisoformat(confirmed_at), "day-3-returned", devices,
     )
     result = engine(tmp_path / "returned", data, snapshot_time=confirmed_at).query(request())
     sla = result["metadata"]["management"]["sla"]["periods"][0]
-    assert sla["outcomes"]["AwaitingConfirmation"] == sla["outcomes"]["Fixed"] == 0
+    assert sla["outcomes"]["Fixed"] == 0
+    assert sla["outcomes"]["Remaining"] == 2
     assert sla["CompliancePercent"] is None
     # The return starts a new episode: the fixed episode is retained and a new open row has its own clock.
     by_key = {row["FindingKey"]: row for row in data["findings"]}
@@ -1397,20 +1392,15 @@ def test_first_absence_math_reconciles_across_dashboard_and_machine_views(tmp_pa
         "slaDashboardRemediationProgress" if view == "slaDashboard" else view + "ManagementRemediationProgress"
     )
     current = result["charts"][chart_id]["rows"][-1]
-    assert current["awaiting"] == 0
     assert current["open"] == (1 if view == "detail" else 4)
-    assert current["resolved"] == 2
-    assert current["openBreakdown"] == {
-        "withoutProgress": 0 if view == "detail" else 2,
-        "confirmedProgress": 1 if view == "detail" else 2,
-        "awaiting": 0,
-    }
-    assert sum(current["openBreakdown"].values()) == current["open"]
+    assert current["resolved"] == current["fixed"] == 2
+    assert current["openBreakdown"] == {"withinSla": current["open"], "pastSla": 0}
+    assert current["scanBreakdown"] == ({"detected": 1, "inactive": 0} if view == "detail" else {"detected": 3, "inactive": 1})
     if view == "detail":
         rows = {row["CveId"]: row for row in result["tables"]["pivotSlaCveTable"]["items"]}
         assert len(rows) == 3
         assert rows["CVE-PARTIAL"]["ProgressStatus"] == "Open"
-        assert rows["CVE-SHARED"]["ProgressStatus"] == rows["CVE-CLEARED"]["ProgressStatus"] == "Confirmed fixed"
+        assert rows["CVE-SHARED"]["ProgressStatus"] == rows["CVE-CLEARED"]["ProgressStatus"] == "Fixed"
         assert result["metadata"]["machineRemediation"]["fixed"] == 2
     elif view == "slaDashboard":
         current_sla = result["metadata"]["slaDashboard"]["periods"][0]
@@ -1424,7 +1414,7 @@ def test_first_absence_math_reconciles_across_dashboard_and_machine_views(tmp_pa
         assert sum(row["openWithin"] + row["openOverdue"] + row["unknownOpen"] for row in pairs) == 4
 
 
-def test_unqualified_or_undated_absence_never_becomes_observed_fix(tmp_path):
+def test_unqualified_or_undated_absence_never_becomes_a_fix(tmp_path):
     data = datasets(0)
     data["findings"] = [
         finding(0, FindingStatus="PendingVerification", EffectiveRemediationUtc="2026-10-24T11:00:00Z"),
@@ -1432,7 +1422,8 @@ def test_unqualified_or_undated_absence_never_becomes_observed_fix(tmp_path):
         finding(2, FindingStatus="DetectionReturned", EffectiveRemediationUtc=""),
     ]
     sla = engine(tmp_path, data).query(request())["metadata"]["management"]["sla"]["periods"][0]
-    assert sla["outcomes"]["AwaitingConfirmation"] == sla["outcomes"]["Fixed"] == 0
+    assert sla["outcomes"]["Fixed"] == 0
+    assert sla["outcomes"]["Remaining"] == 3
     assert sla["CompliancePercent"] is None
 
 
@@ -1474,12 +1465,12 @@ def test_machine_cve_sla_unknown_deadlines_do_not_become_success(tmp_path):
 
 
 @pytest.mark.parametrize(("due", "status", "rate"), [
-    ("2026-10-25T00:00:00Z", "Within deadline", "100.0%"),
-    ("2026-10-24T12:00:00Z", "Within deadline", "100.0%"),
-    ("2026-10-23T00:00:00Z", "Overdue", "0.0%"),
-    (None, "Unknown SLA", "Waiting for data"),
+    ("2026-10-25T00:00:00Z", "Open – within SLA", "100.0%"),
+    ("2026-10-24T12:00:00Z", "Open – within SLA", "100.0%"),
+    ("2026-10-23T00:00:00Z", "Open – past SLA", "0.0%"),
+    (None, "Open – no SLA deadline", "Waiting for data"),
 ])
-def test_pending_fix_has_real_open_deadline_status_until_confirmed(tmp_path, due, status, rate):
+def test_legacy_pending_fix_keeps_its_open_deadline_status(tmp_path, due, status, rate):
     data = datasets(0)
     data["findings"] = [
         finding(0, FindingStatus="PendingConfirmation", EffectiveRemediationUtc="2026-10-24T11:00:00Z",
@@ -1491,10 +1482,11 @@ def test_pending_fix_has_real_open_deadline_status_until_confirmed(tmp_path, due
     assert row["OpenSLAWithinRate"] == rate
     detail = e.query({**request("detail"), "selection": {"type": "machine", "id": "device-0"}})
     pair = detail["tables"]["pivotSlaCveTable"]["items"][0]
-    assert pair["ProgressStatus"] == "Fix observed — awaiting confirmation"
+    assert pair["ProgressStatus"] == "Open"
     assert pair["SlaStatus"] == status
     cards = dict((label, value) for value, label in detail["cards"]["pivotCards"])
-    assert cards["CVEs with confirmed or pending fixes"] == 1
+    assert cards["CVEs fixed"] == 0
+    assert cards["Open on inactive devices"] == 1
     assert cards["Confirmed CVEs on time"] == "Waiting for data"
 
 
@@ -1505,7 +1497,7 @@ def test_machine_cve_sla_machine_detail_and_csv_include_fixed_and_remaining(tmp_
     rows = result["tables"]["pivotSlaCveTable"]["items"]
     assert len(rows) == 3
     assert {row["CveId"]: row["SlaStatus"] for row in rows} == {
-        "CVE-A": "Fixed within SLA", "CVE-B": "Fixed late", "CVE-C": "Within deadline",
+        "CVE-A": "Fixed – within SLA", "CVE-B": "Fixed – past SLA", "CVE-C": "Open – within SLA",
     }
     assert all(row["DeviceName"] for row in rows)
     assert all("Finding" not in label for _, label in result["cards"]["pivotCards"])
@@ -1540,12 +1532,12 @@ def test_machine_history_waits_for_all_software_and_excludes_pending_fixes(tmp_p
     result = engine(tmp_path, data).query(machine_history_request(exposureStatus="ConfirmedFixed"))
     rows = result["tables"]["pivotMachineHistoryTable"]["items"]
     assert len(rows) == 4
-    fixes = [row for row in rows if row["Change"] == "Confirmed fixed"]
+    fixes = [row for row in rows if row["Change"] == "Fixed"]
     assert [(row["CveId"], row["ChangeTimeUtc"], row["SlaStatus"]) for row in fixes] == [
         ("CVE-A", "2026-10-12T00:00:00Z", "Fixed within SLA"),
     ]
     assert dict((label, value) for value, label in result["cards"]["machineHistoryCards"]) == {
-        "Distinct CVEs added": 3, "Distinct CVEs confirmed fixed": 1, "Distinct CVEs reopened": 0,
+        "Distinct CVEs added": 3, "Distinct CVEs fixed": 1, "Distinct CVEs reopened": 0,
     }
     assert result["metadata"]["machineHistory"]["coverage"] == "lifecycle-only"
 
@@ -1568,7 +1560,7 @@ def test_machine_history_reconstructs_multiple_clearance_cycles_and_custom_perio
     e = engine(tmp_path, data)
     result = e.query(machine_history_request())
     rows = result["tables"]["pivotMachineHistoryTable"]["items"]
-    assert [row["Change"] for row in rows] == ["Confirmed fixed", "Reopened", "Confirmed fixed", "Added"]
+    assert [row["Change"] for row in rows] == ["Fixed", "Reopened", "Fixed", "Added"]
     assert rows[0]["SlaStatus"] == "Fixed late"
     assert rows[2]["SlaStatus"] == "Fixed within SLA"
     custom = {**machine_history_request(), "filters": {
@@ -1577,7 +1569,7 @@ def test_machine_history_reconstructs_multiple_clearance_cycles_and_custom_perio
     }}
     filtered = e.query(custom)
     assert [row["Change"] for row in filtered["tables"]["pivotMachineHistoryTable"]["items"]] == [
-        "Reopened", "Confirmed fixed",
+        "Reopened", "Fixed",
     ]
     assert filtered["metadata"]["machineHistory"]["coverage"] == "events-and-lifecycle"
     assert len(list(e.iter_export({**custom, "table": "pivotMachineHistoryTable"}))) == 2
@@ -1618,7 +1610,7 @@ def test_machine_history_missing_deadlines_are_unknown_and_missing_observations_
         {**history_finding(2, CveId="CVE-B"), "FirstObservedUtc": None, "FirstSeenUtc": None},
     ]
     rows = engine(tmp_path, data).query(machine_history_request())["tables"]["pivotMachineHistoryTable"]["items"]
-    fixes = [row for row in rows if row["Change"] == "Confirmed fixed"]
+    fixes = [row for row in rows if row["Change"] == "Fixed"]
     assert len(fixes) == 1
     assert fixes[0]["CveId"] == "CVE-A" and fixes[0]["SlaStatus"] == "Unknown SLA"
 
@@ -1694,7 +1686,7 @@ def test_machine_cve_sla_detail_uses_executive_custom_period_and_resolution_scop
     })
     rows = result["tables"]["pivotSlaCveTable"]["items"]
     assert {row["CveId"]: row["ProgressStatus"] for row in rows} == {
-        "CVE-A": "Confirmed fixed", "CVE-B": "Open", "CVE-C": "Open",
+        "CVE-A": "Fixed", "CVE-B": "Open", "CVE-C": "Open",
     }
 
 
@@ -1707,8 +1699,8 @@ def test_machine_cve_sla_keeps_earliest_deadline_after_partial_software_removal(
     ]
     result = engine(tmp_path, data).query(request())
     row = result["tables"]["executiveSnapshotManagementMachineTable"]["items"][0]
-    assert row["FixedCVEs"] == 0 and row["ProgressStatus"] == "Still open"
-    assert row["SlaStatus"] == "Overdue"
+    assert row["FixedCVEs"] == 0 and row["ProgressStatus"] == "Open"
+    assert row["SlaStatus"] == "Open – past SLA"
     assert result["metadata"]["management"]["periods"][0]["machines"]["Overdue"] == 1
 
 

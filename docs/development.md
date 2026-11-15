@@ -287,11 +287,9 @@ Shared startup defaults use the same machine/CVE model and prewarm the
 Vulnerabilities view in distinct-CVE mode, rather than preparing unused legacy
 finding-instance summaries.
 
-For machines/CVEs, `Improved` requires a confirmed machine/CVE completion during
-the selected period with some unresolved risk remaining. Removing one software
-instance while the same CVE remains on that machine is not a completed CVE.
-Recommendation progress retains confirmed removal of supporting exposure.
-`Fully resolved` additionally requires no unresolved
+Machines and CVEs are `Open` or `Fixed`; there is no `Improved` state.
+Removing one software instance while the same CVE remains on that machine is
+not a completed CVE. `Fully resolved` requires no unresolved
 exposure in the entire selected scope at period end. Pending verification is
 unresolved even when a qualified-absence timestamp exists. A later confirmed
 reopening prevents current resolution but does not erase the earlier resolved
@@ -430,13 +428,10 @@ Machine activity detail additionally includes a separate full-scope CVE status
 list, so activity filtering never conceals that machine's other unresolved CVEs.
 The original activity evidence and exports retain their activity scope.
 
-Reporting and machine details include an unresolved
-CVE breakdown for each stated reporting period. Its three groups are mutually
-exclusive: no recorded fix progress, confirmed progress but still unresolved,
-and awaiting confirmation. Pending confirmation takes precedence when a CVE
-also has confirmed progress, so it is counted only in the pending group.
-The three counts must sum exactly to the unresolved total; both backend and UI
-reject inconsistent counts. The displayed equation makes that reconciliation
+Reporting and machine details include an open CVE breakdown for each stated
+reporting period: `openBreakdown` = {`withinSla`, `pastSla`} and
+`scanBreakdown` = {`detected`, `inactive`}. Each pair of counts must sum
+exactly to the open total; both backend and UI reject inconsistent counts. The displayed equation makes that reconciliation
 explicit. The unresolved total is a heading, never a competing fourth bar.
 
 Initial inventory, later additions, and full clearances are displayed separately
@@ -487,10 +482,9 @@ Machine exports include `FixedCVEs` and completed on-time/late/unknown outcomes;
 CVE exports include `FixedMachines`. Pair detail exports
 carry the period, pinned snapshot, and selected identity.
 Machine detail prioritizes the CVE status table above recommendations, with
-All, All unresolved, CVEs fully cleared in period, Confirmed partial fixes
-(excluding pending), and Awaiting confirmation filters. `EvidenceProgress` distinguishes partial
-supporting-evidence clearance from full CVE resolution without changing
-`ProgressStatus` or the SLA completion calculation.
+All, Open, Fixed in period, and Open on inactive device filters
+(`machineCveStatus` = All / Open / Fixed / Inactive). `ProgressStatus` is
+`Open` or `Fixed`; `SlaStatus` is one of the four states or "no SLA deadline".
 Paging and CSV exports use the identical filter and preserve workspace scope.
 Its current-period unresolved breakdown and reconciliation stay unfiltered so the
 full machine context remains visible. SLA-origin detail uses month to date;

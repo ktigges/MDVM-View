@@ -21,12 +21,6 @@ from test_dashboard_cache import Service, cache
 from test_dashboard_query_api import request
 
 
-STEP4_KNOWN_FAILURE = pytest.mark.xfail(
-    strict=True,
-    reason="Pre-existing at archive/pre-sla-simplification (fe7eeec): the dashboard changed before the SLA "
-    "refactor and this test was not updated. Resolve in Step 4 (docs/review.md section 4.6), then remove this mark.",
-)
-
 ROOT = Path(__file__).parents[1]
 
 
@@ -311,7 +305,6 @@ def test_refresh_failure_retains_ready_snapshot_and_reports_error(caplog):
     assert "retaining any ready snapshot" in caplog.text
 
 
-@STEP4_KNOWN_FAILURE
 def test_shared_defaults_agree_with_actual_browser_request():
     node = shutil.which("node")
     if not node:
@@ -325,6 +318,7 @@ for(const line of source){
   if(line.startsWith("const presentation=")||line.startsWith("const filterConfig=")||
      line.startsWith("const workloadGroupingConfig=")||line.startsWith("const DEFAULT_RECOMMENDATION_TYPES=")||
      line.startsWith("const DEFAULT_DOMAINS=")||line.startsWith("const DEFAULT_REPORTING_DAYS=")||
+     line.startsWith("const PRIMARY_VIEWS=")||
      line.startsWith("const state=")||line.startsWith("const findingsList="))vm.runInContext(line,context);
 }
 vm.runInContext("const dashboardQuery={snapshot:{snapshotId:'test'}};const FINDINGS_PAGE_SIZE=100;",context);

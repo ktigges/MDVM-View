@@ -63,11 +63,21 @@ The same CVE on 100 machines is one distinct CVE and 100 affected machines.
 Several software records for that CVE on one machine do not add vulnerabilities.
 Dashboard totals use the selected snapshot and filters, not repeated scans.
 
-The dashboard separates current detections from evidence confirmation.
-`Open`, `Reopened`, and `DetectionReturned` are current detections.
-`PendingConfirmation` and `PendingVerification` remain visible as pending
-evidence but can be hidden or isolated with the Exposure status filter.
-Confirmed fixed evidence remains available in SLA and lifecycle reporting.
+The dashboard index gives every finding row one of three statuses:
+
+- `Fixed`: the collector recorded the fix.
+- `Open`: detected in the row's run on a device seen within 7 days.
+- `Inactive`: unresolved, but either not detected in the row's run or on a
+  device not seen for 7 days. Legacy unresolved statuses (`PendingConfirmation`,
+  `PendingVerification`, `StaleDevice`, `OutOfScope`, `Unknown`) read as
+  `Inactive`; `Reopened` and `DetectionReturned` read as `Open`.
+
+Inactive is settled per machine/CVE pair, not per software row. A pair with any
+`Open` row is open as a whole. Otherwise a pair with any `Inactive` row is
+inactive as a whole, including its fixed rows, so hiding inactive devices never
+makes an unresolved pair look fixed. Inactive pairs stay open and never count as
+fixed. They are left out of every view unless **Include inactive devices** is on
+(filter `includeInactive`, default off).
 
 The default recommendation-type filter is Vulnerability. Its current
 classifier recognizes update/security-update remediation or vulnerability wording;
@@ -367,15 +377,33 @@ The report presents distinct machines, CVEs, and recommendations together.
 Its export selector chooses an entity-detail CSV; it does not change the
 summary's counting units. The dashboard has no finding-instance reporting mode.
 
-An unresolved entity appears once, at its highest remaining severity. Overdue
-takes precedence over unknown deadline, then not yet due. Pending evidence
-remains unresolved. Removing software evidence without clearing the machine/CVE
-does not establish a completed vulnerability.
+Every machine/CVE pair is in one of four states:
 
-Full clearance requires no unresolved vulnerability in the selected scope:
-no affected machine for a CVE, and no remaining CVE for a machine. Confirmed
-partial removal is improved, not fully cleared. Recommendation progress is
-shared workload context, not a separate SLA clock.
+| State | Rule |
+|---|---|
+| Open – within SLA | Open, and now ≤ due |
+| Open – past SLA | Open, and now > due |
+| Fixed – within SLA | Fixed, and fixed date ≤ due |
+| Fixed – past SLA | Fixed, and fixed date > due |
+
+Due is the earliest SLA deadline of the pair's rows. A pair without a known
+deadline shows "No SLA deadline" and is excluded from SLA percentages.
+
+A machine or CVE is `Open` while any of its pairs is open, and `Fixed` only
+when all are fixed. An open entity appears once, at its highest open severity;
+past SLA takes precedence over no SLA deadline, then within SLA. Removing one
+software item, or fixing a CVE on some machines, does not make the CVE fixed.
+There are no "awaiting confirmation", "partial fix" or "improved" states.
+Recommendation progress is shared workload context, not a separate SLA clock.
+
+The Summary page adds four SLA gauges, one per severity:
+
+    within SLA % = (Open – within SLA + Fixed – within SLA)
+                   ÷ (all open and fixed pairs with a known deadline)
+
+Fixed pairs count when they were fixed in the selected period. It also adds a
+90-day Open vs Fixed chart. Open is the number of pairs open at the end of each
+UTC day; Fixed is the number of pairs fully fixed that day.
 
 An entity's full-clearance SLA result includes retained component clearances,
 not only the final removal. Any late component makes it late. Otherwise a

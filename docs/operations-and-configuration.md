@@ -26,8 +26,9 @@ reporting. No extra collection is required, even when its entire vulnerability
 list becomes empty. Missing/stale machines and incomplete collections do not
 earn fix credit. A machine/CVE remains open while any of its software evidence
 is unresolved. Clearance is an observed between-run outcome, not an exact
-patch-installation time. Retained snapshots or explicitly configured policies
-requiring multiple absent collections can still contain pending confirmation.
+patch-installation time. In the dashboard, unresolved evidence from older
+retained snapshots (pending confirmation or verification, stale devices) is
+shown as open on an inactive device, never as fixed.
 
 ## Compliance percentage snapshots
 
@@ -37,12 +38,12 @@ SLA and Executive Snapshot also show **week to date** (Monday onward),
 data snapshot rather than the browser clock. Each period shows separate
 distinct-CVE and distinct-machine assessments:
 
-- **Unresolved within SLA %** = not-yet-due unresolved entities / unresolved
-  entities with known deadlines at the period end. This is a point-in-time
+- **Open – within SLA %** = open entities not yet past due / open entities
+  with known deadlines at the period end. This is a point-in-time
   backlog assessment, not an average over the period or completed remediation.
-- **Confirmed on-time clearance %** = entities fully cleared on time during
-  the period / entities fully cleared during that period with known deadlines.
-  Pending confirmation remains unresolved and is never a successful clearance.
+- **Fixed – within SLA %** = entities fully fixed on time during the period /
+  entities fully fixed during that period with known deadlines. Open entities,
+  including those on inactive devices, are never counted as fixed.
 
 Each percentage includes its numerator, denominator, and excluded
 unknown-deadline count. A missing deadline cannot establish compliance. An empty

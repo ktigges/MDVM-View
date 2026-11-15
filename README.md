@@ -98,7 +98,7 @@ publication, startup, caches, queries, and the relevant source files.
 | SLA | Distinct unresolved CVEs and machines, deadlines, full clearances, and calendar comparisons |
 | Remediate (SLA) | Separate CVE and machine progress and SLA status |
 | Reporting | Distinct-entity progress, lifecycle changes, and filtered exports |
-| Executive Snapshot | Unique machines, CVEs, and recommendations; improved and fully resolved progress for a selected period and scope |
+| Executive Snapshot | Unique machines, CVEs, and recommendations; open and fully resolved status for a selected period and scope |
 | How to use | Workflow and count definitions inside the application |
 
 Active totals count `Open`, `Reopened`, and `DetectionReturned` findings.
