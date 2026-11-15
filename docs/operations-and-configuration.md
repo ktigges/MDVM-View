@@ -32,7 +32,7 @@ shown as open on an inactive device, never as fixed.
 
 ## Compliance percentage snapshots
 
-SLA and Executive Snapshot also show **week to date** (Monday onward),
+The SLA screen also shows **week to date** (Monday onward),
 **month to date**, **rolling 90 days** (90 inclusive calendar dates), and
 **year to date** (January 1 onward). Dates are UTC, anchored to the pinned
 data snapshot rather than the browser clock. Each period shows separate

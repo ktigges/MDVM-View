@@ -1,6 +1,20 @@
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def no_live_scale_set_lookup(monkeypatch):
+    """Collection tests never call Azure Resource Graph; the Flexible member list starts empty."""
+    from vulnerability_view import live_collector
+
+    monkeypatch.setattr(live_collector, "collect_scale_set_members", lambda *args, **kwargs: ([], {
+        "Endpoint": "azure_scale_set_members", "Status": "Success", "RowCount": 0, "PageCount": 0,
+        "DurationSeconds": 0, "Error": "",
+    }))
+    live_collector.use_scale_set_members(())
+    yield
+    live_collector.use_scale_set_members(())
+
+
 @pytest.fixture
 def configured_function_target(monkeypatch):
     from vulnerability_view import operations_cli

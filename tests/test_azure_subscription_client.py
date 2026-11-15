@@ -105,3 +105,72 @@ def test_collect_azure_subscriptions_uses_management_group_descendants(monkeypat
         "tenantId": "",
     }]
     assert status["RowCount"] == 1
+
+
+def _graph_response(status_code, payload=None):
+    response = requests.Response()
+    response.status_code = status_code
+    response._content = json.dumps(payload or {}).encode()
+    return response
+
+
+def test_collect_scale_set_members_pages_resource_graph_and_archives_each_page(monkeypatch):
+    from vulnerability_view.azure_subscription_client import ARG_RESOURCES_URL, collect_scale_set_members
+
+    pages = [
+        {"data": [{"id": "/SUBSCRIPTIONS/s/RESOURCEGROUPS/rg/providers/Microsoft.Compute/virtualMachines/flex_1",
+                   "scaleSetId": "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachineScaleSets/flex"}],
+         "$skipToken": "next"},
+        {"data": [{"id": "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/flex_2"}]},
+    ]
+    bodies, archived = [], []
+
+    def fake_post(url, headers, json, timeout):
+        assert url == ARG_RESOURCES_URL
+        assert headers["Authorization"] == "Bearer not-a-real-token"
+        bodies.append(json)
+        return _graph_response(200, pages[len(bodies) - 1])
+
+    monkeypatch.setattr("requests.post", fake_post)
+    rows, status = collect_scale_set_members(Credential(), lambda page, content: archived.append(page), "mg-1")
+
+    assert [row["ResourceId"] for row in rows] == [
+        "/subscriptions/s/resourcegroups/rg/providers/microsoft.compute/virtualmachines/flex_1",
+        "/subscriptions/s/resourcegroups/rg/providers/microsoft.compute/virtualmachines/flex_2",
+    ]
+    assert rows[0]["ScaleSetId"].endswith("/virtualmachinescalesets/flex")
+    assert "$skipToken" not in bodies[0]["options"] and bodies[1]["options"]["$skipToken"] == "next"
+    assert bodies[0]["managementGroups"] == ["mg-1"]
+    assert "virtualMachineScaleSet" in bodies[0]["query"]
+    assert status["Status"] == "Success" and status["RowCount"] == 2 and status["PageCount"] == 2
+    assert archived == [1, 2]
+
+
+def test_collect_scale_set_members_without_reader_falls_back_empty(monkeypatch):
+    from vulnerability_view.azure_subscription_client import collect_scale_set_members
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: _graph_response(403))
+    rows, status = collect_scale_set_members(Credential())
+    assert rows == []
+    assert status["Status"] == "OptionalUnavailable"
+    assert "Reader" in status["Error"] and "Flexible" in status["Error"]
+
+
+def test_collect_scale_set_members_errors_never_raise(monkeypatch):
+    from vulnerability_view.azure_subscription_client import collect_scale_set_members
+
+    class Broken:
+        def get_token(self, scope):
+            raise RuntimeError("no token")
+
+    rows, status = collect_scale_set_members(Broken())
+    assert rows == [] and status["Status"] == "OptionalUnavailable" and status["Error"] == "no token"
+
+    def partial(url, headers, json, timeout):
+        if json["options"].get("$skipToken"):
+            raise requests.ConnectionError("network down")
+        return _graph_response(200, {"data": [{"id": "/a/virtualMachines/x"}], "$skipToken": "t"})
+
+    monkeypatch.setattr("requests.post", partial)
+    rows, status = collect_scale_set_members(Credential())
+    assert rows == [] and status["Status"] == "OptionalUnavailable" and status["RowCount"] == 0

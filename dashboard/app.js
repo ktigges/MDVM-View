@@ -229,7 +229,7 @@ function initialize(){
   $("executiveSnapshotOwner").addEventListener("change",event=>{state.executiveSnapshotOwner=event.target.value;renderExecutiveSnapshot();});
   $("executiveSnapshotUnit").addEventListener("change",event=>{state.executiveSnapshotUnit=event.target.value;renderExecutiveSnapshot();});
   $("applyExecutiveSnapshot").addEventListener("click",()=>{state.executiveSnapshotStart=$("executiveSnapshotStart").value;state.executiveSnapshotEnd=$("executiveSnapshotEnd").value;renderExecutiveSnapshot();});
-  for(const view of ["slaDashboard","executiveSnapshot"]){
+  for(const view of ["slaDashboard"]){
     $(`${view}ComplianceApply`).addEventListener("click",()=>applyCompliancePeriod(view));
     $(`${view}ComplianceClear`).addEventListener("click",()=>applyCompliancePeriod(view,true));
   }
@@ -703,7 +703,7 @@ function dashboardRequest(view=state.activeView,tableId=null,page=0){
     request.filters.managementMetricEntity=state.managementMetric.entity;
     request.filters.managementMetricStatus=state.managementMetric.status;
   }
-  if(["slaDashboard","executiveSnapshot"].includes(view)&&state.slaCompliance.start&&state.slaCompliance.end){
+  if(view==="slaDashboard"&&state.slaCompliance.start&&state.slaCompliance.end){
     request.filters.slaComplianceStart=state.slaCompliance.start;
     request.filters.slaComplianceEnd=state.slaCompliance.end;
   }
@@ -932,7 +932,7 @@ async function startSnapshotDashboard(){
     $("freshnessLocalText").textContent=`UTC: ${formatUtc(snapshot.snapshotTimeUtc)}`;
     const date=String(snapshot.snapshotTimeUtc||"").slice(0,10);
     if(date){
-      for(const [id,days] of [["statisticsStartDate",6],["statisticsEndDate",0],["executiveSnapshotStart",29],["executiveSnapshotEnd",0],["slaDashboardComplianceStart",89],["slaDashboardComplianceEnd",0],["executiveSnapshotComplianceStart",89],["executiveSnapshotComplianceEnd",0]]){
+      for(const [id,days] of [["statisticsStartDate",6],["statisticsEndDate",0],["executiveSnapshotStart",29],["executiveSnapshotEnd",0],["slaDashboardComplianceStart",89],["slaDashboardComplianceEnd",0]]){
         if(!$(id).value)$(id).value=shiftUtcDate(date,-days);
         $(id).max=date;
       }
@@ -1225,7 +1225,7 @@ function applyCompliancePeriod(view,clear=false){
     return;
   }
   state.slaCompliance={start,end};
-  for(const target of ["slaDashboard","executiveSnapshot"]){
+  for(const target of ["slaDashboard"]){
     $(`${target}ComplianceStart`).value=start;
     $(`${target}ComplianceEnd`).value=end;
     $(`${target}ComplianceMessage`).textContent="";
@@ -1394,57 +1394,34 @@ function renderSimpleSla(summary){
 }
 
 function renderSlaDashboard(report){
-  if(report?.unit!=="distinct-entities"||report.periods?.length!==5||report.periods.some(period=>!period.cves||!period.machines))throw new Error("The SLA dashboard response is incomplete. Retry after the Web App update is complete.");
-  const [current,week,previousWeek,month,previousMonth]=report.periods,range=`${current.start} to ${current.end} UTC`;
-  const entities=[["cves","CVEs"],["machines","machines"]];
-  $("slaDashboardContext").textContent=`Snapshot: ${formatUtc(report.asOfUtc)}. Open status is current; full clearances cover ${range}. CVEs and machines are counted separately.`;
-  $("slaDashboardSummary").hidden=true;
+  if(report?.unit!=="distinct-entities"||report.periods?.length!==5||!report.machineCveSummary||!Array.isArray(report.pairPeriods))throw new Error("The SLA dashboard response is incomplete. Retry after the Web App update is complete.");
+  const summary=report.machineCveSummary,[,week,previousWeek,month,previousMonth]=report.pairPeriods,range=`${summary.start} to ${summary.end} UTC`;
+  $("slaDashboardContext").textContent=`Snapshot: ${formatUtc(report.asOfUtc)}. Open status is current; fixes cover ${summary.label} (${range}). Each count is a machine/CVE pair.`;
+  $("slaDashboardOverview").innerHTML=`
+    <div class="sla-policy-chips">${["Critical","High","Medium","Low"].map(severity=>`<span><b>${severity}</b>${esc(slaPolicyTarget(severity))}</span>`).join("")}</div>
+    ${fourStateTiles(summary.severity,`Machine/CVE pairs. Open now; fixed during ${summary.label}.`)}
+    <article class="panel sla-gauge-panel">
+      <div class="panel-title"><h3>SLA by severity${metricHelpButton("SLA gauge")}</h3><span>Machine/CVE pairs</span></div>
+      <div class="sla-gauge-grid">${slaGaugeGrid(summary.severity,summary.label)}</div>
+    </article>
+    <article class="panel">
+      <div class="panel-title"><h3>Open vs fixed over time${metricHelpButton("Open vs fixed over time")}</h3><span>Machine/CVE pairs, last 90 days</span></div>
+      <div id="slaDashboardOpenFixed"></div>
+    </article>`;
+  $("slaDashboardSummary").hidden=false;
+  renderSimpleSla(summary);
   $("slaSummaryDetails").hidden=!state.slaSummary.status;
-  const link=(entity,status,value)=>`<button type="button" class="sla-summary-link" data-sla-summary-severity="All" data-sla-summary-status="${status}" data-sla-summary-entity="${entity}">${fmt(value)}</button>`;
-  const row=(entity,fixed)=>{
-    const values=current[entity];
-    return `<tr><th scope="row">${entity==="cves"?"Distinct CVEs":"Machines"}</th>
-      ${fixed?`<td>${link(entity,"FixedWithin",values.completedWithin)}</td><td>${link(entity,"FixedLate",values.completedLate)}</td><td>${link(entity,"FixedUnknown",values.completedUnknown)}</td><td>${link(entity,"Fixed",values.confirmedFixes)}</td>`
-        :`<td>${link(entity,"OpenWithin",values.openWithin)}</td><td>${link(entity,"OpenOverdue",values.openOverdue)}</td><td>${link(entity,"OpenUnknown",values.unknownOpen)}</td><td>${link(entity,"Open",values.totalOpen)}</td>`}
-      ${fixed?`<td>${esc(slaCompletionAssessment(values.completionPercent,values.confirmedFixes,entity==="cves"?"CVEs":"machines"))}</td>`:""}</tr>`;
-  };
   $("slaDashboardVisuals").innerHTML=`
-    <article class="panel"><div class="panel-title"><h2>Open</h2><span>Current snapshot</span></div>
-      <div class="table-wrap"><table><thead><tr><th>Unit</th><th>Open – within SLA</th><th>Open – past SLA</th><th>No SLA deadline</th><th>Total open</th></tr></thead><tbody>${row("cves",false)}${row("machines",false)}</tbody></table></div>
-      <p class="coverage-note">Open – within SLA + Open – past SLA + No SLA deadline = total open. A CVE or machine stays open until every machine/CVE pair is fixed.</p>
-    </article>
-    <article class="panel"><div class="panel-title"><h2>Fully cleared</h2><span>${esc(current.label)}: ${esc(range)}</span></div>
-      <div class="table-wrap"><table><thead><tr><th>Unit</th><th>Fixed – within SLA</th><th>Fixed – past SLA</th><th>No SLA deadline</th><th>Total fixed</th><th>Completion assessment</th></tr></thead><tbody>${row("cves",true)}${row("machines",true)}</tbody></table></div>
-      <p class="coverage-note">A CVE is fixed only when no in-scope machine still has it open. A machine is fixed only when it has no open CVE left in scope. No fixes means N/A, not 100%. Unknown deadlines are excluded from the on-time rate.</p>
-    </article>
-    ${unresolvedSeveritySnapshot(current)}
-    ${slaLeadershipSnapshot(current,`${current.label}: ${range}${current.coverage==="complete"?"":" (partial retained coverage)"}`)}
-    ${entities.map(([entity,unit])=>`<article class="panel sla-severity-panel"><div class="panel-title"><h3>${entity==="cves"?"Distinct CVEs":"Affected machines"} by severity</h3><span>Each entity appears once, at its highest open severity</span></div>
-      <div class="sla-severity-visuals">${current[entity].severity.map(value=>`<section class="sla-severity-card severity-${esc(value.label.toLowerCase())}">
-        <div class="sla-severity-heading"><button type="button" class="cve-link" data-vulnerability-severity="${esc(value.label)}">${esc(value.label)}</button><strong>${fmt(value.totalOpen)} ${unit}</strong></div>
-        <small>${esc(slaPolicyTarget(value.label))}</small>
-        ${slaDashboardStack([value.openWithin,value.openOverdue,value.unknownOpen],["open – within SLA","open – past SLA","no SLA deadline"],["sla-status-within","sla-status-overdue","sla-status-unknown"],`${value.label} open ${unit}`)}
-        <p>${fmt(value.confirmedFixes)} ${unit} fully fixed this month · ${fmt(value.completedWithin)} within SLA · ${fmt(value.completedLate)} past SLA · ${fmt(value.completedUnknown)} no SLA deadline</p>
-        <p>${esc(slaCompletionAssessment(value.completionPercent,value.confirmedFixes,unit))}.</p>
-      </section>`).join("")}</div>
-    </article>`).join("")}
     <div class="sla-calendar-grid">
-      ${slaCalendarComparison("Week over week",week,previousWeek)}
-      ${slaCalendarComparison("Month over month",month,previousMonth)}
+      ${fourStateComparison("Week over week",previousWeek,week)}
+      ${fourStateComparison("Month over month",previousMonth,month)}
     </div>
-    <details class="sla-dashboard-definitions"><summary>Criticality, deadlines, fix recognition and coverage</summary>
-      <div class="sla-policy-chips">${["Critical","High","Medium","Low"].map(severity=>`<span><b>${severity}</b>${esc(slaPolicyTarget(severity))}</span>`).join("")}</div>
-      <p>${esc(fixRecognitionDescription())} Missing or stale machines and incomplete collections do not qualify. Retained snapshots keep their original policy.</p>
-      <p>The earliest applicable machine/CVE deadline is preserved. Any overdue constituent makes an open entity overdue; otherwise any unknown deadline makes it unknown. For full clearances, late takes precedence over unknown, then on time.</p>
-      <p>${current.coverage==="complete"?"The month-to-date period is covered.":"Partial retained coverage: clearances cover retained observations only, not necessarily the entire month."} ${report.history?.startUtc?`History begins ${esc(formatUtc(report.history.startUtc))}.`:"History coverage is unavailable."} Calendar comparisons require coverage from the beginning of each completed UTC period; unavailable periods are not zero.</p>
-      ${report.coverageGap?"<p>Some evidence is missing machine or CVE identifiers and cannot be counted as an identifiable entity.</p>":""}
+    <details class="panel sla-definitions"><summary>How SLA states are counted</summary>
+      <p>${esc(fixRecognitionDescription())} Incomplete collections and inactive devices never count as fixes. A vulnerability that comes back starts a new episode with a new SLA clock.</p>
+      <p>A machine/CVE pair's deadline is its earliest software record's first-seen date plus the policy days for its severity. A pair is fixed only when none of its software is still detected, at the time the last software item was removed.</p>
+      <p>${summary.coverage==="complete"?"The month-to-date period is covered.":"Partial retained coverage: fixes cover retained observations only, not necessarily the entire month."} ${report.history?.startUtc?`History begins ${esc(formatUtc(report.history.startUtc))}.`:"History coverage is unavailable."}</p>
     </details>`;
-  bindSeverityVulnerabilityLinks("slaDashboardVisuals");
-  $("slaDashboardVisuals").querySelectorAll("[data-sla-summary-status]").forEach(button=>button.addEventListener("click",()=>{
-    state.slaSummary={severity:"All",status:button.dataset.slaSummaryStatus,entity:button.dataset.slaSummaryEntity};
-    render();
-  }));
-  $("slaSummaryContext").textContent=state.slaSummary.status?`${state.slaSummary.entity==="cves"?"Distinct CVEs":"Machines"} · ${state.slaSummary.status} · workspace filters and pinned snapshot preserved.`:"";
+  $("slaSummaryContext").textContent=state.slaSummary.status?`${state.slaSummary.severity==="All"?"All severities":state.slaSummary.severity} · ${state.slaSummary.status} · workspace filters and pinned snapshot preserved.`:"";
 }
 
 function renderDashboardResponse(payload,view,tableId){
@@ -1469,11 +1446,9 @@ function renderDashboardResponse(payload,view,tableId){
   if(view==="jobHistory"){
     $("jobHistoryRecognition").textContent=fixRecognitionDescription()+" Windows Update status does not establish that third-party software is patched. A machine is fully cleared only when no unresolved CVE remains.";
   }
-  if(["slaDashboard","executiveSnapshot"].includes(view)){
-    renderComplianceSnapshots(view,view==="slaDashboard"?payload.metadata?.slaDashboard?.compliancePeriods:payload.metadata?.management?.sla?.compliancePeriods);
-  }
+  if(view==="slaDashboard")renderComplianceSnapshots(view,payload.metadata?.slaDashboard?.compliancePeriods);
   ensureManagementReport(view);
-  renderManagementSla(view,payload.metadata?.management?.sla);
+  renderManagementSla(view,payload.metadata?.management?.sla,payload.metadata?.management?.periods,payload.charts);
   if(view==="trend")$("lifecycleOsBreakdown").hidden=state.reportingBreakdown==="All";
   const selectedRecommendation=state.recommendationsById.get(state.selectedRecommendationId);
   state.recommendationsById.clear();
@@ -1540,6 +1515,48 @@ function ensureManagementReport(view){
   if(!root||root.dataset.initialized)return;
   root.dataset.initialized="true";
   const prefix=view+"Management";
+  const openFixedPanel=label=>`<article class="panel">
+        <div class="panel-title"><h3>Open vs fixed over time${metricHelpButton("Open vs fixed over time")}</h3><span>Machine/CVE pairs, ${label}</span></div>
+        <div id="${prefix}OpenFixed"></div>
+      </article>`;
+  if(view==="executiveSnapshot"){
+    root.innerHTML=`
+    <section class="management-report" aria-label="Executive SLA report">
+      <p id="${prefix}Context" class="coverage-note"></p>
+      <div id="${prefix}Cards" class="metric-grid"></div>
+      <div id="${prefix}Tiles"></div>
+      <article class="panel sla-gauge-panel">
+        <div class="panel-title"><h3>SLA by severity${metricHelpButton("SLA gauge")}</h3><span>Machine/CVE pairs</span></div>
+        <div id="${prefix}SlaGauges" class="sla-gauge-grid"></div>
+      </article>
+      ${openFixedPanel("selected period")}
+      <div id="${prefix}Comparison"></div>
+      <div id="${prefix}Severity" class="management-severity"></div>
+      <article class="panel"><div class="panel-title"><h3>Machines${metricHelpButton("Status and progress")}</h3><span>Past-SLA machines first. Export for the full list.</span></div><div class="table-wrap"><table id="${prefix}MachineTable"></table></div></article>
+      <article class="panel"><div class="panel-title"><h3>Vulnerabilities (unique CVEs)</h3><span>Past-SLA CVEs first. Export for the full list.</span></div><div class="table-wrap"><table id="${prefix}CveTable"></table></div></article>
+      <details class="management-detail"><summary>Recommendations: status${metricHelpButton("Status and progress")}</summary>
+        <div class="table-wrap"><table id="${prefix}RecommendationTable"></table></div>
+      </details>
+      <p id="${prefix}PolicyRules" class="coverage-note"></p>
+      <p class="coverage-note">A CVE is fixed only when no in-scope machine still has it open; a machine is fixed only when no in-scope CVE is still open.
+        ${esc(fixRecognitionDescription())}
+        Inactive devices (not seen for 7 days) never count as fixed; their open CVEs are shown only when Include inactive devices is on.</p>
+    </section>`;
+    return;
+  }
+  if(view==="trend"){
+    root.innerHTML=`
+    <section class="management-report" aria-label="Reporting period summary">
+      <p id="${prefix}Context" class="coverage-note"></p>
+      <div id="${prefix}PeriodTotals"></div>
+      ${openFixedPanel("selected period")}
+      <div id="${prefix}Comparison"></div>
+      <p id="${prefix}PolicyRules" class="coverage-note"></p>
+      <p class="coverage-note">${esc(fixRecognitionDescription())} A vulnerability that comes back starts a new episode with a new SLA clock.
+        Inactive devices (not seen for 7 days) never count as fixed; their open CVEs are shown only when Include inactive devices is on.</p>
+    </section>`;
+    return;
+  }
   const slaSnapshot=`
     <article class="panel management-sla-snapshot" aria-label="Quick SLA status by entity">
       <div class="panel-title"><h3>${metricLabel("Current SLA status")}</h3><span>Distinct CVEs and machines, counted separately</span></div>
@@ -1615,6 +1632,49 @@ function ensureManagementReport(view){
     </section>`;
 }
 
+const FOUR_STATES=[["openWithin","Open – within SLA","open-within"],["openOverdue","Open – past SLA","open-past"],["completedWithin","Fixed – within SLA","fixed-within"],["completedLate","Fixed – past SLA","fixed-past"]];
+function fourStateTotals(severity){
+  const totals={openWithin:0,openOverdue:0,completedWithin:0,completedLate:0,noDeadline:0};
+  for(const row of severity||[]){
+    for(const [key] of FOUR_STATES)totals[key]+=Number(row[key])||0;
+    totals.noDeadline+=(Number(row.unknownOpen)||0)+(Number(row.completedUnknown)||0);
+  }
+  return totals;
+}
+function fourStateTiles(severity,caption){
+  const totals=fourStateTotals(severity);
+  return `<div class="four-state-tiles" role="group" aria-label="Machine/CVE pairs by SLA state">${FOUR_STATES.map(([key,label,tone])=>`<div class="four-state-tile ${tone}"><span>${metricLabel(label)}</span><strong>${fmt(totals[key])}</strong></div>`).join("")}</div>
+    <p class="coverage-note">${esc(caption)}${totals.noDeadline?` ${fmt(totals.noDeadline)} machine/CVE pairs have no SLA deadline and are not in these four states.`:""}</p>`;
+}
+function slaGaugeGrid(severity,periodLabel){
+  const rows=new Map((severity||[]).map(row=>[row.label,row]));
+  const empty={openWithin:0,openOverdue:0,completedWithin:0,completedLate:0,slaPercent:null};
+  return ["Critical","High","Medium","Low"].map(label=>slaGauge({...empty,...rows.get(label),label})).join("")
+    +`<p class="coverage-note">Within SLA % = (Open – within SLA + Fixed – within SLA) ÷ all machine/CVE pairs with a known deadline. Fixed pairs count when fixed in ${esc(periodLabel||"the selected period")}. Pairs without a deadline are excluded.</p>`;
+}
+function fourStateComparison(title,previous,current){
+  const known=period=>period?.coverage==="complete"&&Array.isArray(period.severity);
+  const value=(period,label,key)=>{if(!known(period))return null;const row=period.severity.find(item=>item.label===label);return row?Number(row[key])||0:0;};
+  const span=period=>period?`${esc(period.label)}${period.start?` (${esc(period.start)} – ${esc(period.end)})`:""}`:"";
+  const cell=(label,key)=>{
+    const before=value(previous,label,key),after=value(current,label,key);
+    if(before===null||after===null)return "<td>Waiting for data</td>";
+    const change=after-before;
+    return `<td>${fmt(before)} → <strong>${fmt(after)}</strong> <small class="four-state-change">(${change>0?"+":""}${fmt(change)})</small></td>`;
+  };
+  return `<article class="panel four-state-comparison"><div class="panel-title"><h3>${esc(title)}</h3><span>${span(previous)} → ${span(current)}</span></div>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Severity</th>${FOUR_STATES.map(([,label])=>`<th scope="col">${metricLabel(label)}</th>`).join("")}</tr></thead>
+    <tbody>${["Critical","High","Medium","Low"].map(label=>`<tr><th scope="row">${label}</th>${FOUR_STATES.map(([key])=>cell(label,key)).join("")}</tr>`).join("")}</tbody></table></div>
+    ${known(previous)&&known(current)?"":'<p class="coverage-note">Retained history does not fully cover both periods; the comparison is unavailable, not zero.</p>'}
+    <p class="coverage-note">Machine/CVE pairs. Open counts are at each period end; fixed counts are fixes during each period.</p></article>`;
+}
+function managementPairPeriods(sla,periods){
+  return (sla?.periods||[]).map((period,index)=>{
+    const summary=periods?.[index]||{},range=String(summary.Range||"").replace(/ UTC$/,"").split(" - ");
+    return {label:period.Period||summary.Period,start:range[0]||"",end:range[1]||"",coverage:summary.observed===false?"unavailable":"complete",severity:period.severity||[]};
+  });
+}
+
 function slaGauge(row){
   const count=value=>Number.isSafeInteger(value)&&value>=0;
   if(!["openWithin","openOverdue","completedWithin","completedLate"].every(key=>count(row[key])))throw new Error("SLA gauge counts are incomplete. Retry the dashboard query.");
@@ -1636,14 +1696,24 @@ function slaGauge(row){
   </section>`;
 }
 
-function renderManagementSla(view,sla){
+function renderManagementSla(view,sla,periods=null,charts=null){
   const prefix=view+"Management",root=$(prefix+"SlaStatus");
   const gauges=$(prefix+"SlaGauges");
-  if(gauges&&sla?.periods?.[0]){
-    const rows=new Map((sla.periods[0].severity||[]).map(row=>[row.label,row]));
-    const empty={openWithin:0,openOverdue:0,completedWithin:0,completedLate:0,slaPercent:null};
-    gauges.innerHTML=["Critical","High","Medium","Low"].map(label=>slaGauge({...empty,...rows.get(label),label})).join("")
-      +`<p class="coverage-note">Within SLA % = (Open – within SLA + Fixed – within SLA) ÷ all machine/CVE pairs with a known deadline. Fixed pairs count when fixed in ${esc(sla.periods[0].Period||"the selected period")}. Pairs without a deadline are excluded.</p>`;
+  if(gauges&&sla?.periods?.[0])gauges.innerHTML=slaGaugeGrid(sla.periods[0].severity,sla.periods[0].Period);
+  const pairs=managementPairPeriods(sla,periods);
+  const tiles=$(prefix+"Tiles");
+  if(tiles&&pairs[0])tiles.innerHTML=fourStateTiles(pairs[0].severity,`Machine/CVE pairs. Open at the end of ${pairs[0].label}; fixed during it.`);
+  const comparison=$(prefix+"Comparison");
+  if(comparison&&pairs.length>1)comparison.innerHTML=fourStateComparison(`${pairs[0].label} compared with ${pairs[1].label.toLowerCase()}`,pairs[1],pairs[0]);
+  const totals=$(prefix+"PeriodTotals"),series=charts?.[prefix+"OpenFixed"];
+  if(totals&&series?.totals){
+    const past=fourStateTotals(pairs[0]?.severity).openOverdue;
+    totals.innerHTML=`<div class="four-state-tiles" role="group" aria-label="Machine/CVE pairs in the selected period">
+      <div class="four-state-tile neutral"><span>New machine/CVE pairs</span><strong>${fmt(series.totals.new)}</strong></div>
+      <div class="four-state-tile fixed-within"><span>Fixed machine/CVE pairs</span><strong>${fmt(series.totals.fixed)}</strong></div>
+      <div class="four-state-tile open-within"><span>Open at period end</span><strong>${fmt(series.totals.open)}</strong></div>
+      <div class="four-state-tile open-past"><span>${metricLabel("Open – past SLA")} at period end</span><strong>${fmt(past)}</strong></div></div>
+      <p class="coverage-note">${esc(series.start)} to ${esc(series.end)} UTC. New counts pairs first seen in the period; fixed counts pairs fully fixed in it.</p>`;
   }
   const rules=$(prefix+"PolicyRules");
   if(rules)rules.textContent=`${["Critical","High","Medium","Low"].map(severity=>`${severity} — ${slaPolicyTarget(severity)}`).join(" · ")}. The SLA clock starts at the collector's first observation on the machine, not the CVE publication date or a task due date. Open risk is within SLA through its recorded deadline; it is overdue after that deadline. Confirmed completion on or before the deadline is on time. Recorded deadlines take precedence; policy changes do not restart existing clocks.`;

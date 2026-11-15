@@ -1173,6 +1173,64 @@ def test_scale_set_exclusion_skips_requests_and_current_datasets(device_scoped_r
         assert replayed[key] == actual[key]
 
 
+FLEX_ID = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/pool-flex_412b2b09"
+
+
+@pytest.mark.parametrize("graph_available", [True, False])
+def test_flexible_scale_set_members_come_from_resource_graph_with_uniform_fallback(
+    device_scoped_run, tmp_path, monkeypatch, graph_available,
+):
+    payloads, _, calls, failures = device_scoped_run
+    payloads["machines"][2]["vmMetadata"] = {"resourceId": FLEX_ID}
+    failures["device-2"] = requests.ReadTimeout("Uniform scale-set instance must never be queried")
+
+    def members(credential, archive_callback, management_group_id):
+        if not graph_available:
+            return [], {"Endpoint": "azure_scale_set_members", "Status": "OptionalUnavailable", "RowCount": 0,
+                        "PageCount": 0, "DurationSeconds": 0, "Error": "Azure Resource Graph returned 403"}
+        archive_callback(1, json.dumps({"data": [{"id": FLEX_ID.lower(), "scaleSetId": "pool-flex"}]}).encode())
+        return [{"ResourceId": FLEX_ID.lower(), "ScaleSetId": "pool-flex"}], {
+            "Endpoint": "azure_scale_set_members", "Status": "Success", "RowCount": 1, "PageCount": 1,
+            "DurationSeconds": 0, "Error": ""}
+
+    monkeypatch.setattr(live_collector, "collect_scale_set_members", members)
+    progress = []
+    actual, statuses = collect_live(
+        Settings().defender_api_base_url, Credential(), progress.append, page_size=2, exclude_scale_sets=True,
+    )
+    devices = {row["DeviceId"] for row in actual["devices"]}
+    assert "device-2" not in devices
+    assert ("device-3" in devices) is not graph_available
+    member_status = next(row for row in statuses if row["Endpoint"] == "azure_scale_set_members")
+    assert member_status["Required"] is False
+    assert member_status["Status"] == ("Success" if graph_available else "OptionalUnavailable")
+    if graph_available:
+        assert any("excluding 2 scale-set devices (1 Uniform, 1 Flexible)" in message for message in progress)
+        queries = [parse_qs(urlsplit(url).query) for url in calls if urlsplit(url).path.endswith("/machinesVulnerabilities")]
+        assert all(query["$filter"] != ["machineId eq 'device-3'"] for query in queries)
+    else:
+        assert any("excluding 1 scale-set devices (1 Uniform, 0 Flexible)" in message for message in progress)
+        assert any("Flexible scale-set lookup unavailable" in message and "only Uniform" in message for message in progress)
+    # Processing replays the raw run in a fresh process: the member list comes from the raw pages.
+    live_collector.use_scale_set_members(())
+    run_folder = next((tmp_path / "output/raw").iterdir())
+    replayed, _ = replay_raw_snapshot(run_folder, exclude_scale_sets=True)
+    assert {row["DeviceId"] for row in replayed["devices"]} == devices
+
+
+def test_flexible_member_lookup_matches_resource_ids_case_insensitively(tmp_path):
+    assert not live_collector.is_scale_set_device({"vmMetadata": {"resourceId": FLEX_ID}})
+    with gzip.open(tmp_path / "azure_scale_set_members-page-0001.json.gz", "wt", encoding="utf-8") as handle:
+        handle.write(json.dumps({"data": [{"id": FLEX_ID.lower()}]}))
+    assert live_collector.load_scale_set_members(tmp_path) == {FLEX_ID.lower()}
+    assert live_collector.is_scale_set_device({"vmMetadata": {"resourceId": FLEX_ID}})
+    assert live_collector.is_scale_set_device({"AzureResourceId": FLEX_ID.upper()})
+    assert not live_collector.is_scale_set_device({"vmMetadata": {"resourceId": FLEX_ID + "-other"}})
+    assert not live_collector.is_scale_set_device({})
+    assert live_collector.load_scale_set_members(tmp_path / "missing") == frozenset()
+    assert not live_collector.is_scale_set_device({"vmMetadata": {"resourceId": FLEX_ID}})
+
+
 @pytest.mark.parametrize("field", ["azureResourceId", "resourceId", "azureResource", "vmMetadata", "AzureResourceId"])
 def test_scale_set_detection_uses_metadata_not_device_names(field):
     resource_id = "/subscriptions/sub/providers/Microsoft.Compute/VIRTUALMACHINESCALESETS/pool/virtualMachines/1"
