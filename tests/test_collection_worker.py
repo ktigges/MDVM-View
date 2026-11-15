@@ -393,7 +393,7 @@ def test_collection_logs_only_throttled_endpoint_counts_and_errors(monkeypatch, 
         result = collection_worker.collect_batch(plan(), WorkerStore(), tmp_path / "cache")
     messages = [record.getMessage() for record in caplog.records if not record.getMessage().startswith("[timing]")]
     assert messages == [
-        "[collection] runId=live-20261023T160000Z mode=full sinceTime=None baselineRunId=None excludeScaleSets=False",
+        "[collection] runId=live-20261023T160000Z mode=full sinceTime=None baselineRunId=None excludeScaleSets=True",
         "[machines] starting download",
         "[machines] 200 rows downloaded; more data available",
         "[machines] complete: 200 rows",

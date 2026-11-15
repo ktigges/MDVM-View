@@ -540,4 +540,6 @@ Step 0 comes first. Steps 1 and 2 are the urgent ones: Step 1 fixes the failing 
 
 **Open question before the customer gets Step 2:** the customer's deployed policy uses `fixedConfirmationRuns: 2` and 48-hour freshness. The release ships the repo policy (1 run, 7 days), which on the customer replay closes 332,856 pending rows (dated at their first absence) and makes 15,411 rows on devices seen 2–7 days ago fixable. Confirm whether the customer keeps 2 confirmation runs.
 
+**Scale sets (2026-11-15):** at the user's request, scale-set exclusion is now the default: `exclude_scale_sets` / `EXCLUDE_SCALE_SETS` default to `true` in code and Terraform, and the local tfvars sets it explicitly. Flexible-orchestration instances (plain `/virtualMachines/` IDs) are still not detected.
+
 **To resume (2026-11-15):** Step 4 is complete locally on `refactor/sla-simplification` and the suite passes. Next: the user pushes it through `./infra/github-workflow-menu.sh` (option 5) and deploys Function and Web App (`./infra/deployment-menu.sh` 3 and 4), then Step 5. Lab Scale Sets in LAB-RG stay in place for the Flexible-VMSS detection check.

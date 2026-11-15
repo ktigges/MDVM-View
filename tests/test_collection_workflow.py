@@ -208,11 +208,11 @@ def test_plan_freezes_settings_policy_and_baseline_across_restart():
     store = PlanStore()
     request = {"runId": "live-20261023T160000Z", "snapshotUtc": "2026-10-23T16:00:00+00:00"}
     first = prepare_run(request, store, {"policyVersion": "one"})
-    store.settings.exclude_scale_sets = True
+    store.settings.exclude_scale_sets = False
     second = prepare_run(request, store, {"policyVersion": "two"})
     plan = store.json(first["planPath"])
     assert first == second
-    assert plan["settings"]["exclude_scale_sets"] is False
+    assert plan["settings"]["exclude_scale_sets"] is True
     assert plan["policy"]["policyVersion"] == "one"
     assert plan["baseline"] is None
     assert len(store.files) == 1

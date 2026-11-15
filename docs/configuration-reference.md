@@ -111,7 +111,7 @@ Environment values: `infra/terraform/main.tfvars.json`
 | `recommendation_enrichment_mode` | `targeted`; `auto`, `targeted`, `full`, or `none` | Controls recommendation-to-machine API enrichment; `auto` resolves to targeted |
 | `vulnerability_collection_mode` | `auto`; `auto`, `delta`, or `full` | Uses daily deltas with initial, weekly, and stale-state full reconciliation; scale-set exclusion applies to both modes |
 | `enable_experimental_endpoints` | `false` | Enables undocumented Defender compatibility probes |
-| `exclude_scale_sets` | `false` | Opt-in exclusion of Azure scale-set devices from live collection |
+| `exclude_scale_sets` | `true` | Excludes Azure scale-set devices from live collection; set `false` only to include them |
 | `full_collection_source` | `per-machine`; `per-machine` or `export` | Findings source for full runs. `per-machine` requests each included device. `export` pages the full software-vulnerability export (rows carry Defender's per-device `firstSeenTimestamp`, used as the SLA start) and drops excluded or unknown devices while streaming |
 | `full_collection_weekday` | `6`; Monday `0` through Sunday `6` | Full vulnerability reconciliation day when collection mode is `auto` |
 | `web_app_name` | Required, globally unique | Dashboard Web App name |
@@ -193,7 +193,7 @@ These can be environment variables or keys in
 | `RECOMMENDATION_ENRICHMENT_MODE` | `recommendationEnrichmentMode` | `targeted` | `auto`, `targeted`, `full`, or `none` |
 | `VULNERABILITY_COLLECTION_MODE` | `vulnerabilityCollectionMode` | `auto` | `auto`, `delta`, or `full` |
 | `ENABLE_EXPERIMENTAL_ENDPOINTS` | `enableExperimentalEndpoints` | `false` | Enables undocumented optional endpoint probes |
-| `EXCLUDE_SCALE_SETS` | `excludeScaleSets` | `false` | Set `true` to exclude scale-set devices from live collection under the normal `auto`/`delta`/`full` policy. Full runs skip recognized scale-set devices before findings requests; delta runs keep only changes for included (non-scale-set) devices, filtered while the change feed streams. Excludes their devices, findings, and recommendation-device relationships from new live datasets and raw replays. Matches Azure resource IDs containing `/virtualMachineScaleSets/` (case-insensitive), not device names. Prior scale-set findings are excluded before lifecycle reconciliation, not marked fixed. Reports observed snapshot-to-snapshot changes, not intermediate events. Retained history, tenant-wide inventory/aggregate API calls, and one-page DEBUG probes are unchanged. Existing runs retain their frozen settings. |
+| `EXCLUDE_SCALE_SETS` | `excludeScaleSets` | `true` | Excludes scale-set devices from live collection under the normal `auto`/`delta`/`full` policy; set `false` to include them. Full runs skip recognized scale-set devices before findings requests; delta runs keep only changes for included (non-scale-set) devices, filtered while the change feed streams. Excludes their devices, findings, and recommendation-device relationships from new live datasets and raw replays. Matches Azure resource IDs containing `/virtualMachineScaleSets/` (case-insensitive), not device names. Prior scale-set findings are excluded before lifecycle reconciliation, not marked fixed. Reports observed snapshot-to-snapshot changes, not intermediate events. Retained history, tenant-wide inventory/aggregate API calls, and one-page DEBUG probes are unchanged. Existing runs retain their frozen settings. |
 | `FULL_COLLECTION_WEEKDAY` | `fullCollectionWeekday` | `6` | Weekly full vulnerability reconciliation weekday, Monday 0 through Sunday 6 |
 | `COLLECTION_SCHEDULE` | `collectionSchedule` | `0 0 5 * * *` | UTC Functions timer schedule |
 | `DASHBOARD_DATA_SOURCE` | `dashboardDataSource` | `local` | `local` reads `dashboard/data`; `azure` reads current manifest and curated blobs |
@@ -240,24 +240,25 @@ settings remain managed through their corresponding Terraform inputs.
 
 ### Manual scale-set exclusion setting
 
-If `EXCLUDE_SCALE_SETS` is missing from an existing Function App, it can be added
-manually in Azure Portal under **Function App > Settings > Environment variables >
-App settings**:
+Scale sets are excluded by default. A Function App without `EXCLUDE_SCALE_SETS`
+excludes them once it runs collector 2026.11.15.4 or later. To set the value
+explicitly in Azure Portal, use **Function App > Settings > Environment
+variables > App settings**:
 
-1. Add `EXCLUDE_SCALE_SETS` with the value `true` to skip scale-set devices.
+1. Add `EXCLUDE_SCALE_SETS` with the value `true` (exclude) or `false` (include).
 2. Save/apply the change. App Settings changes restart the Function App.
 3. Verify that `EXCLUDE_SCALE_SETS=true` appears in the saved App Settings.
 
 No Terraform run or code redeployment is needed for this runtime-only change.
-An absent setting uses the default `false` unless application JSON configuration
-overrides it, so omission does not enable scale-set exclusion. The setting affects
+An absent setting uses the default `true` unless application JSON configuration
+overrides it. The setting affects
 new collection runs; existing runs retain their frozen settings and retained
 history is unchanged.
 
 Before any later Terraform apply, synchronize `exclude_scale_sets` in
 `infra/terraform/main.tfvars.json` with the manually selected value (`true` to
 exclude scale sets). Otherwise Terraform can overwrite the manual setting with
-its configured value, whose default is `false`.
+its configured value, whose default is `true`.
 
 ## 6. Terraform-generated Web App Settings
 

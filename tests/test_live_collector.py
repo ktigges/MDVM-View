@@ -923,7 +923,8 @@ def test_device_query_failure_prevents_normalization_and_publication(device_scop
 
     _, _, calls, failures = device_scoped_run
     failures["device-2"] = requests.ReadTimeout("Device-scoped request timed out")
-    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity"))
+    # device-2 is a scale-set instance, so this failure only happens when scale sets are included.
+    monkeypatch.setattr(dataprep_cli.Settings, "load", lambda *args: Settings(auth_mode="managed_identity", exclude_scale_sets=False))
     monkeypatch.setattr(dataprep_cli, "_create_credential", lambda settings: Credential())
     monkeypatch.setattr(dataprep_cli, "_read_existing", lambda *args, **kwargs: {})
     monkeypatch.setattr(dataprep_cli, "_resolve_collection_mode", lambda *args: ("full", None))

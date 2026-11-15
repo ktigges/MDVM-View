@@ -362,9 +362,9 @@ variable "enable_experimental_endpoints" {
 }
 
 variable "exclude_scale_sets" {
-  description = "Exclude devices identified by Azure virtualMachineScaleSets resource IDs from live collector findings and device datasets."
+  description = "Exclude devices identified by Azure virtualMachineScaleSets resource IDs from live collector findings and device datasets. On by default; set false only to include scale sets."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "full_collection_source" {

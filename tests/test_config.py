@@ -69,7 +69,7 @@ def test_collection_defaults_to_targeted_deltas_with_weekly_full_reconciliation(
     assert settings.recommendation_enrichment_mode == "targeted"
     assert settings.vulnerability_collection_mode == "auto"
     assert settings.enable_experimental_endpoints is False
-    assert settings.exclude_scale_sets is False
+    assert settings.exclude_scale_sets is True
     assert settings.full_collection_weekday == 6
     assert settings.dashboard_data_source == "local"
     assert settings.dashboard_static_dir == ""

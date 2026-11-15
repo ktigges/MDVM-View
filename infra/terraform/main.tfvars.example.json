@@ -42,7 +42,7 @@
   "recommendation_enrichment_mode": "targeted",
   "vulnerability_collection_mode": "auto",
   "enable_experimental_endpoints": false,
-  "exclude_scale_sets": false,
+  "exclude_scale_sets": true,
   "full_collection_weekday": 6,
   "full_collection_source": "per-machine",
   "tags": {
