@@ -815,6 +815,8 @@ def test_orchestration_history_is_bounded_without_changing_frozen_run():
 
 def test_repeated_failures_stop_explicitly_without_advancing_to_processing():
     context = OrchestrationContext()
+    # Failures carry across continue-as-new; start just below the limit.
+    context.options["_failures"] = collection_workflow.MAX_CONSECUTIVE_API_FAILURES - 12
     workflow = orchestrate(context)
     next(workflow)
     workflow.send({"runId": context.options["runId"], "planPath": "runs/plan.json"})
@@ -825,6 +827,22 @@ def test_repeated_failures_stop_explicitly_without_advancing_to_processing():
         workflow.send({"done": False, "newRequests": 0, "retry": True})
     assert context.statuses[0]["phase"] == "prepare"
     assert all(status["phase"] == "collect" for status in context.statuses[1:])
+
+
+def test_failure_limit_rides_out_a_half_hour_outage_across_continuations():
+    assert collection_workflow.MAX_CONSECUTIVE_API_FAILURES >= 30
+    context = OrchestrationContext()
+    workflow = orchestrate(context)
+    next(workflow)
+    workflow.send({"runId": context.options["runId"], "planPath": "runs/plan.json"})
+    for index in range(25):
+        assert workflow.send({"done": False, "newRequests": 0, "retry": True, "retryAfter": 60})[0] == "timer"
+        if index < 24:
+            workflow.send(None)
+        else:
+            with pytest.raises(StopIteration):
+                workflow.send(None)
+    assert context.continued["_failures"] == 25
 
 
 def test_cooldown_is_clamped_to_original_deadline_and_does_not_schedule_more_work():

@@ -1,5 +1,6 @@
 import json
 
+import pytest
 import requests
 
 from vulnerability_view.azure_subscription_client import (
@@ -8,6 +9,7 @@ from vulnerability_view.azure_subscription_client import (
     ARM_SUBSCRIPTIONS_URL,
     collect_azure_subscriptions,
 )
+from vulnerability_view.collection_transport import CheckpointYield
 
 
 class Credential:
@@ -174,3 +176,26 @@ def test_collect_scale_set_members_errors_never_raise(monkeypatch):
     monkeypatch.setattr("requests.post", partial)
     rows, status = collect_scale_set_members(Credential())
     assert rows == [] and status["Status"] == "OptionalUnavailable" and status["RowCount"] == 0
+
+
+def test_collect_azure_subscriptions_server_error_is_optional_not_a_retry(monkeypatch):
+    class Checkpoints:
+        def request(self, url, send):
+            raise CheckpointYield(60, "HTTP 504")
+
+    monkeypatch.setattr("vulnerability_view.azure_subscription_client.current_checkpoints", lambda: Checkpoints())
+    rows, status = collect_azure_subscriptions(Credential())
+    assert rows == []
+    assert status["Status"] == "OptionalUnavailable"
+    assert status["Error"] == "HTTP 504"
+    assert status["Endpoint"] == "azure_subscriptions"
+
+
+def test_collect_azure_subscriptions_still_yields_for_activity_budget(monkeypatch):
+    class Checkpoints:
+        def request(self, url, send):
+            raise CheckpointYield()
+
+    monkeypatch.setattr("vulnerability_view.azure_subscription_client.current_checkpoints", lambda: Checkpoints())
+    with pytest.raises(CheckpointYield):
+        collect_azure_subscriptions(Credential())

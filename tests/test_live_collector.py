@@ -2359,3 +2359,44 @@ def test_full_collection_from_export_keeps_included_devices_with_defender_first_
 def test_full_collection_source_is_validated():
     with pytest.raises(ValueError, match="per-machine or export"):
         collect_live(Settings().defender_api_base_url, Credential(), full_collection_source="api")
+
+
+@pytest.mark.parametrize("reason, fatal", [("HTTP 504", False), ("ReadTimeout", False), ("HTTP 429", True), ("activity budget reached", True)])
+def test_recommendation_relationship_server_error_is_skipped_but_throttling_still_waits(device_scoped_run, monkeypatch, reason, fatal):
+    from vulnerability_view.collection_transport import CheckpointYield
+
+    payloads, _, _, _ = device_scoped_run
+    payloads["recommendations"].append({"id": "sca-_-scid-1", "productName": "", "exposedMachinesCount": 1})
+    original = DefenderClient.collect
+
+    def collect(self, endpoint, *args, **kwargs):
+        if endpoint.name.startswith("recommendation_machines--"):
+            raise CheckpointYield(60, reason)
+        return original(self, endpoint, *args, **kwargs)
+
+    monkeypatch.setattr(DefenderClient, "collect", collect)
+    if fatal:
+        with pytest.raises(CheckpointYield):
+            collect_live(Settings().defender_api_base_url, Credential())
+        return
+    actual, statuses = collect_live(Settings().defender_api_base_url, Credential())
+    status = next(row for row in statuses if row["Endpoint"] == "recommendation_machines")
+    assert status["Status"] == "PartialSuccess"
+    assert actual["findings"]
+
+
+def test_optional_endpoint_server_error_does_not_fail_the_run(device_scoped_run, monkeypatch):
+    from vulnerability_view.collection_transport import CheckpointYield
+
+    original = DefenderClient.collect
+
+    def collect(self, endpoint, *args, **kwargs):
+        if endpoint.name == "remediation_tasks":
+            raise CheckpointYield(60, "HTTP 504")
+        return original(self, endpoint, *args, **kwargs)
+
+    monkeypatch.setattr(DefenderClient, "collect", collect)
+    actual, statuses = collect_live(Settings().defender_api_base_url, Credential(), enable_experimental_endpoints=True)
+    status = next(row for row in statuses if row["Endpoint"] == "remediation_tasks")
+    assert status["Status"] == "OptionalUnavailable" and status["Error"] == "HTTP 504"
+    assert actual["findings"]
