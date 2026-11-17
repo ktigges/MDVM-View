@@ -363,3 +363,34 @@ def test_streaming_reader_accepts_whitespace_empty_and_gzip_arrays(tmp_path):
     compressed.write_bytes(gzip.compress(b'[{"count":1.5}]'))
     assert list(iter_json_rows(plain)) == []
     assert list(iter_json_rows(compressed)) == [{"count": 1.5}]
+
+
+def test_retire_waits_for_in_flight_queries_then_removes_local_files(monkeypatch, tmp_path):
+    import threading
+    pointer = [{"runId": "first", "snapshotTimeUtc": "2026-11-17T05:00:00Z"}]
+    snapshots = DashboardSnapshots(
+        Settings(dashboard_data_source="azure"), tmp_path, lambda: pointer[0], object, lambda *args: {},
+    )
+    monkeypatch.setattr(dashboard_snapshots, "DashboardQueryEngine", lambda *args: object())
+    try:
+        snapshot = snapshots.current()
+        (snapshot.root / "index.sqlite3").write_bytes(b"x" * 1024)
+        released = threading.Event()
+
+        def query():
+            with snapshots.acquire(snapshot.id):
+                released.wait(5)
+
+        worker = threading.Thread(target=query)
+        worker.start()
+        with pytest.raises(DashboardCacheFull, match="busy"):
+            snapshots.retire(snapshot.id, timeout=0.2)
+        assert snapshot.root.exists()
+        released.set()
+        worker.join(5)
+        snapshots.retire(snapshot.id)
+        assert snapshot.id not in snapshots._entries
+        assert not snapshot.root.exists()
+        snapshots.retire(snapshot.id)  # already gone: no error
+    finally:
+        snapshots.close()

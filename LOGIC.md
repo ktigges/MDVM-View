@@ -212,6 +212,7 @@ Every finding row is either `Open` or `Fixed`.
 | First qualified absence | `Fixed`; `FixedUtc` is that collection's snapshot time |
 | Inventory or vulnerability collection is incomplete | `Open`; no fix credit for newly absent evidence |
 | Device inactive (not active, or not seen within 7 days), offboarded, unsupported, or missing from inventory | `Open` with a lifecycle reason; no fix credit. The dashboard flags the device as inactive |
+| Device missing from Defender's inventory **and** last seen more than 7 days before the run (a retired device) | The open row is no longer carried into new runs; earlier immutable runs keep it, and the device's fixed rows stay for SLA history. Short-lived pooled or build machines otherwise add thousands of permanent rows each. A row with no known last-seen date, or any row in an incomplete collection, is kept |
 
 An absence is qualified only when inventory and vulnerability collection both
 succeeded, the device remains active, and its last-seen time is within the

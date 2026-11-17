@@ -2400,3 +2400,28 @@ def test_optional_endpoint_server_error_does_not_fail_the_run(device_scoped_run,
     status = next(row for row in statuses if row["Endpoint"] == "remediation_tasks")
     assert status["Status"] == "OptionalUnavailable" and status["Error"] == "HTTP 504"
     assert actual["findings"]
+
+
+@pytest.mark.parametrize("last_seen, complete, kept", [
+    ("2026-09-01T00:00:00Z", True, False),   # gone from inventory, unseen 19 days: dropped
+    ("2026-09-18T00:00:00Z", True, True),    # gone, but seen within 7 days: kept open
+    ("", True, True),                        # unknown last-seen: kept (conservative)
+    ("2026-09-01T00:00:00Z", False, True),   # incomplete collection: never dropped
+])
+def test_rows_for_retired_devices_stop_being_carried(last_seen, complete, kept):
+    snapshot = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    previous = [
+        {"FindingKey": "gone", "DeviceId": "retired", "CveId": "CVE-1", "DataOrigin": "Live",
+         "FindingStatus": "Open", "Severity": "High", "FirstObservedUtc": "2026-08-20T00:00:00Z",
+         "LastSeenUtc": last_seen},
+        {"FindingKey": "fixed", "DeviceId": "retired", "CveId": "CVE-2", "DataOrigin": "Live",
+         "FindingStatus": "Fixed", "Severity": "High", "FirstObservedUtc": "2026-08-20T00:00:00Z",
+         "FixedUtc": "2026-08-25T00:00:00Z", "LastSeenUtc": last_seen},
+    ]
+    result = reconcile_live_findings([], previous, snapshot, "current", [], collection_complete=complete)
+    by_key = {row["FindingKey"]: row for row in result}
+    assert by_key["fixed"]["FindingStatus"] == "Fixed"  # SLA history is always retained
+    if kept:
+        assert by_key["gone"]["FindingStatus"] == "Open"
+    else:
+        assert "gone" not in by_key

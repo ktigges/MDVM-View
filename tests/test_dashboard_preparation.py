@@ -46,6 +46,10 @@ class Snapshots:
             if not self.counts[id]:
                 del self.counts[id]
 
+    def retire(self, id, timeout=120.0):
+        assert id not in self.counts, f"retired snapshot {id} is still in use"
+        self.retired = [*getattr(self, "retired", []), id]
+
 
 def test_prepares_before_ready_and_holds_old_snapshot_during_replacement():
     snapshots = Snapshots()
@@ -75,6 +79,43 @@ def test_prepares_before_ready_and_holds_old_snapshot_during_replacement():
     finally:
         release.set()
         preparation.close()
+
+
+def test_replacement_that_does_not_fit_retires_served_snapshot_and_prepares_alone():
+    from vulnerability_view.dashboard_snapshots import DashboardCacheFull
+
+    snapshots = Snapshots()
+    attempts = []
+
+    def prepare(snapshot):
+        attempts.append((snapshot.id, frozenset(snapshots.active)))
+        if snapshot.id == "second" and "first" in snapshots.active:
+            raise DashboardCacheFull("Dashboard index exceeds its local disk budget.")
+
+    preparation = DashboardPreparation(snapshots, prepare, 60)
+    preparation.start()
+    try:
+        snapshots.current_id = "second"
+        preparation._attempt_refresh()
+        assert preparation.diagnostics()["status"] == "ready"
+        assert preparation.metadata()["snapshotId"] == "second"
+        assert snapshots.retired == ["first", "second"]
+        assert attempts[-1] == ("second", frozenset({"second"}))
+    finally:
+        preparation.close()
+
+
+def test_cache_full_without_a_served_snapshot_still_fails_visibly():
+    from vulnerability_view.dashboard_snapshots import DashboardCacheFull
+
+    def prepare(snapshot):
+        raise DashboardCacheFull("Dashboard index exceeds its local disk budget.")
+
+    preparation = DashboardPreparation(Snapshots(), prepare, 60)
+    preparation._attempt_refresh()
+    assert preparation.diagnostics()["status"] == "error"
+    assert preparation.diagnostics()["readySnapshotId"] == ""
+    preparation.close()
 
 
 def test_startup_failure_is_not_reported_as_ready():
