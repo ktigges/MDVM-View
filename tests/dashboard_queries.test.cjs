@@ -1625,7 +1625,13 @@ function slaDashboardReport(){
   const pairSeverity=scale=>["Critical","High","Medium","Low"].map((label,index)=>({label,openWithin:index?0:4*scale,openOverdue:index?0:scale,unknownOpen:0,
     completedWithin:index?0:2*scale,completedLate:index?0:scale,completedUnknown:0,slaPercent:index?null:100*6/8}));
   const pairPeriods=periods.map((item,index)=>({label:item.label,start:item.start,end:item.end,coverage:item.coverage,severity:pairSeverity(index%2?1:2)}));
-  return {unit:"distinct-entities",asOfUtc:"2026-10-24T12:00:00Z",history:{startUtc:"2026-08-01T00:00:00Z",snapshots:85},periods,pairPeriods,coverageGap:false,
+  const entityRows=(within,past,fixedWithin,fixedPast)=>["Critical","High","Medium","Low"].map((label,index)=>({label,openWithin:index?0:within,openOverdue:index?0:past,
+    completedWithin:index?0:fixedWithin,completedLate:index?0:fixedPast,noDeadline:index?0:1}));
+  const entityStates={
+    cves:{total:{openWithin:1,openOverdue:1,completedWithin:0,completedLate:0,noDeadline:1},severity:entityRows(1,1,0,0)},
+    machines:{total:{openWithin:7,openOverdue:3,completedWithin:2,completedLate:1,noDeadline:1},severity:entityRows(7,3,2,1)},
+  };
+  return {unit:"distinct-entities",asOfUtc:"2026-10-24T12:00:00Z",entityStates,history:{startUtc:"2026-08-01T00:00:00Z",snapshots:85},periods,pairPeriods,coverageGap:false,
     machineCveSummary:{unit:"machine-cve",label:"Month to date",start:periods[0].start,end:periods[0].end,coverage:"complete",
       severity:["Critical","High","Medium","Low"].map((label,index)=>({label,openWithin:index?0:4,openOverdue:index?0:1,unknownOpen:index?0:1,
         completedWithin:index?0:2,completedLate:index?0:1,completedUnknown:index?0:1}))},
@@ -1641,15 +1647,15 @@ test("SLA screen shows four-state tiles, severity gauges, the open vs fixed char
     series:[{key:"open",label:"Open"},{key:"fixed",label:"Fixed"}],totals:{new:1,fixed:3,open:4},start:"2026-10-23",end:"2026-10-24"};
   app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:report},charts:{slaDashboardOpenFixed:chart}}));await tick();
   const overview=app.elements.get("slaDashboardOverview").innerHTML;
-  for(const [tone,value] of [["open-within",4],["open-past",1],["fixed-within",2],["fixed-past",1]]){
-    assert.match(overview,new RegExp(`four-state-tile ${tone}">[\\s\\S]*?<strong>${value}</strong>`),tone);
+  for(const [tone,cves,machines] of [["open-within",1,7],["open-past",1,3],["fixed-within",0,2],["fixed-past",0,1]]){
+    assert.match(overview,new RegExp(`four-state-tile ${tone}">[\\s\\S]*?<strong>${cves} CVEs</strong><small>${machines} machines</small>`),tone);
   }
-  assert.match(overview,/2 machine\/CVE pairs have no SLA deadline/);
+  assert.match(overview,/at least one machine\/CVE pair in each state/);
   assert.equal((overview.match(/class="sla-gauge /g)||[]).length,4);
   assert.match(overview,/75\.0%/);
   assert.match(app.elements.get("slaDashboardOpenFixed").innerHTML,/<svg/);
   assert.equal(app.elements.get("slaDashboardSummary").hidden,false);
-  assert.match(app.elements.get("slaDashboardSummary").innerHTML,/SLA by severity — open and fixed/);
+  assert.match(app.elements.get("slaDashboardSummary").innerHTML,/SLA by severity — CVEs and machines/);
   const visuals=app.elements.get("slaDashboardVisuals").innerHTML;
   for(const title of ["Week over week","Month over month"])assert.ok(visuals.includes(title),title);
   // Week: previous completed week (8 open within) to last completed week (4).
@@ -1716,20 +1722,24 @@ test("Reporting summarizes the selected period with new, fixed and open pairs, t
   assert.match(app.elements.get("trendManagementComparison").innerHTML,/comparison is unavailable, not zero/);
 });
 
-test("simple SLA summary shows the four states per severity with exact drill-down links",async()=>{
+test("simple SLA summary shows distinct CVEs and machines per state with exact drill-down links",async()=>{
   const app=fixture();await tick();
   const report=slaDashboardReport();
   report.machineCveSummary.coverage="unavailable";
   app.context.slaReport=report;
-  app.run("renderSimpleSla(slaReport.machineCveSummary)");
+  app.run("renderSimpleSla(slaReport.machineCveSummary,slaReport.entityStates)");
   const markup=app.elements.get("slaDashboardSummary").innerHTML;
-  for(const severity of ["Critical","High","Medium","Low"])assert.ok(markup.includes(`<th scope="row">${severity}</th>`));
-  for(const heading of ["Open","Fixed","Open – within SLA","Open – past SLA","Fixed – within SLA","Fixed – past SLA","Fixed on time %","No SLA deadline"])assert.ok(markup.includes(`<th scope="col">${heading}</th>`),heading);
+  for(const severity of ["Critical","High","Medium","Low"])assert.ok(markup.includes(`<th scope="row">${severity}</th>`),severity);
+  for(const heading of ["Open – past SLA","Open – within SLA","Fixed – within SLA","Fixed – past SLA","Fixed on time %"])assert.ok(markup.includes(`<th scope="col">${heading}</th>`),heading);
+  assert.ok(!markup.includes('<th scope="col">No SLA deadline</th>'));
   const critical=markup.slice(markup.indexOf('<th scope="row">Critical</th>')).split("</tr>")[0];
-  for(const [status,value] of [["Open",6],["Fixed",4],["OpenWithin",4],["OpenOverdue",1],["FixedWithin",2],["FixedLate",1],["Unknown",2]]){
-    assert.match(critical,new RegExp(`data-sla-summary-status="${status}"[^>]*>${value}</button>`),status);
+  for(const [entity,status,value,unit] of [["cves","OpenOverdue",1,"CVEs"],["cves","OpenWithin",1,"CVEs"],["cves","FixedWithin",0,"CVEs"],["cves","FixedLate",0,"CVEs"],
+    ["machines","OpenOverdue",3,"machines"],["machines","OpenWithin",7,"machines"],["machines","FixedWithin",2,"machines"],["machines","FixedLate",1,"machines"]]){
+    assert.match(critical,new RegExp(`data-sla-summary-severity="Critical" data-sla-summary-status="${status}" data-sla-summary-entity="${entity}"[^>]*>${value} ${unit}</button>`),`${entity} ${status}`);
   }
   assert.match(critical,/<td>66\.7%<\/td>/);
+  assert.match(markup,/1 CVEs and 1 machines have machine\/CVE pairs with no SLA deadline/);
+  assert.match(markup,/at least one machine\/CVE pair of that severity in that state/);
   assert.doesNotMatch(markup,/Awaiting|Pending confirmation|awaiting/);
   assert.match(markup,/Incomplete retained history: current open status is available/);
   const low=markup.slice(markup.indexOf('<th scope="row">Low</th>')).split("</tr>")[0];
@@ -1743,22 +1753,22 @@ test("SLA summary drilldowns and CSV preserve selected metric, severity, scope a
   app.run('state.subscription="sub-selected";state.team="Operations";state.osType="Windows11";activateView("slaDashboard")');
   await tick();
   app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();
-  const button=app.elements.get("slaDashboardSummary").summaryButtons.find(button=>button.dataset.slaSummarySeverity==="Critical"&&button.dataset.slaSummaryStatus==="Fixed");
+  const button=app.elements.get("slaDashboardSummary").summaryButtons.find(button=>button.dataset.slaSummarySeverity==="Critical"&&button.dataset.slaSummaryStatus==="FixedWithin"&&button.dataset.slaSummaryEntity==="machines");
   button.click();await tick();
   const payload=app.query().at(-1).payload;
   assert.equal(payload.filters.slaSummarySeverity,"Critical");
-  assert.equal(payload.filters.slaSummaryEntity,undefined);
-  assert.equal(payload.filters.slaSummaryStatus,"Fixed");
+  assert.equal(payload.filters.slaSummaryEntity,"machines");
+  assert.equal(payload.filters.slaSummaryStatus,"FixedWithin");
   assert.equal(payload.filters.subscription,"sub-selected");
   assert.equal(payload.filters.team,"Operations");
   assert.equal(payload.filters.osType,"Windows11");
   assert.equal(payload.snapshotId,snapshotId);
   app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();
   assert.equal(app.elements.get("slaSummaryDetails").hidden,false);
-  assert.match(app.elements.get("slaSummaryContext").textContent,/Critical · Fixed/);
+  assert.match(app.elements.get("slaSummaryContext").textContent,/Critical · Fixed – within SLA .*One row per distinct machine/);
   app.run('exportDashboardCsv("slaDashboard","slaSummaryTable")');
   assert.equal(app.query().at(-1).payload.table,"slaSummaryTable");
-  assert.equal(app.query().at(-1).payload.filters.slaSummaryStatus,"Fixed");
+  assert.equal(app.query().at(-1).payload.filters.slaSummaryStatus,"FixedWithin");
   app.elements.get("clearSlaSummary").click();await tick();
   assert.equal(app.run("dashboardRequest().filters.slaSummaryStatus"),undefined);
   app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();

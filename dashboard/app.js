@@ -515,7 +515,7 @@ function cards(id,items,hint="Current filter context",actions=[]){
     if(table){table.scrollIntoView({behavior:"smooth",block:"center"});table.setAttribute("tabindex","-1");table.focus({preventScroll:true});}
   }));
 }
-function headerLabel(column){const labels={InactiveDevice:"Inactive device",ConfirmedMachineCveFixes:"Machine/CVE fixes",OpenSLAWithinRate:"Open within SLA %",OpenMachineCveWithinSLA:"Open within SLA %",OpenWithinSLA:"Open within deadline",UnknownOpenSLA:"Open, unknown deadline",SLACompliance:"Confirmed on-time %",MachineCveSLACompliance:"Confirmed machine/CVE on-time %",FixedCVEs:"CVEs confirmed fixed on this machine",FixedMachines:"Machines with this CVE confirmed fixed",CompletedWithinSLA:"Completed within SLA",CompletedLate:"Completed late",CompletedUnknownSLA:"Completed, unknown SLA",OverdueOutcomes:"Overdue machine/CVE outcomes",ExecutiveStatus:"Executive SLA status",OpenCVEs:"CVEs remaining",CVEsOpen:"Open CVEs",CVEsImproved:"CVEs improved",CVEsFullyResolved:"CVEs fully resolved",MachinesOpen:"Machines with open risk",MachinesImproved:"Machines improved",MachinesFullyResolved:"Machines fully resolved",RecommendationsOpen:"Open recommendations",SlaStatus:"SLA risk status",PendingEvidence:"Awaiting verification",OSPlatform:"OS Type",OSVersion:"OS Version",OSMetadataSource:"OS metadata source",OpenFindings:"Active exposure instances",PendingFindings:"Pending exposure instances",EvidenceRecommendations:"Related recommendations",DetectedMachines:"Machines with detections",DetectedCVEs:"Distinct active CVEs",PendingCVEs:"CVEs with pending evidence",EvidenceRows:"Evidence rows",WorkAction:"Working here?",RemediationStarted:"Defender remediation started",TrackingStatus:"Dashboard work status",TrackingUpdatedBy:"Updated by",TrackingUpdatedUtc:"Updated UTC",SeverityScore:"Defender severity score",FixedWithinSLA:"Remediation observed within SLA",FixedOutsideSLA:"Remediation observed outside SLA",PendingVerification:"Pending verification",OpenOutsideSLA:"Detected findings overdue"};return labels[column]||column.replace(/([A-Z])/g," $1").trim().replace(/\bS L A\b/g,"SLA").replace(/\bC V E\b/g,"CVE").replace(/\bU T C\b/g,"UTC").replace(/\bI D\b/g,"ID");}
+function headerLabel(column){const labels={InactiveDevice:"Inactive device",ConfirmedMachineCveFixes:"Machine/CVE fixes",OpenSLAWithinRate:"Open within SLA %",OpenMachineCveWithinSLA:"Open within SLA %",OpenWithinSLA:"Open within deadline",UnknownOpenSLA:"Open, unknown deadline",SLACompliance:"Confirmed on-time %",MachineCveSLACompliance:"Confirmed machine/CVE on-time %",FixedCVEs:"CVEs confirmed fixed on this machine",FixedMachines:"Machines with this CVE confirmed fixed",CompletedWithinSLA:"Completed within SLA",CompletedLate:"Completed late",CompletedUnknownSLA:"Completed, unknown SLA",OverdueOutcomes:"Overdue machine/CVE outcomes",ExecutiveStatus:"Executive SLA status",OpenCVEs:"CVEs remaining",CVEsOpen:"Open CVEs",CVEsImproved:"CVEs improved",CVEsFullyResolved:"CVEs fully resolved",MachinesOpen:"Machines with open risk",MachinesImproved:"Machines improved",MachinesFullyResolved:"Machines fully resolved",RecommendationsOpen:"Open recommendations",SlaStatus:"SLA risk status",PendingEvidence:"Awaiting verification",OSPlatform:"OS Type",OSVersion:"OS Version",OSMetadataSource:"OS metadata source",OpenFindings:"Active exposure instances",PendingFindings:"Pending exposure instances",EvidenceRecommendations:"Related recommendations",DetectedMachines:"Machines with detections",DetectedCVEs:"Distinct active CVEs",PendingCVEs:"CVEs with pending evidence",EvidenceRows:"Evidence rows",WorkAction:"Working here?",RemediationStarted:"Defender remediation started",TrackingStatus:"Dashboard work status",TrackingUpdatedBy:"Updated by",TrackingUpdatedUtc:"Updated UTC",SeverityScore:"Defender severity score",FixedWithinSLA:"Remediation observed within SLA",FixedOutsideSLA:"Remediation observed outside SLA",PendingVerification:"Pending verification",OpenOutsideSLA:"Detected findings overdue",MachinesPastSla:"Machines past SLA",MachinesWithinSla:"Machines within SLA",CvesPastSla:"CVEs past SLA",CriticalCvesPastSla:"Critical CVEs past SLA",CvesWithinSla:"CVEs within SLA",OldestDueUtc:"Oldest missed deadline (UTC)"};return labels[column]||column.replace(/([A-Z])/g," $1").trim().replace(/\bS L A\b/g,"SLA").replace(/\bC V E\b/g,"CVE").replace(/\bU T C\b/g,"UTC").replace(/\bI D\b/g,"ID");}
 /** Render compact work status beneath a recommendation name. */
 function recommendationWorkStatus(row){if(!state.recommendationTrackingEnabled||!Object.hasOwn(row,"TrackingStatus"))return"";const status=row.TrackingStatus||"Untracked",details=[row.TrackingUpdatedBy&&row.TrackingUpdatedBy!=="—"?row.TrackingUpdatedBy:"",row.TrackingUpdatedUtc&&row.TrackingUpdatedUtc!=="—"?row.TrackingUpdatedUtc:""].filter(Boolean).join(" · ");return`<span class="recommendation-work-status"><span class="tracking-status ${esc(status)}">${metricLabel(recommendationTrackingLabel(status))}</span>${details?`<small>${esc(details)}</small>`:""}</span>`;}
 function explainedCell(column,value,row){
@@ -1356,41 +1356,40 @@ function slaCalendarComparison(title,current,previous){
   </article>`;
 }
 
-function renderSimpleSla(summary){
+function renderSimpleSla(summary,states){
   const root=$("slaDashboardSummary");
   $("slaSummaryDetails").hidden=!state.slaSummary.status;
-  if(summary?.unit!=="machine-cve"||!Array.isArray(summary.severity)){
-    root.innerHTML='<p role="status">Machine/CVE SLA summary unavailable. Update the Web App and reload this snapshot.</p>';
+  if(summary?.unit!=="machine-cve"||!Array.isArray(summary.severity)||!Array.isArray(states?.cves?.severity)||!Array.isArray(states?.machines?.severity)){
+    root.innerHTML='<p role="status">SLA summary unavailable. Update the Web App and reload this snapshot.</p>';
     return;
   }
-  const statusLabels={Open:"Open",Fixed:"Fixed",OpenWithin:"Open – within SLA",OpenOverdue:"Open – past SLA",FixedWithin:"Fixed – within SLA",FixedLate:"Fixed – past SLA",Unknown:"No SLA deadline"};
-  const link=(severity,status,value)=>`<button type="button" class="cve-link" data-sla-summary-severity="${esc(severity)}" data-sla-summary-status="${status}" aria-label="View ${esc(severity)} ${esc(statusLabels[status])} machine/CVE pairs">${value}</button>`;
-  const rows=summary.severity.map(row=>{
-    for(const key of ["openWithin","openOverdue","unknownOpen","completedWithin","completedLate","completedUnknown"]){
-      if(typeof row[key]!=="number"||!Number.isFinite(row[key])||row[key]<0)throw new Error("Machine/CVE SLA summary counts are incomplete. Retry the dashboard query.");
-    }
-    const open=row.openWithin+row.openOverdue+row.unknownOpen,fixed=row.completedWithin+row.completedLate+row.completedUnknown;
-    const known=row.completedWithin+row.completedLate;
-    return `<tr><th scope="row">${esc(row.label)}</th><td>${link(row.label,"Open",fmt(open))}</td><td>${link(row.label,"Fixed",fmt(fixed))}</td>
-      <td>${link(row.label,"OpenWithin",fmt(row.openWithin))}</td><td>${link(row.label,"OpenOverdue",fmt(row.openOverdue))}</td>
-      <td>${link(row.label,"FixedWithin",fmt(row.completedWithin))}</td><td>${link(row.label,"FixedLate",fmt(row.completedLate))}</td>
-      <td>${known?slaDashboardPercent(100*row.completedWithin/known):"N/A"}</td>
-      <td>${link(row.label,"Unknown",fmt(row.unknownOpen+row.completedUnknown))}</td></tr>`;
+  const statusLabels={OpenWithin:"Open – within SLA",OpenOverdue:"Open – past SLA",FixedWithin:"Fixed – within SLA",FixedLate:"Fixed – past SLA",OpenUnknown:"Open – no SLA deadline",FixedUnknown:"Fixed – no SLA deadline"};
+  const columns=[["openOverdue","OpenOverdue"],["openWithin","OpenWithin"],["completedWithin","FixedWithin"],["completedLate","FixedLate"]];
+  const rowsFor=entity=>new Map(states[entity].severity.map(row=>[row.label,row]));
+  const cves=rowsFor("cves"),machines=rowsFor("machines"),pairs=new Map(summary.severity.map(row=>[row.label,row]));
+  const link=(entity,severity,status,value)=>`<button type="button" class="cve-link" data-sla-summary-severity="${esc(severity)}" data-sla-summary-status="${status}" data-sla-summary-entity="${entity}" aria-label="View ${esc(severity)} ${esc(statusLabels[status])} ${entity==="cves"?"CVEs":"machines"}">${fmt(value)} ${entity==="cves"?"CVEs":"machines"}</button>`;
+  const labels=["Critical","High","Medium","Low","Unknown"].filter(label=>label!=="Unknown"||cves.has(label)||machines.has(label));
+  const rows=labels.map(label=>{
+    const c=cves.get(label)||{},m=machines.get(label)||{},pair=pairs.get(label)||{};
+    const known=(Number(pair.completedWithin)||0)+(Number(pair.completedLate)||0);
+    return `<tr><th scope="row">${esc(label)}</th>${columns.map(([key,status])=>`<td>${link("cves",label,status,Number(c[key])||0)}<br>${link("machines",label,status,Number(m[key])||0)}</td>`).join("")}
+      <td>${known?slaDashboardPercent(100*pair.completedWithin/known):"N/A"}</td></tr>`;
   }).join("");
-  root.innerHTML=`<article class="panel sla-simple-summary" aria-label="Simple machine/CVE SLA summary">
-    <div class="panel-title"><h2>SLA by severity — open and fixed</h2><span>Machine/CVE pairs</span></div>
+  const noDeadline=entity=>Number(states[entity].total?.noDeadline)||0;
+  root.innerHTML=`<article class="panel sla-simple-summary" aria-label="SLA by severity for CVEs and machines">
+    <div class="panel-title"><h2>SLA by severity — CVEs and machines</h2><span>Distinct CVEs and machines</span></div>
     <p>Open at the current snapshot; fixes during ${esc(summary.label)} (${esc(summary.start)} to ${esc(summary.end)} UTC).</p>
-    <div class="table-wrap"><table><thead><tr><th scope="col">Severity</th><th scope="col">Open</th><th scope="col">Fixed</th><th scope="col">Open – within SLA</th><th scope="col">Open – past SLA</th><th scope="col">Fixed – within SLA</th><th scope="col">Fixed – past SLA</th><th scope="col">Fixed on time %</th><th scope="col">No SLA deadline</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="coverage-note">${esc(fixRecognitionDescription())} One CVE on three machines counts as three machine/CVE pairs; software versions do not multiply counts. A pair is fixed only when none of its software is still detected.
-      Fixed on time % = Fixed – within SLA ÷ (Fixed – within SLA + Fixed – past SLA). Pairs without a known deadline are excluded. Click any count for its evidence.</p>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Severity</th><th scope="col">Open – past SLA</th><th scope="col">Open – within SLA</th><th scope="col">Fixed – within SLA</th><th scope="col">Fixed – past SLA</th><th scope="col">Fixed on time %</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="coverage-note">${esc(fixRecognitionDescription())} Each count is the CVEs or machines with at least one machine/CVE pair of that severity in that state, so a machine with a High past SLA and a Critical within SLA appears in both rows. Fixed counts pairs fixed in the period. Fixed on time % uses machine/CVE pairs fixed in the period.
+      ${noDeadline("cves")||noDeadline("machines")?`${fmt(noDeadline("cves"))} CVEs and ${fmt(noDeadline("machines"))} machines have machine/CVE pairs with no SLA deadline; those pairs are not shown.`:""} Click any count for the list.</p>
     ${summary.coverage==="complete"?"":'<p class="coverage-note">Incomplete retained history: current open status is available, but fixes cover retained observations only, not necessarily the entire month.</p>'}
   </article>`;
   root.querySelectorAll("[data-sla-summary-status]").forEach(button=>button.addEventListener("click",()=>{
-    state.slaSummary={severity:button.dataset.slaSummarySeverity,status:button.dataset.slaSummaryStatus};
+    state.slaSummary={severity:button.dataset.slaSummarySeverity,status:button.dataset.slaSummaryStatus,entity:button.dataset.slaSummaryEntity};
     render();
   }));
   $("slaSummaryContext").textContent=state.slaSummary.status
-    ?`${state.slaSummary.severity} · ${statusLabels[state.slaSummary.status]} · ${summary.start} to ${summary.end} UTC. One row per machine/CVE pair; workspace scope and pinned snapshot preserved.`
+    ?`${state.slaSummary.severity} · ${statusLabels[state.slaSummary.status]||state.slaSummary.status} · ${summary.start} to ${summary.end} UTC. One row per distinct ${state.slaSummary.entity==="machines"?"machine":"CVE"}; workspace scope and pinned snapshot preserved.`
     :"";
 }
 
@@ -1400,7 +1399,7 @@ function renderSlaDashboard(report){
   $("slaDashboardContext").textContent=`Snapshot: ${formatUtc(report.asOfUtc)}. Open status is current; fixes cover ${summary.label} (${range}). Each count is a machine/CVE pair.`;
   $("slaDashboardOverview").innerHTML=`
     <div class="sla-policy-chips">${["Critical","High","Medium","Low"].map(severity=>`<span><b>${severity}</b>${esc(slaPolicyTarget(severity))}</span>`).join("")}</div>
-    ${fourStateTiles(summary.severity,`Machine/CVE pairs. Open now; fixed during ${summary.label}.`)}
+    ${entityStateTiles(report.entityStates,`CVEs and machines with at least one machine/CVE pair in each state. Open now; fixed during ${summary.label}. A CVE past SLA on some machines and within SLA on others appears in both.`)}
     <article class="panel sla-gauge-panel">
       <div class="panel-title"><h3>SLA by severity${metricHelpButton("SLA gauge")}</h3><span>Machine/CVE pairs</span></div>
       <div class="sla-gauge-grid">${slaGaugeGrid(summary.severity,summary.label)}</div>
@@ -1410,7 +1409,7 @@ function renderSlaDashboard(report){
       <div id="slaDashboardOpenFixed"></div>
     </article>`;
   $("slaDashboardSummary").hidden=false;
-  renderSimpleSla(summary);
+  renderSimpleSla(summary,report.entityStates);
   $("slaSummaryDetails").hidden=!state.slaSummary.status;
   $("slaDashboardVisuals").innerHTML=`
     <div class="sla-calendar-grid">
@@ -1422,7 +1421,6 @@ function renderSlaDashboard(report){
       <p>A machine/CVE pair's deadline is its earliest software record's first-seen date plus the policy days for its severity. A pair is fixed only when none of its software is still detected, at the time the last software item was removed.</p>
       <p>${summary.coverage==="complete"?"The month-to-date period is covered.":"Partial retained coverage: fixes cover retained observations only, not necessarily the entire month."} ${report.history?.startUtc?`History begins ${esc(formatUtc(report.history.startUtc))}.`:"History coverage is unavailable."}</p>
     </details>`;
-  $("slaSummaryContext").textContent=state.slaSummary.status?`${state.slaSummary.severity==="All"?"All severities":state.slaSummary.severity} · ${state.slaSummary.status} · workspace filters and pinned snapshot preserved.`:"";
 }
 
 function renderDashboardResponse(payload,view,tableId){
@@ -1646,6 +1644,11 @@ function fourStateTiles(severity,caption){
   const totals=fourStateTotals(severity);
   return `<div class="four-state-tiles" role="group" aria-label="Machine/CVE pairs by SLA state">${FOUR_STATES.map(([key,label,tone])=>`<div class="four-state-tile ${tone}"><span>${metricLabel(label)}</span><strong>${fmt(totals[key])}</strong></div>`).join("")}</div>
     <p class="coverage-note">${esc(caption)}${totals.noDeadline?` ${fmt(totals.noDeadline)} machine/CVE pairs have no SLA deadline and are not in these four states.`:""}</p>`;
+}
+function entityStateTiles(states,caption){
+  const cves=states?.cves?.total||{},machines=states?.machines?.total||{};
+  return `<div class="four-state-tiles" role="group" aria-label="Distinct CVEs and machines by SLA state">${FOUR_STATES.map(([key,label,tone])=>`<div class="four-state-tile ${tone}"><span>${metricLabel(label)}</span><strong>${fmt(Number(cves[key])||0)} CVEs</strong><small>${fmt(Number(machines[key])||0)} machines</small></div>`).join("")}</div>
+    <p class="coverage-note">${esc(caption)}</p>`;
 }
 function slaGaugeGrid(severity,periodLabel){
   const rows=new Map((severity||[]).map(row=>[row.label,row]));

@@ -345,7 +345,16 @@ def test_dedicated_sla_dashboard_counts_entities_and_keeps_confirmed_rates_separ
     assert (active_current["openWithin"], active_current["openOverdue"], active_current["unknownOpen"]) == (0, 1, 1)
     assert len(report["periods"]) == 5
     assert all(row["coverage"] == "complete" for row in report["periods"])
-    assert not result["tables"]
+    # Ranked past-SLA lists: only the overdue CVE, and the machine that carries it.
+    assert set(result["tables"]) == {"slaPastSlaCves", "slaPastSlaMachines"}
+    cves = result["tables"]["slaPastSlaCves"]
+    assert [row["CveId"] for row in cves["items"]] == ["CVE-OVERDUE"]
+    assert cves["action"] == "cve" and cves["items"][0]["MachinesPastSla"] == 1
+    assert cves["items"][0]["OldestDueUtc"] == "2026-10-23T00:00:00Z"
+    machines = result["tables"]["slaPastSlaMachines"]
+    assert machines["total"] == 1 and machines["action"] == "machine"
+    assert machines["items"][0]["CvesPastSla"] == 1
+    assert machines["items"][0]["DeviceName"]
     assert "management" not in result["metadata"]
     assert not engine(tmp_path, data).is_interactive(request("slaDashboard"))
 
@@ -1763,23 +1772,49 @@ def test_compact_recommendations_rank_scoped_risk_and_export_exact_columns(tmp_p
 
 def test_distinct_sla_breakdown_counts_lists_and_exports_are_identical(tmp_path):
     e = engine(tmp_path, management_data())
-    current = e.query(request("slaDashboard"))["metadata"]["slaDashboard"]["periods"][0]
+    states = e.query(request("slaDashboard"))["metadata"]["slaDashboard"]["entityStates"]
     statuses = {
-        "Open": "totalOpen", "OpenWithin": "openWithin", "OpenOverdue": "openOverdue",
-        "OpenUnknown": "unknownOpen", "Fixed": "confirmedFixes", "FixedWithin": "completedWithin",
-        "FixedLate": "completedLate", "FixedUnknown": "completedUnknown",
+        "OpenWithin": "openWithin", "OpenOverdue": "openOverdue", "FixedWithin": "completedWithin",
+        "FixedLate": "completedLate", "NoDeadline": "noDeadline",
     }
+    checked = 0
     for entity, identifier in (("cves", "CveId"), ("machines", "DeviceId")):
+        rows = {row["label"]: row for row in states[entity]["severity"]}
         for status, count in statuses.items():
-            payload = request("slaDashboard", simplifiedDashboard=True,
-                              slaSummaryEntity=entity, slaSummaryStatus=status)
-            table = e.query(payload)["tables"]["slaSummaryTable"]
-            exported = list(e.iter_export({**payload, "table": "slaSummaryTable"}))
-            assert table["total"] == len(exported) == current[entity][count], (entity, status)
-            assert len({row[identifier] for row in exported}) == len(exported)
-            assert table["action"] == ("cve" if entity == "cves" else "machine")
+            for severity, expected in [("All", states[entity]["total"][count]),
+                                       *((label, row[count]) for label, row in rows.items())]:
+                payload = request("slaDashboard", simplifiedDashboard=True, slaSummaryEntity=entity,
+                                  slaSummaryStatus=status, slaSummarySeverity=severity)
+                table = e.query(payload)["tables"]["slaSummaryTable"]
+                exported = list(e.iter_export({**payload, "table": "slaSummaryTable"}))
+                assert table["total"] == len(exported) == expected, (entity, status, severity)
+                assert len({row[identifier] for row in exported}) == len(exported)
+                assert table["action"] == ("cve" if entity == "cves" else "machine")
+                checked += expected
+        # An entity is counted in every severity where it has a pair in that state, so
+        # severity rows can exceed the all-severity total but never fall below any one row.
+        for count in statuses.values():
+            assert all(states[entity]["total"][count] >= row[count] for row in rows.values())
+    assert checked
     with pytest.raises(ValueError, match="distinct-entity SLA"):
-        e.query(request("slaDashboard", slaSummaryEntity="findings", slaSummaryStatus="Open"))
+        e.query(request("slaDashboard", slaSummaryEntity="findings", slaSummaryStatus="OpenOverdue"))
+
+
+def test_machine_with_cves_of_two_severities_counts_in_both_rows(tmp_path):
+    data = datasets(0)
+    data["findings"] = [
+        finding(0, CveId="CVE-CRIT", Severity="Critical", SlaDueUtc="2026-12-30T00:00:00Z"),
+        finding(1, CveId="CVE-HIGH", Severity="High", SlaDueUtc="2026-10-23T00:00:00Z"),
+    ]
+    data["run-history"] = [{"DataOrigin": "Live", "SnapshotTimeUtc": SNAPSHOT,
+                            "FindingHistoryStartUtc": "2026-08-01T00:00:00Z"}]
+    states = engine(tmp_path, data).query(request("slaDashboard"))["metadata"]["slaDashboard"]["entityStates"]
+    machines = {row["label"]: row for row in states["machines"]["severity"]}
+    assert (machines["Critical"]["openWithin"], machines["Critical"]["openOverdue"]) == (1, 0)
+    assert (machines["High"]["openWithin"], machines["High"]["openOverdue"]) == (0, 1)
+    assert states["machines"]["total"]["openWithin"] == states["machines"]["total"]["openOverdue"] == 1
+    cves = {row["label"]: row for row in states["cves"]["severity"]}
+    assert (cves["Critical"]["openWithin"], cves["High"]["openOverdue"]) == (1, 1)
 
 
 def test_reporting_activity_window_uses_the_only_reporting_selector_and_cache_scope(tmp_path):
@@ -1845,3 +1880,42 @@ def test_recommendations_priority_sort_puts_unresolved_work_first_and_ignores_du
     assert [row["RecommendationId"] for row in exported] == ["rec-1", "rec-2", "rec-0"]
     filtered = e.query(request("recommendations", recommendationCatalogSort="priority", recommendationCatalogStatus="Unresolved exposure"))
     assert {row["RecommendationId"] for row in filtered["tables"]["recommendationTable"]["items"]} == {"rec-1", "rec-2"}
+
+
+def test_sla_drilldowns_reuse_the_saved_scope_instead_of_recomputing(tmp_path, monkeypatch):
+    e = engine(tmp_path, management_data())
+    page = e.query(request("slaDashboard"))
+    states = page["metadata"]["slaDashboard"]["entityStates"]
+    assert list(e.root.glob("sla-scope-v*.sqlite3"))
+    calls = []
+    real_build_sla = dashboard_management.build_sla
+    monkeypatch.setattr(dashboard_management, "build_sla", lambda *args, **kwargs: calls.append(1) or real_build_sla(*args, **kwargs))
+
+    for entity, identifier in (("cves", "CveId"), ("machines", "DeviceId")):
+        payload = request("slaDashboard", slaSummaryEntity=entity, slaSummaryStatus="OpenOverdue", slaSummarySeverity="All")
+        result = e.query(payload)
+        assert result["metadata"]["slaDashboard"]["entityStates"] == states
+        assert result["tables"]["slaSummaryTable"]["total"] == states[entity]["total"]["openOverdue"]
+        assert result["tables"]["slaPastSlaCves"]["total"] == states["cves"]["total"]["openOverdue"]
+        exported = list(e.iter_export({**payload, "table": "slaSummaryTable"}))
+        assert len({row[identifier] for row in exported}) == len(exported) == states[entity]["total"]["openOverdue"]
+    assert calls == []
+
+    # A different workspace scope is computed (and saved) on its own.
+    e.query(request("slaDashboard", severity="Critical"))
+    assert calls == [1]
+    # Machine/CVE pair drill-downs still read the full pair table.
+    pairs = e.query(request("slaDashboard", slaSummaryStatus="OpenOverdue", slaSummarySeverity="All"))
+    assert pairs["tables"]["slaSummaryTable"]["rowLabel"] == "machine/CVE pairs"
+    assert calls == [1, 1]
+
+
+def test_restarted_viewer_restores_sla_scope_from_products_without_recomputing(tmp_path, monkeypatch):
+    e = engine(tmp_path, management_data())
+    states = e.query(request("slaDashboard"))["metadata"]["slaDashboard"]["entityStates"]
+    for path in e.root.glob("sla-scope-v*.sqlite3"):
+        path.unlink()
+    monkeypatch.setattr(dashboard_management, "build_sla", lambda *args, **kwargs: pytest.fail("recomputed"))
+    result = e.query(request("slaDashboard", slaSummaryEntity="machines", slaSummaryStatus="OpenWithin"))
+    assert result["tables"]["slaSummaryTable"]["total"] == states["machines"]["total"]["openWithin"]
+    assert list(e.root.glob("sla-scope-v*.sqlite3"))
