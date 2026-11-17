@@ -199,6 +199,7 @@ These can be environment variables or keys in
 | `DASHBOARD_DATA_SOURCE` | `dashboardDataSource` | `local` | `local` reads `dashboard/data`; `azure` reads current manifest and curated blobs |
 | `DASHBOARD_STATIC_DIR` | `dashboardStaticDir` | Empty | Override path for dashboard static assets |
 | `DASHBOARD_CACHE_SECONDS` | `dashboardCacheSeconds` | `30`; zero or greater | Current-manifest cache duration and background snapshot-check interval (minimum one second); unchanged immutable indexes do not expire on this timer |
+| `DASHBOARD_CACHE_MAX_GB` | — | `8`; 1–1024 | Local disk budget for prepared dashboard snapshots (two are retained). Idle snapshots are released when the budget or the actual free disk runs short; startup logs `[dashboard-cache]` with the budget and free disk |
 | `DASHBOARD_DERIVED_CACHE_CONTAINER` | `dashboardDerivedCacheContainer` | Empty | Optional persistent store for compatible completed indexes and reporting artifacts; Terraform configures `dvm-viewer-cache` for the hosted viewer |
 | `DASHBOARD_AUTH_ENABLED` | `dashboardAuthEnabled` | `false` | Requires App Service Easy Auth identity when enabled |
 | `DASHBOARD_DATA_BROWSER_ENABLED` | `dashboardDataBrowserEnabled` | `false` | Enables read-only Data Evidence surface |
@@ -301,8 +302,30 @@ File: `config/sla-policies.json`
 | `policies[].knownExploitRequired` | Whether known exploit evidence is required |
 | `policies[].slaDays` | Days from SLA start to due time |
 
-Changing this file affects newly processed runs. Prior immutable runs retain
-their original policy file and policy version. A new
+### Overriding SLA days without a redeploy
+
+Optional Function App settings override `slaDays` without editing this file or
+running Terraform: `SLA_DAYS_CRITICAL_KNOWN_EXPLOIT`, `SLA_DAYS_CRITICAL`,
+`SLA_DAYS_HIGH`, `SLA_DAYS_MEDIUM`, `SLA_DAYS_LOW` (whole days, 1–3650; blank or
+unset keeps the file value). Set them on the **Function App**, not the Web App:
+
+```bash
+az functionapp config appsettings set -g <resource-group> -n <function-app> \
+  --settings SLA_DAYS_HIGH=30 SLA_DAYS_MEDIUM=90
+```
+
+Saving restarts the Function App, so avoid changing them while a collection is
+running. The next run picks them up; an invalid value fails that run's prepare
+step with the setting name. Any override is appended to the run's
+`policyVersion` (for example `…+env-High30`), and the effective policy is the
+one retained with the run. Terraform ignores these settings, so a later apply
+keeps them.
+
+Changing this file (or an `SLA_DAYS_*` setting) affects newly processed runs.
+When `policyVersion` changes, every finding that is still open is re-timed on the
+next run: the new days apply from its original SLA start. Findings fixed in earlier
+runs keep the deadline and outcome they were judged against. Prior immutable runs
+retain their original policy file and policy version. A new
 `complianceTargetPercent` therefore appears in Executive Snapshot after a
 collection publishes the updated policy.
 

@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from datetime import datetime
 
 import pytest
@@ -1377,7 +1379,7 @@ def test_first_absence_math_reconciles_across_dashboard_and_machine_views(tmp_pa
     ]
     # Each row is a separate software item, so rows sharing a machine and CVE are distinct identities.
     previous = [
-        dict(row, FirstObservedUtc=observed, SnapshotTimeUtc=observed, SlaPolicyVersion="retained",
+        dict(row, FirstObservedUtc=observed, SnapshotTimeUtc=observed, SlaPolicyVersion=json.loads(Path("config/sla-policies.json").read_text())["policyVersion"],
              SoftwareName=f"product-{index}", SoftwareVersion="1")
         for index, row in enumerate(previous)
     ]

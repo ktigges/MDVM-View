@@ -1,12 +1,16 @@
 """Step 2 lifecycle rules: identity matching, Defender dates, inactive devices, and reopen episodes."""
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 from vulnerability_view.bounded_processing import Workspace
 from vulnerability_view.live_collector import delta_fixed_events, finding_match_identity, reconcile_live_findings
 
 
 SNAP = datetime(2026, 11, 5, tzinfo=timezone.utc)
+# Rows already carry the current policy version, so their assigned deadlines are kept as-is.
+POLICY_VERSION = json.loads(Path("config/sla-policies.json").read_text())["policyVersion"]
 ACTIVE = [{"DeviceId": "d1", "HealthStatus": "Active", "OnboardingStatus": "Onboarded", "LastSeenUtc": "2026-11-05T00:00:00Z"}]
 
 
@@ -15,7 +19,7 @@ def row(key, **changes):
         "FindingKey": key, "DeviceId": "d1", "CveId": "CVE-1", "SoftwareName": "app", "SoftwareVersion": "1",
         "DataOrigin": "Live", "FindingStatus": "Open", "Severity": "High",
         "FirstObservedUtc": "2026-11-01T00:00:00Z", "FirstSeenUtc": "2026-11-01T00:00:00Z",
-        "SnapshotTimeUtc": "2026-11-01T00:00:00Z", "SlaPolicyName": "High", "SlaPolicyVersion": "v1", "SlaDays": 7,
+        "SnapshotTimeUtc": "2026-11-01T00:00:00Z", "SlaPolicyName": "High", "SlaPolicyVersion": POLICY_VERSION, "SlaDays": 7,
         "SlaStartUtc": "2026-11-01T00:00:00Z", "SlaDueUtc": "2026-11-08T00:00:00Z",
         "FixedUtc": "", "ReopenedUtc": "", "FirstAbsentUtc": "", "ConsecutiveAbsentCount": 0,
     }

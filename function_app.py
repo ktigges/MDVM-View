@@ -19,6 +19,7 @@ from azure.core.exceptions import AzureError, ResourceNotFoundError
 from vulnerability_view.config import Settings, load_function_version
 from vulnerability_view.credentials import create_credential
 from vulnerability_view.dataprep_cli import main
+from vulnerability_view.normalizer import apply_sla_environment_overrides
 from vulnerability_view.defender_client import COLLECTION_PAGE_SIZE, DEBUG_ENDPOINTS, MACHINE_FINDINGS_PAGE_SIZE, DefenderApiError, collection_page_size, probe_defender_page
 from vulnerability_view.storage_writer import download_current_manifest
 from vulnerability_view.run_status import endpoint_issues, endpoint_notes
@@ -244,7 +245,9 @@ def dataprep_orchestrator(context):
 
 @app.activity_trigger(input_name="request")
 def dataprep_prepare(request: dict) -> dict:
-    policy = json.loads((Path(__file__).resolve().parent / "config/sla-policies.json").read_text())
+    policy = apply_sla_environment_overrides(
+        json.loads((Path(__file__).resolve().parent / "config/sla-policies.json").read_text()), os.environ,
+    )
     return execute_worker({**request, "stage": "prepare", "request": request, "policy": policy})
 
 

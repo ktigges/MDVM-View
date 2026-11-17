@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -9,24 +9,27 @@ from vulnerability_view.normalizer import apply_sla, load_sla_policies, load_sla
 
 UTC = timezone.utc
 POLICIES = load_sla_policies(__import__("pathlib").Path("config/sla-policies.json"))
+DAYS = {policy["policyName"]: policy["slaDays"] for policy in POLICIES}
 
 
 def test_sla_boundary_is_within():
     first = datetime(2026, 1, 1, tzinfo=UTC)
-    result = apply_sla("Critical", True, first, datetime(2026, 1, 5, tzinfo=UTC), first, POLICIES)
+    due = first + timedelta(days=DAYS["CriticalKnownExploit"])
+    result = apply_sla("Critical", True, first, due, first, POLICIES)
     assert result["SlaStatus"] == "FixedWithinSla"
     assert result["SlaPolicyName"] == "CriticalKnownExploit"
 
 
 def test_sla_after_boundary_is_outside():
     first = datetime(2026, 1, 1, tzinfo=UTC)
-    result = apply_sla("Critical", True, first, datetime(2026, 1, 5, 0, 0, 1, tzinfo=UTC), first, POLICIES)
+    due = first + timedelta(days=DAYS["CriticalKnownExploit"])
+    result = apply_sla("Critical", True, first, due + timedelta(seconds=1), first, POLICIES)
     assert result["SlaStatus"] == "FixedOutsideSla"
 
 
 def test_generic_critical_policy_applies_without_known_exploit():
     first = datetime(2026, 1, 1, tzinfo=UTC)
-    result = apply_sla("Critical", False, first, datetime(2026, 1, 3, tzinfo=UTC), first, POLICIES)
+    result = apply_sla("Critical", False, first, first + timedelta(days=DAYS["Critical"]), first, POLICIES)
     assert result["SlaStatus"] == "FixedWithinSla"
     assert result["SlaPolicyName"] == "Critical"
 

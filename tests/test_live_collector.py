@@ -16,6 +16,8 @@ from vulnerability_view.defender_client import ENDPOINTS, DefenderApiError, Defe
 from vulnerability_view.live_collector import apply_vulnerability_delta, collect_live, merge_vulnerability_delta, normalize_live, recommendation_requires_api_enrichment, reconcile_live_findings, replay_raw_snapshot
 from test_collection_identity import TENANT, OTHER, credential as tenant_credential
 
+CURRENT_POLICY_VERSION = json.loads(Path("config/sla-policies.json").read_text())["policyVersion"]
+
 
 class Credential:
     def get_token(self, scope):
@@ -1737,7 +1739,7 @@ def test_live_normalization_uses_collector_first_observation_for_sla():
     assert row["FirstSeenUtc"] == "2026-09-16T00:00:00Z"
     assert row["FirstObservedUtc"] == "2026-09-16T00:00:00Z"
     assert row["SlaStartUtc"] == "2026-09-16T00:00:00Z"
-    assert row["SlaPolicyVersion"] == "vulnerability-view-2026-11-14"
+    assert row["SlaPolicyVersion"] == CURRENT_POLICY_VERSION
     assert row["SlaStatus"] == "OpenWithinSla"
     assert row["AssignedEngineer"] == ""
 
@@ -2018,7 +2020,7 @@ def test_live_reconciliation_uses_first_qualified_absence_for_sla_without_waitin
         "FindingKey": "finding-1", "DeviceId": "device-1", "DataOrigin": "Live", "FindingStatus": "Open",
         "Severity": "High", "PublicExploitAvailable": False, "VerifiedExploitAvailable": False,
         "ExploitKitAvailable": False, "FirstSeenUtc": "", "FirstObservedUtc": "2026-09-14T00:00:00Z",
-        "SlaPolicyName": "High", "SlaPolicyVersion": "policy-v1", "SlaDays": 7,
+        "SlaPolicyName": "High", "SlaPolicyVersion": CURRENT_POLICY_VERSION, "SlaDays": 7,
         "SlaStartUtc": "2026-09-14T00:00:00Z", "SlaDueUtc": "2026-09-21T00:00:00Z",
         "SlaStatus": "OpenWithinSla", "FixedUtc": "", "ReopenedUtc": "", "FirstAbsentUtc": "",
         "FixedConfirmedUtc": "", "ConsecutiveAbsentCount": 0, "SnapshotTimeUtc": "2026-09-20T12:00:00Z",
@@ -2074,7 +2076,7 @@ def test_live_reconciliation_marks_detection_returned_and_revokes_provisional_sl
         "FindingKey": "finding-1", "DeviceId": "device-1", "DataOrigin": "Live", "FindingStatus": "Open",
         "Severity": "High", "PublicExploitAvailable": False, "VerifiedExploitAvailable": False,
         "ExploitKitAvailable": False, "FirstSeenUtc": "", "FirstObservedUtc": "2026-09-14T00:00:00Z",
-        "SlaPolicyName": "High", "SlaPolicyVersion": "policy-v1", "SlaDays": 7,
+        "SlaPolicyName": "High", "SlaPolicyVersion": CURRENT_POLICY_VERSION, "SlaDays": 7,
         "SlaStartUtc": "2026-09-14T00:00:00Z", "SlaDueUtc": "2026-09-21T00:00:00Z",
         "SlaStatus": "FixedWithinSla", "FixedUtc": "", "ReopenedUtc": "",
         "SnapshotTimeUtc": "2026-09-21T12:00:00Z", "CollectionRunId": "current",
@@ -2096,24 +2098,38 @@ def test_live_reconciliation_marks_detection_returned_and_revokes_provisional_sl
     assert returned["SlaEvidenceStatus"] == "Detected"
 
 
-def test_live_reconciliation_preserves_assigned_sla_policy_version():
+def test_live_reconciliation_retimes_open_rows_to_the_current_policy_but_keeps_past_fixes():
+    policy = json.loads(Path("config/sla-policies.json").read_text())
+    days = {row["policyName"]: row["slaDays"] for row in policy["policies"]}
     snapshot = datetime(2026, 9, 20, tzinfo=timezone.utc)
     current = [{
         "FindingKey": "finding-1", "DeviceId": "device-1", "DataOrigin": "Live", "FindingStatus": "Open",
         "Severity": "Critical", "PublicExploitAvailable": True, "VerifiedExploitAvailable": False,
-        "ExploitKitAvailable": False, "FirstSeenUtc": "", "FirstObservedUtc": "2026-09-10T00:00:00Z",
-        "SlaPolicyName": "CriticalKnownExploit", "SlaPolicyVersion": "vulnerability-view-2026-09-21", "SlaDays": 7,
-        "SlaStartUtc": "2026-09-10T00:00:00Z", "SlaDueUtc": "2026-09-17T00:00:00Z", "SlaStatus": "OpenWithinSla",
+        "ExploitKitAvailable": False, "FirstSeenUtc": "", "FirstObservedUtc": "2026-09-20T00:00:00Z",
+        "SlaPolicyName": "CriticalKnownExploit", "SlaPolicyVersion": policy["policyVersion"], "SlaDays": 7,
+        "SlaStartUtc": "2026-09-20T00:00:00Z", "SlaDueUtc": "2026-09-27T00:00:00Z", "SlaStatus": "OpenWithinSla",
         "FixedUtc": "", "ReopenedUtc": "", "SnapshotTimeUtc": "2026-09-20T00:00:00Z", "CollectionRunId": "current",
     }]
-    previous = [dict(current[0], SlaPolicyName="LegacyCritical", SlaPolicyVersion="legacy-v1", SlaDays=30, SlaDueUtc="2026-10-10T00:00:00Z")]
+    legacy = {"SlaPolicyName": "LegacyCritical", "SlaPolicyVersion": "legacy-v1", "SlaDays": 1,
+              "SlaStartUtc": "2026-09-10T00:00:00Z", "FirstObservedUtc": "2026-09-10T00:00:00Z",
+              "SlaDueUtc": "2026-09-11T00:00:00Z", "SnapshotTimeUtc": "2026-09-19T00:00:00Z"}
+    previous = [
+        dict(current[0], **legacy, SlaStatus="OpenOutsideSla"),
+        dict(current[0], **legacy, FindingKey="finding-2", DeviceId="device-2", FindingStatus="Fixed",
+             FixedUtc="2026-09-15T00:00:00Z", SlaStatus="FixedOutsideSla"),
+    ]
 
-    reconciled = reconcile_live_findings(current, previous, snapshot, "live-20260920T000000Z")
+    reconciled = {row["FindingKey"]: row for row in reconcile_live_findings(current, previous, snapshot, "live-20260920T000000Z")}
 
-    assert reconciled[0]["SlaPolicyName"] == "LegacyCritical"
-    assert reconciled[0]["SlaPolicyVersion"] == "legacy-v1"
-    assert reconciled[0]["SlaDueUtc"] == "2026-10-10T00:00:00Z"
-    assert reconciled[0]["SlaStatus"] == "OpenWithinSla"
+    retimed = reconciled["finding-1"]
+    due = datetime(2026, 9, 10, tzinfo=timezone.utc) + timedelta(days=days["CriticalKnownExploit"])
+    assert retimed["SlaPolicyName"] == "CriticalKnownExploit"
+    assert retimed["SlaPolicyVersion"] == policy["policyVersion"]
+    assert retimed["SlaStartUtc"] == "2026-09-10T00:00:00Z"
+    assert retimed["SlaDueUtc"] == due.isoformat().replace("+00:00", "Z")
+    assert retimed["SlaStatus"] == ("OpenWithinSla" if snapshot <= due else "OpenOutsideSla")
+    kept = reconciled["finding-2"]
+    assert (kept["SlaPolicyVersion"], kept["SlaDueUtc"], kept["SlaStatus"]) == ("legacy-v1", "2026-09-11T00:00:00Z", "FixedOutsideSla")
 
 
 def test_live_normalization_links_recommendation_remediation_status():

@@ -394,3 +394,57 @@ def test_retire_waits_for_in_flight_queries_then_removes_local_files(monkeypatch
         snapshots.retire(snapshot.id)  # already gone: no error
     finally:
         snapshots.close()
+
+
+def _fake_free_disk(monkeypatch, free):
+    real = dashboard_snapshots.shutil.disk_usage
+    monkeypatch.setattr(
+        dashboard_snapshots.shutil, "disk_usage",
+        lambda path: real(path)._replace(free=free[0]),
+    )
+
+
+def test_low_free_disk_releases_idle_snapshot_before_failing(monkeypatch, tmp_path):
+    pointer = [manifest_for("run-a")]
+    snapshots = azure_snapshots(monkeypatch, tmp_path, pointer, max_bytes=10**9)
+    try:
+        first = snapshots.current()
+        (first.root / "index.sqlite").write_bytes(b"1234")
+        pointer[0] = manifest_for("run-b")
+        second = snapshots.current()
+        free = [0]
+        _fake_free_disk(monkeypatch, free)
+        real_rmtree = dashboard_snapshots.shutil.rmtree
+
+        def rmtree(path, *args, **kwargs):
+            real_rmtree(path, *args, **kwargs)
+            free[0] = 10**12
+
+        monkeypatch.setattr(dashboard_snapshots.shutil, "rmtree", rmtree)
+        with snapshots.acquire(second.id):
+            assert not first.root.exists()
+            assert second.root.exists()
+    finally:
+        snapshots.close()
+
+
+def test_low_free_disk_with_only_busy_snapshots_still_fails(monkeypatch, tmp_path):
+    pointer = [manifest_for("run-a")]
+    snapshots = azure_snapshots(monkeypatch, tmp_path, pointer, max_bytes=10**9)
+    try:
+        snapshot = snapshots.current()
+        _fake_free_disk(monkeypatch, [0])
+        with pytest.raises(DashboardCacheFull, match="Insufficient local disk"):
+            with snapshots.acquire(snapshot.id):
+                pytest.fail("Snapshot was served without free disk")
+    finally:
+        snapshots.close()
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    (None, 8 * 1024**3), ("", 8 * 1024**3), ("12", 12 * 1024**3), ("1.5", int(1.5 * 1024**3)),
+    ("0", 8 * 1024**3), ("abc", 8 * 1024**3), ("5000", 8 * 1024**3),
+])
+def test_cache_budget_setting(value, expected):
+    environ = {} if value is None else {"DASHBOARD_CACHE_MAX_GB": value}
+    assert dashboard_snapshots.cache_budget_bytes(environ) == expected

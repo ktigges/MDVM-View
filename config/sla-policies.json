@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "policyVersion": "vulnerability-view-2026-11-14",
+  "policyVersion": "vulnerability-view-2026-11-17",
   "complianceTargetPercent": 85,
   "lifecycle": {
     "fixedConfirmationRuns": 1,
     "deviceFreshnessHours": 168
   },
   "policies": [
-    {"policyName":"CriticalKnownExploit","severity":"Critical","knownExploitRequired":true,"slaDays":4},
-    {"policyName":"Critical","severity":"Critical","knownExploitRequired":false,"slaDays":2},
-    {"policyName":"High","severity":"High","knownExploitRequired":false,"slaDays":7},
-    {"policyName":"Medium","severity":"Medium","knownExploitRequired":false,"slaDays":30},
-    {"policyName":"Low","severity":"Low","knownExploitRequired":false,"slaDays":60}
+    {"policyName":"CriticalKnownExploit","severity":"Critical","knownExploitRequired":true,"slaDays":14},
+    {"policyName":"Critical","severity":"Critical","knownExploitRequired":false,"slaDays":14},
+    {"policyName":"High","severity":"High","knownExploitRequired":false,"slaDays":30},
+    {"policyName":"Medium","severity":"Medium","knownExploitRequired":false,"slaDays":90},
+    {"policyName":"Low","severity":"Low","knownExploitRequired":false,"slaDays":180}
   ]
 }

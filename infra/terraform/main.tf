@@ -496,7 +496,16 @@ resource "azurerm_linux_function_app" "collector" {
   }
 
   lifecycle {
-    ignore_changes = [app_settings["COLLECTOR_VERSION"]]
+    # SLA_DAYS_* are optional operator overrides set on the Function App (portal or az CLI);
+    # Terraform must not remove them on a later apply.
+    ignore_changes = [
+      app_settings["COLLECTOR_VERSION"],
+      app_settings["SLA_DAYS_CRITICAL_KNOWN_EXPLOIT"],
+      app_settings["SLA_DAYS_CRITICAL"],
+      app_settings["SLA_DAYS_HIGH"],
+      app_settings["SLA_DAYS_MEDIUM"],
+      app_settings["SLA_DAYS_LOW"],
+    ]
   }
 
   tags = merge(var.tags, {

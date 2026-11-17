@@ -180,8 +180,11 @@ FirstSeenUtc = SlaStartUtc   (a device-level time, not the CVE's tenant-wide fir
 ```
 
 Defender timestamps without an offset are UTC. This is a calculated SLA target,
-not a manually assigned remediation-task due date. Existing findings preserve
-their policy name, policy version, and duration across later runs. When
+not a manually assigned remediation-task due date. A finding keeps its policy
+name, version, and duration across later runs while the policy version is
+unchanged. When the policy version changes, a finding that is still open is
+re-timed on the next run (the new duration applies from its original start);
+findings fixed in earlier runs keep the deadline they were judged against. When
 Defender later supplies a first-seen time for an open finding, its start moves
 to that time and its target is recalculated with the retained duration.
 
@@ -415,8 +418,8 @@ assessment is unavailable, not 100%. Not yet due is not a remediation result.
 
 The dedicated SLA page uses the same distinct CVE/machine semantics for
 month-to-date and completed UTC calendar weeks and months. Historical coverage
-gaps produce unavailable values rather than zero totals. Existing deadlines
-remain in force across policy changes.
+gaps produce unavailable values rather than zero totals. A policy change
+re-times open findings only; completed fixes keep their original deadlines.
 
 PDF output contains the management report. CSV contains all matching rows for
 the selected machine, CVE, or recommendation representation, with the pinned
