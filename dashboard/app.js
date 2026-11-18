@@ -1384,13 +1384,17 @@ function renderSimpleSla(summary,states){
       ${noDeadline("cves")||noDeadline("machines")?`${fmt(noDeadline("cves"))} CVEs and ${fmt(noDeadline("machines"))} machines have machine/CVE pairs with no SLA deadline; those pairs are not shown.`:""} Click any count for the list.</p>
     ${summary.coverage==="complete"?"":'<p class="coverage-note">Incomplete retained history: current open status is available, but fixes cover retained observations only, not necessarily the entire month.</p>'}
   </article>`;
+  bindSlaSummaryLinks(root);
+  $("slaSummaryContext").textContent=state.slaSummary.status
+    ?`${state.slaSummary.severity==="All"?"All severities":state.slaSummary.severity} · ${statusLabels[state.slaSummary.status]||state.slaSummary.status} · ${summary.start} to ${summary.end} UTC. One row per distinct ${state.slaSummary.entity==="machines"?"machine":"CVE"}; workspace scope and pinned snapshot preserved.`
+    :"";
+}
+
+function bindSlaSummaryLinks(root){
   root.querySelectorAll("[data-sla-summary-status]").forEach(button=>button.addEventListener("click",()=>{
     state.slaSummary={severity:button.dataset.slaSummarySeverity,status:button.dataset.slaSummaryStatus,entity:button.dataset.slaSummaryEntity};
     render();
   }));
-  $("slaSummaryContext").textContent=state.slaSummary.status
-    ?`${state.slaSummary.severity} · ${statusLabels[state.slaSummary.status]||state.slaSummary.status} · ${summary.start} to ${summary.end} UTC. One row per distinct ${state.slaSummary.entity==="machines"?"machine":"CVE"}; workspace scope and pinned snapshot preserved.`
-    :"";
 }
 
 function renderSlaDashboard(report){
@@ -1410,6 +1414,7 @@ function renderSlaDashboard(report){
     </article>`;
   $("slaDashboardSummary").hidden=false;
   renderSimpleSla(summary,report.entityStates);
+  bindSlaSummaryLinks($("slaDashboardOverview"));
   $("slaSummaryDetails").hidden=!state.slaSummary.status;
   $("slaDashboardVisuals").innerHTML=`
     <div class="sla-calendar-grid">
@@ -1647,7 +1652,9 @@ function fourStateTiles(severity,caption){
 }
 function entityStateTiles(states,caption){
   const cves=states?.cves?.total||{},machines=states?.machines?.total||{};
-  return `<div class="four-state-tiles" role="group" aria-label="Distinct CVEs and machines by SLA state">${FOUR_STATES.map(([key,label,tone])=>`<div class="four-state-tile ${tone}"><span>${metricLabel(label)}</span><strong>${fmt(Number(cves[key])||0)} CVEs</strong><small>${fmt(Number(machines[key])||0)} machines</small></div>`).join("")}</div>
+  const statuses={openWithin:"OpenWithin",openOverdue:"OpenOverdue",completedWithin:"FixedWithin",completedLate:"FixedLate"};
+  const link=(entity,key,label,value)=>`<button type="button" class="cve-link" data-sla-summary-severity="All" data-sla-summary-status="${statuses[key]}" data-sla-summary-entity="${entity}" aria-label="View all ${esc(label)} ${entity==="cves"?"CVEs":"machines"}">${fmt(value)} ${entity==="cves"?"CVEs":"machines"}</button>`;
+  return `<div class="four-state-tiles" role="group" aria-label="Distinct CVEs and machines by SLA state">${FOUR_STATES.map(([key,label,tone])=>`<div class="four-state-tile ${tone}"><span>${metricLabel(label)}</span><strong>${link("cves",key,label,Number(cves[key])||0)}</strong><small>${link("machines",key,label,Number(machines[key])||0)}</small></div>`).join("")}</div>
     <p class="coverage-note">${esc(caption)}</p>`;
 }
 function slaGaugeGrid(severity,periodLabel){

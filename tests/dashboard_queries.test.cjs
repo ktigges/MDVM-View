@@ -1648,7 +1648,7 @@ test("SLA screen shows four-state tiles, severity gauges, the open vs fixed char
   app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:report},charts:{slaDashboardOpenFixed:chart}}));await tick();
   const overview=app.elements.get("slaDashboardOverview").innerHTML;
   for(const [tone,cves,machines] of [["open-within",1,7],["open-past",1,3],["fixed-within",0,2],["fixed-past",0,1]]){
-    assert.match(overview,new RegExp(`four-state-tile ${tone}">[\\s\\S]*?<strong>${cves} CVEs</strong><small>${machines} machines</small>`),tone);
+    assert.match(overview,new RegExp(`four-state-tile ${tone}">[\\s\\S]*?<strong><button[^>]*data-sla-summary-severity="All"[^>]*>${cves} CVEs</button></strong><small><button[^>]*>${machines} machines</button></small>`),tone);
   }
   assert.match(overview,/at least one machine\/CVE pair in each state/);
   assert.equal((overview.match(/class="sla-gauge /g)||[]).length,4);
@@ -1746,6 +1746,24 @@ test("simple SLA summary shows distinct CVEs and machines per state with exact d
   assert.match(low,/<td>N\/A<\/td>/);
   assert.doesNotMatch(markup,/Waiting for data|NaN|undefined/);
   assert.equal(app.elements.get("slaSummaryDetails").hidden,true);
+});
+
+test("SLA four-state tiles open the all-severity list for that state",async()=>{
+  const app=fixture();await tick();
+  app.run('activateView("slaDashboard")');await tick();
+  app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();
+  const buttons=app.elements.get("slaDashboardOverview").summaryButtons;
+  assert.equal(buttons.length,8);
+  assert.ok(buttons.every(button=>button.dataset.slaSummarySeverity==="All"));
+  const button=buttons.find(button=>button.dataset.slaSummaryStatus==="OpenOverdue"&&button.dataset.slaSummaryEntity==="machines");
+  button.click();await tick();
+  const payload=app.query().at(-1).payload;
+  assert.equal(payload.filters.slaSummarySeverity,"All");
+  assert.equal(payload.filters.slaSummaryStatus,"OpenOverdue");
+  assert.equal(payload.filters.slaSummaryEntity,"machines");
+  app.query().at(-1).resolve(app.payload({metadata:{slaDashboard:slaDashboardReport()}}));await tick();
+  assert.equal(app.elements.get("slaSummaryDetails").hidden,false);
+  assert.match(app.elements.get("slaSummaryContext").textContent,/^All severities · Open – past SLA .*One row per distinct machine/);
 });
 
 test("SLA summary drilldowns and CSV preserve selected metric, severity, scope and snapshot",async()=>{

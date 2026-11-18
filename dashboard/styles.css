@@ -590,6 +590,7 @@ body.pivot-detail-open .pivot-panel.fullscreen-mode{top:calc(var(--workspace-con
 .four-state-tile.fixed-within{border-left-color:#21835b}.four-state-tile.fixed-past{border-left-color:#bb3e4c}
 .four-state-tile.neutral{border-left-color:#7893a3}
 .four-state-tile small{display:block;color:var(--muted);font-size:.95rem;margin-top:2px}
+.four-state-tile .cve-link{text-align:left}.four-state-tile small .cve-link{color:var(--blue);font-weight:700}
 .sla-past-lists{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0}
 @media (max-width:1100px){.sla-past-lists{grid-template-columns:1fr}}
 .four-state-comparison td{white-space:nowrap}
