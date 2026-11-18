@@ -699,3 +699,47 @@ def test_slow_summary_does_not_gate_snapshot_or_independent_recommendations(tmp_
             assert application.state.dashboard_preparation.diagnostics()["status"] == "ready"
 
     asyncio.run(verify())
+
+
+def test_search_index_timeout_does_not_block_dashboard_readiness(tmp_path, monkeypatch, caplog):
+    from test_dashboard_cache import Service, cache
+    from vulnerability_view import dashboard_server
+    from vulnerability_view.dashboard_search import DashboardSearchIndex
+    from vulnerability_view.dashboard_control import QueryDeadlineExceeded
+    import logging
+
+    data = tmp_path / "dashboard/data"
+    data.mkdir(parents=True)
+    for name, rows in datasets().items():
+        (data / f"{name}.json").write_text(json.dumps(rows))
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/sla-policies.json").write_text('{"policies":[]}')
+
+    def fn(self):
+        raise QueryDeadlineExceeded("too slow")
+
+    monkeypatch.setattr(DashboardSearchIndex, "prepare", fn)
+    caplog.set_level(logging.WARNING)
+
+    service = Service()
+    monkeypatch.setattr(dashboard_server, "DashboardDerivedCache", lambda *args, **kwargs: cache(service))
+    settings = Settings(
+        dashboard_data_source="local", dashboard_auth_enabled=False,
+        dashboard_static_dir=str(ROOT / "dashboard"), dashboard_derived_cache_container="viewer-cache",
+    )
+
+    async def verify():
+        application = create_app(settings, project_root=tmp_path)
+        async with application.router.lifespan_context(application):
+            preparation = application.state.dashboard_preparation
+            for _ in range(1000):
+                if preparation.diagnostics()["readySnapshotId"]:
+                    break
+                await asyncio.sleep(.01)
+            assert preparation.diagnostics()["status"] == "ready", preparation.diagnostics()
+            with application.state.dashboard_snapshots.acquire(preparation.metadata()["snapshotId"]) as entry:
+                assert not entry.engine.search_index.ready()
+
+    asyncio.run(verify())
+    assert not any("/search-v1/" in blob for blob in service.blobs)
+    assert "did not finish within" in caplog.text
